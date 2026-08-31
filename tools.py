@@ -1,164 +1,228 @@
-"""Hermes native tools backed by codex-worker-delegation's public HTTP API.
+"""Hermes-native Worker Studio tools.
 
-The Worker's mode is an execution policy, not merely UI state.  Every native
-Hermes delegation re-reads /api/state and fails closed unless the effective
-mode is AUTO or DELEGATE (shown as WORKER in the Web UI).  OFFICIAL returns
-control to native Hermes/Codex behavior; MAIN forbids new project-managed
-workers.  The Worker server independently enforces the same policy.
+The plugin intentionally owns no execution engine. Child work is launched only
+through ``PluginContext.subagent_lifecycle``, the documented public lifecycle
+surface provided by Hermes. Model/provider discovery belongs to Hermes
+``/api/model/options`` and configuration belongs to Hermes config.
 """
 from __future__ import annotations
 
+import dataclasses
+import enum
 import json
-import os
-import socket
-import urllib.error
-import urllib.parse
-import urllib.request
+import threading
 from typing import Any
 
 _VALID_MODES = {"OFFICIAL", "AUTO", "DELEGATE", "MAIN"}
 _DELEGATION_MODES = {"AUTO", "DELEGATE"}
-_MAX_JSON = 4 * 1024 * 1024
+_CTX: Any = None
+_HANDLES: dict[str, Any] = {}
+_HANDLES_LOCK = threading.RLock()
 
 
-def _base_url() -> str:
-    return (os.getenv("HERMES_WORKER_STUDIO_WORKER_URL") or "http://127.0.0.1:8788").rstrip("/")
+def bind_context(ctx: Any) -> None:
+    """Bind the public PluginContext supplied by Hermes during registration."""
+    global _CTX
+    _CTX = ctx
 
 
-def _token() -> str:
-    return (os.getenv("HERMES_WORKER_STUDIO_WORKER_TOKEN") or os.getenv("CWD_WEB_TOKEN") or "").strip()
+def _context() -> Any:
+    if _CTX is None:
+        raise RuntimeError("Hermes plugin context is not bound")
+    return _CTX
 
 
-def _safe_url(path: str) -> str:
-    base = _base_url()
-    parsed = urllib.parse.urlparse(base)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("invalid Worker control-plane URL")
-    if parsed.username or parsed.password:
-        raise ValueError("Worker control-plane URL must not embed credentials")
-    if os.getenv("HERMES_WORKER_STUDIO_ALLOW_REMOTE") != "1":
-        host = parsed.hostname.lower()
-        if host not in {"localhost", "127.0.0.1", "::1"}:
-            raise ValueError("remote Worker URL requires HERMES_WORKER_STUDIO_ALLOW_REMOTE=1")
-    return base + (path if path.startswith("/") else "/" + path)
+def _mode() -> str:
+    raw = str(_context().get_config("mode", "AUTO") or "AUTO").strip().upper()
+    if raw == "WORKER":
+        raw = "DELEGATE"
+    if raw not in _VALID_MODES:
+        # Configuration is operator-owned. Unknown policy must never silently
+        # broaden authority, so fail closed to MAIN semantics.
+        return "MAIN"
+    return raw
 
 
-def _request(path: str, *, method: str = "GET", body: Any | None = None, timeout: float = 60.0) -> Any:
-    data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
-    headers = {"Accept": "application/json", "User-Agent": "hermes-worker-studio/1.1"}
-    if body is not None:
-        headers["Content-Type"] = "application/json"
-    token = _token()
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    req = urllib.request.Request(_safe_url(path), data=data, method=method, headers=headers)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read(_MAX_JSON + 1)
-        if len(raw) > _MAX_JSON:
-            raise ValueError("Worker response exceeded size limit")
-        return json.loads(raw.decode("utf-8")) if raw else {}
+def _plain(value: Any) -> Any:
+    if dataclasses.is_dataclass(value):
+        return _plain(dataclasses.asdict(value))
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
 
 
-def _error_payload(exc: Exception) -> str:
-    if isinstance(exc, urllib.error.HTTPError):
-        try:
-            raw = exc.read(256 * 1024).decode("utf-8", "replace")
-            payload = json.loads(raw)
-            return json.dumps({"ok": False, "status": exc.code, "error": payload}, ensure_ascii=False)
-        except Exception:
-            return json.dumps({"ok": False, "status": exc.code, "error": str(exc.reason)}, ensure_ascii=False)
-    if isinstance(exc, (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError)):
-        return json.dumps({"ok": False, "error": f"Worker unavailable: {exc}"}, ensure_ascii=False)
-    return json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
+def _dump(payload: dict[str, Any]) -> str:
+    return json.dumps(_plain(payload), ensure_ascii=False, default=str)
 
 
-def _mode(value: Any) -> str:
-    mode = str(value or "OFFICIAL").strip().upper()
-    if mode == "WORKER":
-        mode = "DELEGATE"
-    if mode not in _VALID_MODES:
-        raise ValueError(f"unknown Worker mode {mode!r}; delegation fails closed")
-    return mode
+def _error(exc: Exception) -> str:
+    return _dump({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
 
 
-def _policy_state() -> tuple[str, dict[str, Any]]:
-    state = _request("/api/state")
-    if not isinstance(state, dict):
-        raise ValueError("Worker state is not an object")
-    return _mode(state.get("mode")), state
+def _remember(handle: Any) -> None:
+    subagent_id = str(getattr(handle, "subagent_id", "") or "")
+    if not subagent_id:
+        return
+    with _HANDLES_LOCK:
+        _HANDLES[subagent_id] = handle
+        # The host lifecycle registry is already bounded. This convenience map
+        # is bounded independently so Studio never becomes an unbounded store.
+        while len(_HANDLES) > 256:
+            _HANDLES.pop(next(iter(_HANDLES)), None)
 
 
-def _require_delegation_allowed() -> tuple[str, dict[str, Any]]:
-    mode, state = _policy_state()
-    if mode not in _DELEGATION_MODES:
-        raise PermissionError(
-            f"project-managed Worker delegation is disabled in {mode}; "
-            "OFFICIAL returns control to native Hermes/Codex and MAIN permits Main only"
-        )
-    return mode, state
+def _resolve_handle(args: dict[str, Any]) -> Any:
+    from agent.subagent_lifecycle import SubagentHandle
+
+    raw = args.get("handle")
+    if isinstance(raw, dict):
+        return SubagentHandle.from_dict(raw)
+    task_id = str(args.get("task_id") or "").strip()
+    if task_id:
+        with _HANDLES_LOCK:
+            handle = _HANDLES.get(task_id)
+        if handle is not None:
+            return handle
+    raise ValueError("handle or a retained task_id is required")
 
 
-def worker_delegate(args: dict, **kwargs) -> str:
+def _wait_seconds(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    seconds = float(value)
+    if seconds < 0:
+        raise ValueError("wait_timeout_seconds must be >= 0")
+    return min(seconds, 86_400.0)
+
+
+def policy_pre_tool_call(tool_name: str = "", args: dict | None = None, **kwargs: Any) -> dict[str, str] | None:
+    """Enforce Studio mode at Hermes' documented pre-tool policy boundary."""
+    del args, kwargs
+    mode = _mode()
+    name = str(tool_name or "")
+    if mode == "MAIN" and name in {"delegate_task", "worker_delegate"}:
+        return {
+            "action": "block",
+            "message": "Worker Studio MAIN mode forbids new delegated child agents.",
+        }
+    if mode == "OFFICIAL" and name == "worker_delegate":
+        return {
+            "action": "block",
+            "message": "Worker Studio OFFICIAL mode leaves delegation to Hermes native delegate_task.",
+        }
+    return None
+
+
+def worker_delegate(args: dict, **kwargs: Any) -> str:
     del kwargs
     task = str(args.get("task") or "").strip()
     if not task:
-        return json.dumps({"ok": False, "error": "task is required"})
-    default_sandbox = (os.getenv("HERMES_WORKER_STUDIO_DEFAULT_SANDBOX") or "danger-full-access").strip()
-    if default_sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
-        default_sandbox = "danger-full-access"
-    role = str(args.get("role") or "worker").strip().lower()
-    if role not in {"worker", "verifier"}:
-        return json.dumps({"ok": False, "error": "role must be worker or verifier"})
-    body: dict[str, Any] = {
-        "task": task,
-        "role": role,
-        "profile": args.get("profile") or "standard",
-        "sandbox": args.get("sandbox") or default_sandbox,
-    }
-    cwd = str(args.get("cwd") or "").strip()
-    if cwd:
-        body["cwd"] = cwd
-    wait = args.get("wait_for_completion") is True
+        return _dump({"ok": False, "error": "task is required"})
+    mode = _mode()
+    if mode not in _DELEGATION_MODES:
+        return _dump({
+            "ok": False,
+            "mode": mode,
+            "error": (
+                "Studio-managed delegation is disabled. OFFICIAL leaves child creation "
+                "to Hermes native delegate_task; MAIN forbids new children."
+            ),
+        })
+
+    product_role = str(args.get("role") or "worker").strip().lower()
+    if product_role not in {"worker", "verifier"}:
+        return _dump({"ok": False, "error": "role must be worker or verifier"})
+
     try:
-        mode, _ = _require_delegation_allowed()
-        if wait:
-            body["waitForCompletion"] = True
-            result = _request("/api/worker/run", method="POST", body=body, timeout=7200)
-        else:
-            result = _request("/api/worker/start", method="POST", body=body, timeout=60)
-        return json.dumps({"ok": True, "mode": mode, "result": result}, ensure_ascii=False)
+        from agent.subagent_lifecycle import SubagentLaunchRequest
+
+        context = str(args.get("context") or "").strip() or None
+        if product_role == "verifier":
+            verifier_brief = (
+                "Act as an independent verifier. Inspect the work product and evidence, "
+                "look for regressions or unsupported claims, run appropriate checks, and "
+                "return findings before any conclusion."
+            )
+            context = verifier_brief + (f"\n\nContext:\n{context}" if context else "")
+        allowed = args.get("allowed_toolsets")
+        allowed_toolsets = tuple(str(x) for x in allowed) if isinstance(allowed, list) and allowed else None
+        model = str(args.get("model") or "").strip() or None
+        correlation_id = str(args.get("correlation_id") or "").strip() or None
+        request = SubagentLaunchRequest(
+            goal=task,
+            context=context,
+            role="leaf",
+            model=model,
+            allowed_toolsets=allowed_toolsets,
+            correlation_id=correlation_id,
+            metadata={"studio_role": product_role},
+        )
+        service = _context().subagent_lifecycle
+        handle = service.launch(request)
+        _remember(handle)
+        status = service.status(handle)
+        payload: dict[str, Any] = {
+            "ok": True,
+            "mode": mode,
+            "transport": "hermes_subagent_lifecycle_v1",
+            "role": product_role,
+            "task_id": handle.subagent_id,
+            "handle": handle.to_dict(),
+            "status": status,
+        }
+        if args.get("wait_for_completion") is True:
+            terminal = service.wait(handle, timeout_seconds=_wait_seconds(args.get("wait_timeout_seconds")))
+            payload["wait"] = terminal
+            payload["result"] = service.result(handle)
+        return _dump(payload)
     except Exception as exc:
-        return _error_payload(exc)
+        return _error(exc)
 
 
-def worker_status(args: dict, **kwargs) -> str:
+def worker_status(args: dict, **kwargs: Any) -> str:
     del kwargs
-    task_id = str(args.get("task_id") or "").strip()
-    if not task_id:
-        return json.dumps({"ok": False, "error": "task_id is required"})
     try:
-        result = _request(f"/api/worker/status/{urllib.parse.quote(task_id, safe='')}")
-        return json.dumps({"ok": True, "result": result}, ensure_ascii=False)
+        handle = _resolve_handle(args)
+        service = _context().subagent_lifecycle
+        timeout = _wait_seconds(args.get("wait_timeout_seconds"))
+        waited = service.wait(handle, timeout_seconds=timeout) if timeout is not None else None
+        status = service.status(handle)
+        result = service.result(handle)
+        return _dump({
+            "ok": True,
+            "transport": "hermes_subagent_lifecycle_v1",
+            "task_id": handle.subagent_id,
+            "status": status,
+            "wait": waited,
+            "result": result,
+        })
     except Exception as exc:
-        return _error_payload(exc)
+        return _error(exc)
 
 
-def worker_catalog(args: dict, **kwargs) -> str:
+def worker_catalog(args: dict, **kwargs: Any) -> str:
     del args, kwargs
     try:
-        mode, state = _policy_state()
-        catalog = _request("/api/catalog")
-        if not isinstance(catalog, dict):
-            raise ValueError("Worker catalog is not an object")
-        # Preserve the Worker's catalog shape for backwards-compatible callers
-        # while attaching a namespaced policy snapshot for Hermes reasoning.
-        result = dict(catalog)
-        result["studio_policy"] = {
+        mode = _mode()
+        return _dump({
+            "ok": True,
             "mode": mode,
             "ui_mode": "WORKER" if mode == "DELEGATE" else mode,
             "delegation_allowed": mode in _DELEGATION_MODES,
-            "state": state,
-        }
-        return json.dumps({"ok": True, "result": result}, ensure_ascii=False)
+            "execution": "PluginContext.subagent_lifecycle",
+            "contract_version": 1,
+            "model_catalog": "/api/model/options",
+            "provider_configuration": "Hermes providers/custom endpoints",
+            "worker_configuration": "Hermes delegation.*",
+            "review_configuration": "Hermes auxiliary.review.*",
+            "notes": (
+                "Studio intentionally owns no second model registry, provider client, "
+                "sandbox, queue, or child-agent runtime."
+            ),
+        })
     except Exception as exc:
-        return _error_payload(exc)
+        return _error(exc)
