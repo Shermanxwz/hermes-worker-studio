@@ -41,12 +41,14 @@ jobs:
       - name: JavaScript syntax gate
         run: |
           node --check dashboard/dist/index.js
+          node --check dashboard/dist/index-v3.js
           node --check tests/frontend_runtime.mjs
+          node --check tests/frontend_product_v3.mjs
 
       - name: Shell syntax gate
         run: bash -n scripts/install.sh
 
-      - name: Archive architecture contract
+      - name: Archive + product architecture contract
         run: python scripts/verify_contract.py
 
       - name: Python unit + HTTP integration + installer tests
@@ -146,20 +148,18 @@ jobs:
       - name: Install Bandit
         run: python -m pip install --disable-pip-version-check 'bandit>=1.8,<2'
       - name: Bandit production Python
-        # B310 is intentionally excluded: every URL is validated for scheme,
-        # credentials and loopback policy before urlopen; that boundary is unit-tested.
-        run: bandit -q -s B310 -r dashboard/plugin_api.py tools.py __init__.py schemas.py
+        run: bandit -q -s B310 -r dashboard/plugin_api.py dashboard/plugin_api_v3.py tools.py __init__.py schemas.py
       - name: Reject committed bearer secrets
         shell: bash
         run: |
-          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
+          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' --exclude='frontend_product_v3.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
       - name: Reject a second execution runtime in production files
         shell: bash
         run: |
           legacy_repo='codex-worker-delegation'
           legacy_port=':8788'
           legacy_env='CWD_'
-          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/dist/index.js scripts/install.sh deploy/worker-studio.env.example)
+          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py dashboard/dist/index-v3.js scripts/install.sh deploy/worker-studio.env.example)
           for token in "$legacy_repo" "$legacy_port" "$legacy_env"; do
             if grep -FIn -- "$token" "${files[@]}"; then
               echo "forbidden parallel-runtime token found: $token" >&2
