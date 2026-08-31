@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 import stat
 import subprocess
 import tempfile
@@ -67,6 +68,7 @@ class InstallScriptTests(unittest.TestCase):
     def test_install_copies_only_product_3_runtime_surface_and_calls_official_doctor(self) -> None:
         result = self._run()
         self.assertIn("Installed:", result.stdout)
+        self.assertIn("Candidate:", result.stdout)
         self.assertIn("official Hermes Dashboard /favicon.ico", result.stdout)
         dest = self._dest()
         expected = {
@@ -91,6 +93,10 @@ class InstallScriptTests(unittest.TestCase):
         installed_js = (dest / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
         self.assertIn("const href = baseHref('/favicon.ico');", installed_js)
         self.assertNotIn("const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;", installed_js)
+        installed_bridge = (dest / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
+        self.assertNotIn('BUILD_CANDIDATE_SHA = "source-tree"', installed_bridge)
+        self.assertRegex(installed_bridge, r"BUILD_CANDIDATE_SHA = ['\"][0-9a-f]{40}['\"]")
+        self.assertTrue(re.search(r"Candidate:\s+[0-9a-f]{40}", result.stdout))
         self.assertTrue((self.hermes_home / "dashboard-themes" / "hermes-worker-studio.yaml").is_file())
         log = self.log.read_text(encoding="utf-8")
         self.assertEqual(log.count("plugins doctor"), 2)
@@ -129,6 +135,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertTrue((self._dest() / "dashboard" / "plugin_api_v3.py").is_file())
         installed_js = (self._dest() / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
         self.assertIn("baseHref('/favicon.ico')", installed_js)
+        installed_bridge = (self._dest() / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
+        self.assertNotIn('BUILD_CANDIDATE_SHA = "source-tree"', installed_bridge)
         self.assertIn("hermes command not found", result.stderr)
         self.assertIn("Enable manually", result.stdout)
 
