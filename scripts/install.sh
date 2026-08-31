@@ -70,8 +70,8 @@ Runtime contract:
   HERMES_WORKER_STUDIO_API_KEY=<same value as API_SERVER_KEY>
 
 Worker/Verifier execution is in-process through Hermes public
-PluginContext.subagent_lifecycle. No Worker sidecar, Codex App Server, :8788,
-or CWD_* service is required.
+PluginContext.subagent_lifecycle. No separate worker service or execution
+control plane is required.
 
 Refresh/restart the official Hermes dashboard. /sessions is replaced through
 the official Dashboard Plugin SDK; Hermes core files are never patched.
