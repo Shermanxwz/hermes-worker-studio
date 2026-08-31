@@ -53,7 +53,7 @@
 ### 2. 安装插件
 
 ```bash
-./scripts/install.sh
+bash scripts/install.sh
 ```
 
 脚本会复制到：
@@ -73,7 +73,7 @@ hermes plugins enable hermes-worker-studio
 ### 3. 启动 Worker（本机无人值守）
 
 ```bash
-CWD_REPO=/path/to/codex-worker-delegation ./scripts/run-worker-local.sh
+CWD_REPO=/path/to/codex-worker-delegation bash scripts/run-worker-local.sh
 ```
 
 该脚本固定 Worker 控制面在 `127.0.0.1:8788`，并设置：
@@ -166,11 +166,12 @@ dashboard/plugin_api.py     API Server / Worker 的安全薄代理
 dashboard/dist/*            预构建 Web UI
 themes/*                    可选深色主题
 scripts/*                   安装、启动、合同静态检查
-docs/*                      架构、上游合同、封存验收
+docs/*                      架构、上游合同、安全边界、封存验收
 ```
 
 ## 设计文档
 
 - [架构与数据流](docs/ARCHITECTURE.md)
 - [上游官方合同](docs/UPSTREAM_CONTRACTS.md)
+- [安全与信任边界](docs/SECURITY.md)
 - [封存级验收清单](docs/SEAL_CHECKLIST.md)
