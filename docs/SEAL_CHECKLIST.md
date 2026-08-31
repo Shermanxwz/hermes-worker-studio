@@ -1,21 +1,36 @@
 # Production / Archive Seal Checklist
 
-A release is not called **sealed** until the checks below pass on the target machine. GitHub CI proves syntax and contract invariants; it cannot prove the local Hermes account, API Server, filesystem permissions, upstream New API, or Worker runtime.
+A release is not called **sealed** until the checks below pass on the target machine. GitHub CI now proves the repository layer much more deeply — actual bundled UI behavior, HTTP integration, native tools, atomic install behavior, pinned upstream contracts, the Worker's own test suite, a live pinned Worker control plane, Hermes' real Plugin Doctor, and production static-security gates — but it still cannot prove the local Hermes account, API Server credentials, filesystem/service permissions, real historical data, real New API, or the user's actual browser/runtime environment.
 
-Record the Hermes version, codex-worker-delegation commit/version, Worker Studio commit, OS, and test time with the evidence bundle.
+See `docs/AUTOMATED_TEST_MATRIX.md` for the exact hosted-runner proof boundary. Record the Hermes version, codex-worker-delegation commit/version, Worker Studio commit, OS, and test time with the target-machine evidence bundle.
 
-## A. Static gate
+## A. Automated/repository gate
 
-- [ ] `python -m py_compile __init__.py schemas.py tools.py dashboard/plugin_api.py scripts/verify_contract.py tests/test_plugin_api.py`
-- [ ] `node --check dashboard/dist/index.js`
-- [ ] `bash -n scripts/install.sh scripts/run-worker-local.sh`
-- [ ] `python scripts/verify_contract.py`
-- [ ] `python -m unittest -v tests/test_plugin_api.py`
-- [ ] GitHub Actions CI is green on the exact commit being sealed.
+- [ ] GitHub Actions CI is green on the **exact commit** being sealed.
+- [ ] The CI `Studio static + integration + UI runtime` job passes completely.
+- [ ] The CI `Pinned Hermes + Worker public contracts` job passes against the exact revisions in `tests/upstream-lock.json`.
+- [ ] The CI `Worker upstream tests + live control plane` job passes, including the Worker's own full tests/check and Studio's live Worker smoke.
+- [ ] Hosted Worker production/archive seal commands fail closed with `NOT_SEALED` / `NOT_ARCHIVE_READY` because hosted CI does not possess target-machine evidence.
+- [ ] The CI `Hermes real Plugin Doctor` job dynamically registers exactly `worker_delegate`, `worker_status`, and `worker_catalog` against pinned Hermes.
+- [ ] The CI `Production security static analysis` job passes.
+- [ ] For an independent local reproduction, run:
+
+```bash
+python -m compileall -q __init__.py schemas.py tools.py dashboard scripts tests
+node --check dashboard/dist/index.js
+bash -n scripts/install.sh scripts/run-worker-local.sh
+python scripts/verify_contract.py
+python -m unittest discover -s tests -p 'test_*.py' -v
+npm install --ignore-scripts --no-fund
+npm run test:frontend
+npm audit --audit-level=high
+```
+
+A green Section A means **archive candidate**, not target-machine sealed.
 
 ## B. Hermes native plugin gate
 
-- [ ] `hermes plugins doctor . --ci` passes.
+- [ ] `hermes plugins doctor . --ci` passes on the target machine.
 - [ ] `hermes plugins enable hermes-worker-studio` succeeds.
 - [ ] Hermes starts normally with the plugin enabled.
 - [ ] Disabling the plugin returns Hermes to its normal behavior without reinstalling Hermes.
