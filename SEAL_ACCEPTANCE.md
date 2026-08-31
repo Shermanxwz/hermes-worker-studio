@@ -11,6 +11,7 @@ The pull request must be green for all CI jobs:
 - Hermes upstream subagent lifecycle / Runs / approvals regression tests
 - Hermes Plugin Doctor
 - Production security / secret / second-runtime rejection
+- Official Hermes Web branding asset provenance
 
 The architecture gate must continue to prove that Hermes is the only execution, session, model, approval, Skills/MCP and Worker source of truth.
 
@@ -45,7 +46,7 @@ If the Dashboard is protected, export `API_SERVER_KEY` before running it. The ma
 
 The mounted JSDOM product tests separately exercise the behavior-heavy paths that should not mutate a real target during layout acceptance: lazy session creation, session CRUD, image clipboard transport, structured multimodal Runs, plan rendering, run completion, Full Access enable/restore semantics, unattended probe wiring, Custom Endpoint validate/edit/activate/delete, and model probes.
 
-For a final physical-device sign-off, spot-check the virtual keyboard/safe-area behavior and real clipboard/drag interaction if a phone is available. The emulated mobile/browser evidence and CSS contract remain mandatory even when a physical phone is not available.
+A physical-phone spot check of virtual-keyboard and clipboard/drag behavior is still useful when available, but it is not an unrecorded release gate: the mandatory browser evidence is the reproducible Playwright matrix plus the mounted behavior tests and responsive CSS contract.
 
 ## Product UI contract
 
@@ -82,13 +83,16 @@ The real-target `--run` gate proves this automatically from both sides: persiste
 
 ## Branding gate
 
-The shipped favicon/title must identify the product as Hermes Worker Studio and remain recognizably in the Hermes/NOUS family. The final icon must be derived from an official Hermes asset or reuse the official Hermes favicon rather than introducing an unrelated brand.
+Branding is now deterministic rather than subjective. The supported installer does **not** ship the earlier independent Worker Studio SVG favicon. During the atomic staging step it rewrites only the favicon assignment in the Product 3 bundle to `baseHref('/favicon.ico')`, so the installed product reuses the exact same-origin favicon served by the official Hermes Web Dashboard.
+
+The pinned-upstream CI checks that `NousResearch/hermes-agent@HERMES_PIN` contains a non-empty `web/public/favicon.ico`, and installer tests prove the staged/installed Product 3 bundle uses `/favicon.ico` and no independent favicon asset is copied. The title remains `Hermes Worker Studio`. Therefore the Hermes-family branding gate closes automatically when CI is green.
 
 ## Release rule
 
-Do not mark the PR ready, merge it, tag a release, or write `SEALED` until:
+Do not mark the PR ready, merge it, tag a release, or write `SEALED` until all three machine-verifiable evidence groups are green:
 
-1. all PR CI checks are green;
-2. real-target `seal_acceptance.py --run` produces green evidence including canonical todo revision history and a projected todo event;
-3. `npm run seal:ui` passes both desktop and mobile projects and produces `.seal/ui-report.json` + screenshots;
-4. the final Hermes-family favicon is accepted.
+1. all PR CI checks pass on the exact PR head;
+2. real-target `seal_acceptance.py --run` produces green `.seal/target.json`, including canonical todo revision history and a projected todo event;
+3. real-target `npm run seal:ui` passes desktop + mobile projects and produces `.seal/ui-report.json` plus screenshots.
+
+When those three evidence groups are green on the same candidate, Product 3 is eligible to be marked `SEALED` and merged. No separate upstream-plan or subjective favicon exception remains.
