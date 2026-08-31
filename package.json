@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:frontend": "node tests/frontend_runtime.mjs && node tests/frontend_runtime_v3.mjs && node tests/frontend_product_v3.mjs"
+    "test:frontend": "node tests/frontend_runtime.mjs && node tests/frontend_runtime_v3.mjs && node tests/frontend_product_v3.mjs && node tests/frontend_settings_v3.mjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0",
