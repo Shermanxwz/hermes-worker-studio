@@ -1,0 +1,130 @@
+name: Seal Real Hermes Target
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to seal and finalize
+        required: true
+        default: '4'
+      candidate_sha:
+        description: Exact 40-character PR head SHA already green in CI
+        required: true
+      dashboard_url:
+        description: Hermes Dashboard URL reachable from the self-hosted target runner
+        required: true
+        default: http://127.0.0.1:19119
+      provider:
+        description: Optional Hermes provider override for the real Run
+        required: false
+        default: ''
+      model:
+        description: Optional Hermes model override for the real Run
+        required: false
+        default: ''
+      merge_method:
+        description: Merge method after the exact candidate is sealed
+        required: true
+        type: choice
+        options:
+          - merge
+          - squash
+          - rebase
+        default: merge
+      finalize:
+        description: Mark Ready and merge after every seal gate passes
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: hws-real-target-seal-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  seal:
+    name: Real Hermes target seal + exact-head finalize
+    runs-on: [self-hosted, hermes-seal]
+    timeout-minutes: 60
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      API_SERVER_KEY: ${{ secrets.HERMES_SEAL_API_SERVER_KEY }}
+      HWS_DASHBOARD_URL: ${{ inputs.dashboard_url }}
+      HWS_SEAL_PROVIDER: ${{ inputs.provider }}
+      HWS_SEAL_MODEL: ${{ inputs.model }}
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Reject wrong checkout or dirty candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Close real target seal
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--url "$HWS_DASHBOARD_URL")
+          if [[ -n "${HWS_SEAL_PROVIDER:-}" ]]; then
+            args+=(--provider "$HWS_SEAL_PROVIDER")
+          fi
+          if [[ -n "${HWS_SEAL_MODEL:-}" ]]; then
+            args+=(--model "$HWS_SEAL_MODEL")
+          fi
+          python scripts/seal_close.py "${args[@]}"
+
+      - name: Verify final seal verdict
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          verdict = json.loads(Path('.seal/SEALED.json').read_text(encoding='utf-8'))
+          candidate = os.environ['CANDIDATE_SHA']
+          if verdict.get('eligible') is not True:
+              raise SystemExit(f'seal verdict not eligible: {verdict}')
+          if verdict.get('candidate_sha') != candidate:
+              raise SystemExit(
+                  f"seal candidate mismatch: expected {candidate}, got {verdict.get('candidate_sha')}"
+              )
+          print(f'SEALED evidence closed for {candidate}')
+          PY
+
+      - name: Upload seal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-worker-studio-seal-${{ inputs.candidate_sha }}
+          path: .seal/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Final exact-head GitHub gate
+        if: ${{ inputs.finalize }}
+        run: python scripts/github_finalize_seal.py --repo "$GITHUB_REPOSITORY" --pr "${{ inputs.pr_number }}" --candidate "${{ inputs.candidate_sha }}" --merge-method "${{ inputs.merge_method }}"
