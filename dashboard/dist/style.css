@@ -256,3 +256,11 @@
   .hws-provider-grid label:last-child { grid-column: auto; }
   .hws-unattended { align-items: stretch; flex-direction: column; }
 }
+
+
+/* hws archive closure controls */
+.hws-run-controls { display:flex; gap:8px; align-items:center; padding:8px 0; }
+.hws-run-controls input { flex:1; min-width:0; }
+.hws-approval-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.hws-skill-diff { margin-top:10px; }
+.hws-skill-diff p { margin:4px 0; }

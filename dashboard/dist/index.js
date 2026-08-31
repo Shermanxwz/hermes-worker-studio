@@ -161,6 +161,26 @@
     return '';
   }
 
+  function approvalChoices(event) {
+    const name = String(event?.event || '').toLowerCase();
+    if (!name.includes('approval')) return [];
+    const values = Array.isArray(event?.data?.choices) ? event.data.choices : [];
+    return values.map((x) => String(x).toLowerCase()).filter((x) => ['once', 'session', 'always', 'deny'].includes(x));
+  }
+
+  function skillKey(skill) {
+    return String(skill?.name || skill?.id || skill?.path || '').trim();
+  }
+
+  function diffSkills(before, after) {
+    const left = new Map((Array.isArray(before) ? before : []).map((x) => [skillKey(x), x]).filter(([key]) => key));
+    const right = new Map((Array.isArray(after) ? after : []).map((x) => [skillKey(x), x]).filter(([key]) => key));
+    const added = [...right.keys()].filter((key) => !left.has(key));
+    const removed = [...left.keys()].filter((key) => !right.has(key));
+    const toggled = [...right.keys()].filter((key) => left.has(key) && Boolean(left.get(key)?.enabled) !== Boolean(right.get(key)?.enabled));
+    return { added, removed, toggled };
+  }
+
   function modelRows(catalog, provider) {
     const rows = catalog?.registry?.providers?.[provider]?.models;
     return Array.isArray(rows) ? rows : [];
@@ -291,7 +311,7 @@
     );
   }
 
-  function WorkTimeline({ run, workerSnapshot, expanded, setExpanded, now }) {
+  function WorkTimeline({ run, workerSnapshot, expanded, setExpanded, now, skillDiff, onApprove }) {
     if (!run) return null;
     const ended = run.ended_at ? Number(run.ended_at) * 1000 : null;
     const started = Number(run.started_at || 0) * 1000;
@@ -312,12 +332,21 @@
           h('div', null,
             h('strong', null, eventSummary(event)),
             eventDetail(event) ? h('small', null, eventDetail(event)) : null,
+            approvalChoices(event).length ? h('div', { className: 'hws-approval-actions' }, approvalChoices(event).map((choice) =>
+              h(Button, { key: choice, className: choice === 'deny' ? 'danger small' : 'ghost small', onClick: () => onApprove?.(choice) }, choice)
+            )) : null,
           ),
           h('time', null, fmtTime(event.at)),
         )) : h('div', { className: 'hws-muted' }, '等待 Hermes 返回真实 lifecycle 事件…'),
         workerSnapshot ? h('details', { className: 'hws-worker-snapshot', open: !done },
           h('summary', null, `Worker 实时状态 · ${workerSnapshot.taskId}`),
           h('pre', null, JSON.stringify(workerSnapshot.data, null, 2)),
+        ) : null,
+        skillDiff && (skillDiff.added.length || skillDiff.removed.length || skillDiff.toggled.length) ? h('details', { className: 'hws-skill-diff', open: true },
+          h('summary', null, 'Hermes Skills 变化'),
+          skillDiff.added.length ? h('p', null, `新增: ${skillDiff.added.join(' · ')}`) : null,
+          skillDiff.removed.length ? h('p', null, `移除: ${skillDiff.removed.join(' · ')}`) : null,
+          skillDiff.toggled.length ? h('p', null, `启停变化: ${skillDiff.toggled.join(' · ')}`) : null,
         ) : null,
         run.truncated ? h('div', { className: 'hws-warning-note' }, '事件数量超过本地展示上限；上游会话记录未被修改。') : null,
       ) : null,
@@ -362,7 +391,8 @@
     );
   }
 
-  function Conversation({ session, messages, loading, onArchive, run, workerSnapshot, timelineExpanded, setTimelineExpanded, streamText, draft, setDraft, onSend, sending, workerState, catalog, chatRoute, onChatRoute, now }) {
+  function Conversation({ session, messages, loading, onArchive, run, workerSnapshot, timelineExpanded, setTimelineExpanded, streamText, draft, setDraft, onSend, sending, workerState, catalog, chatRoute, onChatRoute, now, onStop, onSteer, onApprove, skillDiff }) {
+    const [steer, setSteer] = useState('');
     return h('section', { className: 'hws-conversation' },
       h('header', { className: 'hws-conversation-head' },
         h('div', null,
@@ -378,12 +408,22 @@
         loading ? h(Empty, null, h(Spinner), ' 正在读取最近消息…') : null,
         !loading && !(messages || []).length && !run ? h(Empty, null, '这是一个干净的新对话。') : null,
         (messages || []).map((msg, i) => h(MessageBubble, { msg, key: msg?.id || `${msg?.role}-${i}` })),
-        run ? h(WorkTimeline, { run, workerSnapshot, expanded: timelineExpanded, setExpanded: setTimelineExpanded, now }) : null,
+        run ? h(WorkTimeline, { run, workerSnapshot, expanded: timelineExpanded, setExpanded: setTimelineExpanded, now, skillDiff, onApprove }) : null,
         streamText && run && !TERMINAL_RUN_STATES.has(run.status) ? h('div', { className: 'hws-message assistant live' },
           h('div', { className: 'hws-message-meta' }, 'Hermes · 实时'),
           h('div', { className: 'hws-message-content' }, streamText),
         ) : null,
       ),
+      sending && run?.id ? h('div', { className: 'hws-run-controls' },
+        h(Button, { className: 'danger small', type: 'button', onClick: onStop }, '停止 Run'),
+        h('input', { value: steer, onChange: (e) => setSteer(e.target.value), placeholder: '给正在运行的 Hermes 追加 steering…' }),
+        h(Button, { className: 'ghost small', type: 'button', disabled: !steer.trim(), onClick: async () => {
+          const value = steer.trim();
+          if (!value) return;
+          await onSteer?.(value);
+          setSteer('');
+        } }, 'Steer'),
+      ) : null,
       h('form', { className: 'hws-composer', onSubmit: (e) => { e.preventDefault(); onSend(); } },
         h('textarea', {
           value: draft,
@@ -626,6 +666,15 @@
       } catch (error) { setTests((x) => ({ ...x, [id]: { ok: false, error: errorText(error) } })); }
     }
 
+    async function unattended() {
+      setBusy(true); setMessage('');
+      try {
+        const out = await onUnattended();
+        setMessage(`无人值守闭环通过 · ${out?.status || 'UNATTENDED_READY'} · 配置已读回 · 实际 Run marker 已验证。`);
+      } catch (error) { setMessage(errorText(error)); }
+      finally { setBusy(false); }
+    }
+
     const third = modelRows(catalog, 'third_party');
     return h('section', { className: 'hws-worker-page' },
       h('div', { className: 'hws-section-head' },
@@ -661,7 +710,7 @@
       h('hr'),
       h('section', { className: 'hws-unattended' },
         h('div', null, h('h3', null, '无人值守 / 全授权'), h('p', null, '仅写入 Hermes 官方 approvals 配置：mode=off，cron/single-query/unattended=approve，并关闭官方可关闭的确认项；Hermes hardline blocklist 仍永久有效。')),
-        h(Button, { className: 'danger', disabled: busy, onClick: onUnattended }, '应用官方无人值守配置'),
+        h(Button, { className: 'danger', disabled: busy, onClick: unattended }, busy ? '正在验证无人值守…' : '应用并实测无人值守'),
       ),
       message ? h('div', { className: 'hws-result' }, message) : null,
     );
@@ -685,8 +734,10 @@
     const [moreOpen, setMoreOpen] = useState(false);
     const [globalError, setGlobalError] = useState('');
     const [now, setNow] = useState(Date.now());
+    const [skillDiff, setSkillDiff] = useState(null);
     const runPollRef = useRef(null);
     const workerPollRef = useRef(null);
+    const skillBeforeRef = useRef([]);
 
     const sending = run && !TERMINAL_RUN_STATES.has(run.status);
 
@@ -806,6 +857,10 @@
             const sessions = await refreshRecent(true);
             setCurrent((cur) => sessions.find((s) => s.id === cur?.id) || cur);
             await refreshWorker();
+            try {
+              const afterSkills = await api('/api/skills');
+              setSkillDiff(diffSkills(skillBeforeRef.current, Array.isArray(afterSkills) ? afterSkills : []));
+            } catch (_) { setSkillDiff(null); }
             return;
           }
           runPollRef.current = ref;
@@ -856,8 +911,12 @@
     const send = useCallback(async () => {
       const text = draft.trim();
       if (!text || sending) return;
-      setGlobalError(''); setTimelineExpanded(true); setWorkerSnapshot(null); setStreamText('');
+      setGlobalError(''); setTimelineExpanded(true); setWorkerSnapshot(null); setStreamText(''); setSkillDiff(null);
       try {
+        try {
+          const beforeSkills = await api('/api/skills');
+          skillBeforeRef.current = Array.isArray(beforeSkills) ? beforeSkills : [];
+        } catch (_) { skillBeforeRef.current = []; }
         const session = current?.id ? current : await createSession();
         await lockRuntimeIfResolvable(session, chatRoute);
         setMessages((xs) => [...xs, { role: 'user', content: text, id: `local-${Date.now()}` }]);
@@ -880,8 +939,29 @@
       } catch (error) { setGlobalError(errorText(error)); }
     }, [current, refreshRecent, loadMessages]);
 
+    const stopRun = useCallback(async () => {
+      if (!run?.id) return;
+      setGlobalError('');
+      try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/stop`, jinit('POST', {})); }
+      catch (error) { setGlobalError(`停止 Run 失败：${errorText(error)}`); }
+    }, [run?.id]);
+
+    const steerRun = useCallback(async (input) => {
+      if (!run?.id || !String(input || '').trim()) return;
+      setGlobalError('');
+      try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/steer`, jinit('POST', { input: String(input).trim() })); }
+      catch (error) { setGlobalError(`Steer 失败：${errorText(error)}`); }
+    }, [run?.id]);
+
+    const approveRun = useCallback(async (choice) => {
+      if (!run?.id) return;
+      setGlobalError('');
+      try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/approval`, jinit('POST', { choice })); }
+      catch (error) { setGlobalError(`审批提交失败：${errorText(error)}`); }
+    }, [run?.id]);
+
     const newConversation = useCallback(() => {
-      setCurrent(null); setMessages([]); setRun(null); setStreamText(''); setWorkerSnapshot(null); setDraft(''); setView('chat');
+      setCurrent(null); setMessages([]); setRun(null); setStreamText(''); setWorkerSnapshot(null); setDraft(''); setSkillDiff(null); setView('chat');
     }, []);
 
     const applyUnattended = useCallback(async () => {
@@ -899,8 +979,25 @@
           destructive_slash_confirm: false,
         };
         await api('/api/config', jinit('PUT', { config: cfg }));
-        alert('Hermes 官方无人值守配置已应用。hardline blocklist 仍保持官方强制保护。');
-      } catch (error) { setGlobalError(errorText(error)); }
+        const readbackRaw = await api('/api/config');
+        const readback = readbackRaw?.config && typeof readbackRaw.config === 'object' ? readbackRaw.config : readbackRaw;
+        const approvals = readback?.approvals || {};
+        const expected = {
+          mode: 'off', cron_mode: 'approve', single_query_mode: 'approve', unattended_mode: 'approve',
+          mcp_reload_confirm: false, destructive_slash_confirm: false,
+        };
+        for (const [key, value] of Object.entries(expected)) {
+          if (approvals[key] !== value) throw new Error(`Hermes config read-back mismatch: approvals.${key}`);
+        }
+        const probe = await plugin('/hermes/unattended/probe', jinit('POST', { confirm: 'RUN_SAFE_UNATTENDED_PROBE' }));
+        if (probe?.status !== 'UNATTENDED_READY' || probe?.marker_verified !== true) {
+          throw new Error('Hermes unattended probe did not return UNATTENDED_READY + marker_verified');
+        }
+        return probe;
+      } catch (error) {
+        setGlobalError(errorText(error));
+        throw error;
+      }
     }, []);
 
     const content = view === 'search'
@@ -916,6 +1013,7 @@
               run, workerSnapshot, timelineExpanded, setTimelineExpanded, streamText,
               draft, setDraft, onSend: send, sending, workerState: worker.state,
               catalog: worker.catalog, chatRoute, onChatRoute: persistMainRoute, now,
+              onStop: stopRun, onSteer: steerRun, onApprove: approveRun, skillDiff,
             });
 
     return h('div', { className: 'hws-root' },

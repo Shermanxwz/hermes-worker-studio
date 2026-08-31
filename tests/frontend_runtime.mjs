@@ -41,6 +41,12 @@ let lastProviderPayload = null;
 let lastConnectivityPayload = null;
 let lastRoutingPayload = null;
 let lastModelLockPayload = null;
+let configReadCount = 0;
+let unattendedProbeCalled = false;
+let stopCalled = false;
+let steerPayload = null;
+let approvalPayload = null;
+let skillsRead = 0;
 
 const sessions = Array.from({ length: 10 }, (_, i) => ({
   id: `session-${i + 1}`,
@@ -164,7 +170,19 @@ function responseFor(url, init = {}) {
       configWritten = JSON.parse(init.body);
       return { ok: true };
     }
-    return { config: { approvals: { timeout: 300 }, unrelated: { keep: true } } };
+    configReadCount += 1;
+    return configWritten || { config: { approvals: { timeout: 300 }, unrelated: { keep: true } } };
+  }
+  if (url === '/api/plugins/hermes-worker-studio/hermes/unattended/probe') {
+    unattendedProbeCalled = true;
+    assert.equal(JSON.parse(init.body).confirm, 'RUN_SAFE_UNATTENDED_PROBE');
+    return { ok: true, status: 'UNATTENDED_READY', run_id: 'probe-1', marker_verified: true };
+  }
+  if (url === '/api/skills') {
+    skillsRead += 1;
+    return runPoll >= 2
+      ? [{ name: 'base-skill', enabled: true }, { name: 'learned-after-run', enabled: true }]
+      : [{ name: 'base-skill', enabled: true }];
   }
   if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/model') {
     lastModelLockPayload = JSON.parse(init.body);
@@ -182,12 +200,13 @@ function responseFor(url, init = {}) {
         status: 'running',
         started_at: 1000,
         elapsed_ms: 1200,
-        last_seq: 4,
+        last_seq: 5,
         events: [
           { seq: 1, event: 'run.started', data: {}, at: 1000 },
           { seq: 2, event: 'assistant.delta', data: { delta: 'live text' }, at: 1000.1 },
           { seq: 3, event: 'tool.started', data: { tool_name: 'worker_delegate', arguments: '{}' }, at: 1000.2 },
           { seq: 4, event: 'tool.completed', data: { tool_name: 'worker_delegate', result: { task_id: 'task-runtime-1' } }, at: 1000.3 },
+          { seq: 5, event: 'approval.required', data: { choices: ['once', 'deny'], command: 'safe mocked approval' }, at: 1000.4 },
         ],
       };
     }
@@ -198,12 +217,24 @@ function responseFor(url, init = {}) {
       started_at: 1000,
       ended_at: 1002.4,
       elapsed_ms: 2400,
-      last_seq: 5,
-      events: [{ seq: 5, event: 'run.completed', data: { final_response: 'done' }, at: 1002.4 }],
+      last_seq: 6,
+      events: [{ seq: 6, event: 'run.completed', data: { final_response: 'done' }, at: 1002.4 }],
     };
   }
   if (url === '/api/plugins/hermes-worker-studio/worker/status/task-runtime-1') {
     return { task_id: 'task-runtime-1', status: 'completed', output: 'verified' };
+  }
+  if (url === '/api/plugins/hermes-worker-studio/hermes/runs/studio-run-1/stop') {
+    stopCalled = true;
+    return { ok: true, status: 'stopping' };
+  }
+  if (url === '/api/plugins/hermes-worker-studio/hermes/runs/studio-run-1/steer') {
+    steerPayload = JSON.parse(init.body);
+    return { ok: true };
+  }
+  if (url === '/api/plugins/hermes-worker-studio/hermes/runs/studio-run-1/approval') {
+    approvalPayload = JSON.parse(init.body);
+    return { ok: true, resolved: 1 };
   }
   if (url.startsWith('/api/model/options')) return hermesModelOptions;
   if (url.startsWith('/api/sessions/session-77/messages?')) return { messages: [] };
@@ -354,7 +385,7 @@ await waitFor(() => lastConnectivityPayload !== null, 'real connectivity route i
 assert.deepEqual(lastConnectivityPayload.models, ['new-reason']);
 await waitFor(() => byText('.hws-model-test', '通过'), 'connectivity result rendering');
 
-await click(byText('.hws-unattended button', '应用官方无人值守配置'));
+await click(byText('.hws-unattended button', '应用并实测无人值守'));
 await waitFor(() => configWritten !== null, 'unattended config write');
 assert.equal(configWritten.config.approvals.mode, 'off');
 assert.equal(configWritten.config.approvals.cron_mode, 'approve');
@@ -364,6 +395,9 @@ assert.equal(configWritten.config.approvals.mcp_reload_confirm, false);
 assert.equal(configWritten.config.approvals.destructive_slash_confirm, false);
 assert.equal(configWritten.config.approvals.timeout, 300);
 assert.equal(configWritten.config.unrelated.keep, true);
+await waitFor(() => unattendedProbeCalled, 'unattended real probe');
+assert.ok(configReadCount >= 2, 'unattended flow must read config before and after write');
+assert.ok(byText('.hws-result', 'UNATTENDED_READY'));
 
 await click(byText('.hws-nav button', '新建 / 当前对话'));
 await click(byText('.hws-session-row', 'Conversation 1'));
@@ -372,6 +406,18 @@ await act(async () => { setNativeValue(textarea, 'run an integration task'); });
 await click(byText('.hws-composer button', '发送'));
 await waitFor(() => calls.some((x) => x.url === '/api/plugins/hermes-worker-studio/hermes/runs'), 'run start');
 await waitFor(() => calls.some((x) => x.url === '/api/plugins/hermes-worker-studio/worker/status/task-runtime-1'), 'worker task polling');
+const runControls = await waitFor(() => window.document.querySelector('.hws-run-controls'), 'native run controls');
+const steerInput = runControls.querySelector('input');
+await act(async () => { setNativeValue(steerInput, 'focus on verified evidence'); });
+await click(byText('.hws-run-controls button', 'Steer'));
+await waitFor(() => steerPayload !== null, 'steer endpoint');
+assert.equal(steerPayload.input, 'focus on verified evidence');
+const approvalOnce = await waitFor(() => byText('.hws-approval-actions button', 'once'), 'approval choice from Hermes event');
+await click(approvalOnce);
+await waitFor(() => approvalPayload !== null, 'approval endpoint');
+assert.equal(approvalPayload.choice, 'once');
+await click(byText('.hws-run-controls button', '停止 Run'));
+await waitFor(() => stopCalled, 'stop endpoint');
 await waitFor(() => byText('.hws-work-head', '工作过程 · 已完成'), 'completed work timeline', 4000);
 const work = window.document.querySelector('.hws-work');
 assert.ok(work.classList.contains('done'));
@@ -386,6 +432,9 @@ await click(window.document.querySelector('.hws-work-head'));
 await waitFor(() => window.document.querySelector('.hws-work-body'), 'manual timeline expansion');
 assert.ok(byText('.hws-work-body', '执行工具 · worker_delegate'));
 assert.ok(byText('.hws-work-body', '工具完成 · worker_delegate'));
+assert.ok(byText('.hws-work-body', 'Hermes Skills 变化'));
+assert.ok(byText('.hws-work-body', 'learned-after-run'));
+assert.ok(skillsRead >= 2, 'skills must be snapshotted before and after the Hermes Run');
 
 assert.equal(lastRoutingPayload, null, 'viewing/sending must not invent a routing write unless user changes routing');
 

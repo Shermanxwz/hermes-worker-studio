@@ -23,9 +23,14 @@ plugin_api = load_module("hws_real_worker_plugin_api", ROOT / "dashboard" / "plu
 tools = load_module("hws_real_worker_tools", ROOT / "tools.py")
 
 
-def direct(path: str):
+def direct(path: str, *, method: str = "GET", body: object | None = None):
     base = os.environ.get("HERMES_WORKER_STUDIO_WORKER_URL", "http://127.0.0.1:8788").rstrip("/")
-    with urllib.request.urlopen(base + path, timeout=10) as response:
+    data = None if body is None else json.dumps(body).encode()
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+    with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode())
 
 
@@ -56,14 +61,7 @@ def _model_semantics(model: object) -> dict:
 
 
 def _catalog_semantics(payload: object) -> dict:
-    """Compare immutable catalog meaning, not per-request observation time.
-
-    Worker deliberately rebuilds its capability registry on every /api/catalog
-    request, so registry.generatedAt is expected to differ across the direct,
-    dashboard-proxy, and native-tool reads. Archive verification must prove that
-    Studio preserves the model/routing capability semantics without incorrectly
-    requiring two independently generated snapshots to be byte-identical.
-    """
+    """Compare stable catalog meaning, excluding regenerated observation time."""
     if not isinstance(payload, dict):
         return {"invalid": True}
     registry = payload.get("registry") if isinstance(payload.get("registry"), dict) else {}
@@ -94,6 +92,19 @@ def _catalog_semantics(payload: object) -> dict:
     }
 
 
+def _native_policy() -> dict:
+    native = json.loads(tools.worker_catalog({}))
+    if native.get("ok") is not True:
+        raise SystemExit(f"native worker_catalog failed: {native}")
+    result = native.get("result")
+    if not isinstance(result, dict):
+        raise SystemExit("native worker_catalog result is not an object")
+    policy = result.get("studio_policy")
+    if not isinstance(policy, dict):
+        raise SystemExit("native worker_catalog missing studio_policy")
+    return {"result": result, "policy": policy}
+
+
 def main() -> int:
     direct_health = direct("/api/health")
     direct_state = direct("/api/state")
@@ -113,36 +124,41 @@ def main() -> int:
     if proxied_state != direct_state:
         raise SystemExit("Studio worker state proxy changed the real Worker payload")
     if _catalog_semantics(proxied_catalog) != _catalog_semantics(direct_catalog):
-        raise SystemExit(
-            "Studio worker catalog proxy changed stable Worker semantics\n"
-            + json.dumps(
-                {
-                    "direct": _catalog_semantics(direct_catalog),
-                    "proxied": _catalog_semantics(proxied_catalog),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+        raise SystemExit("Studio worker catalog proxy changed stable Worker semantics")
 
-    native = json.loads(tools.worker_catalog({}))
-    if native.get("ok") is not True:
-        raise SystemExit(f"native worker_catalog failed: {native}")
-    if _catalog_semantics(native.get("result")) != _catalog_semantics(direct_catalog):
-        raise SystemExit(
-            "native worker_catalog changed stable Worker semantics\n"
-            + json.dumps(
-                {
-                    "direct": _catalog_semantics(direct_catalog),
-                    "native": _catalog_semantics(native.get("result")),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-        )
+    native = _native_policy()
+    if _catalog_semantics(native["result"]) != _catalog_semantics(direct_catalog):
+        raise SystemExit("native worker_catalog changed stable Worker semantics")
+    initial_mode = str(direct_state.get("mode") or "OFFICIAL").upper()
+
+    # Real pinned control-plane mode cycle.  This proves the exact wire modes
+    # that back the Web labels OFFICIAL / AUTO / WORKER(DELEGATE) / MAIN and
+    # verifies the native Hermes tool reads the same persisted state.
+    try:
+        for mode in ("OFFICIAL", "AUTO", "DELEGATE", "MAIN"):
+            changed = direct("/api/mode", method="PUT", body={"mode": mode})
+            state = direct("/api/state")
+            actual = str(state.get("mode") or "").upper()
+            if actual != mode:
+                raise SystemExit(f"real Worker mode transition failed: requested {mode}, got {actual}; response={changed}")
+            policy = _native_policy()["policy"]
+            if policy.get("mode") != mode:
+                raise SystemExit(f"native policy mode mismatch: expected {mode}, got {policy.get('mode')}")
+            expected_allowed = mode in {"AUTO", "DELEGATE"}
+            if policy.get("delegation_allowed") is not expected_allowed:
+                raise SystemExit(
+                    f"native delegation policy mismatch for {mode}: expected {expected_allowed}, got {policy.get('delegation_allowed')}"
+                )
+            expected_ui = "WORKER" if mode == "DELEGATE" else mode
+            if policy.get("ui_mode") != expected_ui:
+                raise SystemExit(f"native ui mode mismatch for {mode}: {policy.get('ui_mode')}")
+    finally:
+        if initial_mode in {"OFFICIAL", "AUTO", "DELEGATE", "MAIN"}:
+            direct("/api/mode", method="PUT", body={"mode": initial_mode})
 
     print("real Worker control-plane smoke passed")
-    print(f"  mode: {direct_state.get('mode')}")
+    print(f"  initial mode restored: {initial_mode}")
+    print("  modes: OFFICIAL -> AUTO -> DELEGATE(WORKER) -> MAIN")
     providers = direct_catalog.get("registry", {}).get("providers", {})
     print(f"  providers: {', '.join(sorted(providers)) or '(none)'}")
     return 0

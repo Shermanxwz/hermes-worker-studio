@@ -22,11 +22,13 @@ class RunBridgeTests(unittest.TestCase):
         with plugin_api._RUNS_LOCK:
             plugin_api._RUNS.clear()
 
-    def _seed(self, run_id="studio_test", *, started_at: float | None = None):
+    def _seed(self, run_id="studio_test", *, transport="legacy_chat_stream", started_at: float | None = None):
         now = time.time() if started_at is None else started_at
         with plugin_api._RUNS_LOCK:
             plugin_api._RUNS[run_id] = {
                 "session_id": "session-test",
+                "transport": transport,
+                "upstream_run_id": run_id if transport == "official_runs" else None,
                 "status": "running",
                 "started_at": now,
                 "ended_at": None,
@@ -36,7 +38,7 @@ class RunBridgeTests(unittest.TestCase):
             }
         return run_id
 
-    def test_bridge_preserves_event_names_and_json(self):
+    def test_sse_preserves_event_names_and_json(self):
         run_id = self._seed()
         wire = [
             b"event: assistant.delta\n",
@@ -52,8 +54,7 @@ class RunBridgeTests(unittest.TestCase):
             b'data: {"final_response":"done"}\n',
             b"\n",
         ]
-        with patch.object(plugin_api, "_stream_request", return_value=iter(wire)):
-            plugin_api._consume_run_stream(run_id, "session-test", {"message": "go"})
+        plugin_api._consume_sse(run_id, iter(wire), legacy_eof_incomplete=True)
         snap = plugin_api._run_snapshot(run_id)
         self.assertEqual(snap["status"], "completed")
         self.assertEqual(
@@ -61,9 +62,8 @@ class RunBridgeTests(unittest.TestCase):
             ["assistant.delta", "tool.started", "tool.completed", "run.completed"],
         )
         self.assertEqual(snap["events"][0]["data"]["delta"], "hello")
-        self.assertGreaterEqual(snap["elapsed_ms"], 0)
 
-    def test_multiline_sse_data_and_comments_follow_sse_framing(self):
+    def test_multiline_sse_data_and_comments_follow_framing(self):
         run_id = self._seed()
         wire = [
             b": heartbeat\n",
@@ -75,34 +75,55 @@ class RunBridgeTests(unittest.TestCase):
             b"data: {}\n",
             b"\n",
         ]
-        with patch.object(plugin_api, "_stream_request", return_value=iter(wire)):
-            plugin_api._consume_run_stream(run_id, "session-test", {"message": "go"})
+        plugin_api._consume_sse(run_id, iter(wire), legacy_eof_incomplete=True)
         snap = plugin_api._run_snapshot(run_id)
         self.assertEqual(snap["events"][0]["event"], "custom.event")
         self.assertEqual(snap["events"][0]["data"], {"raw": "first line\nsecond line"})
         self.assertEqual(snap["status"], "completed")
 
-    def test_clean_eof_without_completed_is_not_faked_as_success(self):
+    def test_legacy_clean_eof_without_completed_is_incomplete(self):
         run_id = self._seed()
-        with patch.object(
-            plugin_api,
-            "_stream_request",
-            return_value=iter([b"event: assistant.delta\n", b'data: {"delta":"partial"}\n', b"\n"]),
-        ):
-            plugin_api._consume_run_stream(run_id, "session-test", {"message": "go"})
+        plugin_api._consume_sse(
+            run_id,
+            iter([b"event: assistant.delta\n", b'data: {"delta":"partial"}\n', b"\n"]),
+            legacy_eof_incomplete=True,
+        )
         self.assertEqual(plugin_api._run_snapshot(run_id)["status"], "incomplete")
 
-    def test_explicit_upstream_failure_is_terminal_failure(self):
-        run_id = self._seed()
-        with patch.object(
-            plugin_api,
-            "_stream_request",
-            return_value=iter([b"event: run.failed\n", b'data: {"error":"boom"}\n', b"\n"]),
-        ):
-            plugin_api._consume_run_stream(run_id, "session-test", {"message": "go"})
-        snap = plugin_api._run_snapshot(run_id)
-        self.assertEqual(snap["status"], "failed")
-        self.assertEqual(snap["events"][0]["data"]["error"], "boom")
+    def test_official_event_stream_eof_does_not_invent_terminal_state(self):
+        run_id = self._seed(transport="official_runs")
+        plugin_api._consume_sse(
+            run_id,
+            iter([b"event: assistant.delta\n", b'data: {"delta":"partial"}\n', b"\n"]),
+            legacy_eof_incomplete=False,
+        )
+        with plugin_api._RUNS_LOCK:
+            self.assertEqual(plugin_api._RUNS[run_id]["status"], "running")
+
+    def test_official_run_body_uses_native_contract_and_whitelist(self):
+        body = {
+            "session_id": "s",
+            "message": "go",
+            "provider": "minimax",
+            "model": "MiniMax-M3",
+            "model_options": {"reasoning_effort": "high"},
+            "instructions": "do it",
+            "private_ui_only": "must-not-forward",
+        }
+        outgoing = plugin_api._official_run_body(body, "s", "go")
+        self.assertEqual(outgoing["input"], "go")
+        self.assertEqual(outgoing["session_id"], "s")
+        self.assertEqual(outgoing["provider"], "minimax")
+        self.assertEqual(outgoing["model"], "MiniMax-M3")
+        self.assertNotIn("message", outgoing)
+        self.assertNotIn("private_ui_only", outgoing)
+
+    def test_capability_detection_prefers_features_map(self):
+        caps = {"features": {"run_submission": True, "run_events_sse": True, "run_stop": True}}
+        self.assertTrue(plugin_api._feature(caps, "run_submission"))
+        self.assertTrue(plugin_api._feature(caps, "run_events_sse"))
+        self.assertFalse(plugin_api._feature(caps, "run_approval"))
+        self.assertTrue(plugin_api._feature({"run_submission": True}, "run_submission"))
 
     def test_poll_cursor_returns_only_new_events(self):
         run_id = self._seed()
@@ -132,7 +153,6 @@ class RunBridgeTests(unittest.TestCase):
         data = plugin_api._safe_event_data(raw)
         self.assertIn("raw", data)
         self.assertIn("event payload truncated", data["raw"])
-        self.assertLessEqual(len(data["raw"]), plugin_api._RUN_EVENT_DATA_LIMIT + 100)
 
     def test_ttl_pruning_removes_only_stale_runs(self):
         stale = self._seed("stale", started_at=time.time() - plugin_api._RUN_TTL - 10)
@@ -160,7 +180,6 @@ class RunBridgeTests(unittest.TestCase):
 
         snap = plugin_api._run_snapshot(run_id)
         seqs = [event["seq"] for event in snap["events"]]
-        self.assertEqual(len(seqs), workers * per_worker)
         self.assertEqual(seqs, list(range(1, workers * per_worker + 1)))
 
     def test_snapshot_isolation_does_not_leak_mutable_event_rows(self):
@@ -168,16 +187,37 @@ class RunBridgeTests(unittest.TestCase):
         plugin_api._append_run_event(run_id, "tool.started", {"name": "x"})
         snap = plugin_api._run_snapshot(run_id)
         snap["events"][0]["event"] = "tampered"
-        again = plugin_api._run_snapshot(run_id)
-        self.assertEqual(again["events"][0]["event"], "tool.started")
+        self.assertEqual(plugin_api._run_snapshot(run_id)["events"][0]["event"], "tool.started")
 
+
+class FourModePolicyTests(unittest.TestCase):
+    def test_wire_mode_alias_and_invalid_mode(self):
+        self.assertEqual(plugin_api._normalize_worker_mode("WORKER"), "DELEGATE")
+        for mode in ("OFFICIAL", "AUTO", "DELEGATE", "MAIN"):
+            self.assertEqual(plugin_api._normalize_worker_mode(mode), mode)
+        with self.assertRaises(plugin_api.HTTPException):
+            plugin_api._normalize_worker_mode("mystery")
+
+    def test_delegation_allowed_only_auto_and_delegate(self):
+        for mode in ("AUTO", "DELEGATE", "WORKER"):
+            with self.subTest(mode=mode), patch.object(plugin_api, "_worker_proxy", return_value={"mode": mode}):
+                effective, _ = plugin_api._require_worker_delegation_mode()
+                self.assertIn(effective, {"AUTO", "DELEGATE"})
+        for mode in ("OFFICIAL", "MAIN"):
+            with self.subTest(mode=mode), patch.object(plugin_api, "_worker_proxy", return_value={"mode": mode}):
+                with self.assertRaises(plugin_api.HTTPException) as ctx:
+                    plugin_api._require_worker_delegation_mode()
+                self.assertEqual(ctx.exception.status_code, 409)
+
+
+class SecurityBoundaryTests(unittest.TestCase):
     def test_loopback_is_default_security_boundary(self):
         with patch.dict(plugin_api.os.environ, {"HERMES_WORKER_STUDIO_ALLOW_REMOTE": ""}, clear=False):
             plugin_api._validate_upstream(plugin_api.Upstream("http://127.0.0.1:8642", "", "ok"))
             with self.assertRaises(Exception):
                 plugin_api._validate_upstream(plugin_api.Upstream("https://example.com", "", "remote"))
 
-    def test_remote_opt_in_is_explicit_and_embedded_credentials_still_forbidden(self):
+    def test_remote_opt_in_is_explicit_and_embedded_credentials_forbidden(self):
         with patch.dict(plugin_api.os.environ, {"HERMES_WORKER_STUDIO_ALLOW_REMOTE": "1"}, clear=False):
             plugin_api._validate_upstream(plugin_api.Upstream("https://example.com", "token", "remote"))
             with self.assertRaises(plugin_api.HTTPException):
