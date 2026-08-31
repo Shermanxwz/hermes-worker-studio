@@ -1,10 +1,10 @@
 {
   "name": "hermes-worker-studio-tests",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "test:frontend": "node tests/frontend_runtime.mjs"
+    "test:frontend": "node tests/frontend_runtime.mjs && node tests/frontend_product_v3.mjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0",
