@@ -14,7 +14,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for file in plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/dist/index.js dashboard/dist/style.css; do
+for file in \
+  plugin.yaml __init__.py schemas.py tools.py \
+  dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
+  dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/assets/favicon.svg; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
     exit 1
@@ -23,10 +26,11 @@ done
 
 mkdir -p "$PLUGIN_ROOT" "$THEME_DIR"
 rm -rf "$TMP" "$BACKUP"
-mkdir -p "$TMP/dashboard/dist"
+mkdir -p "$TMP/dashboard/dist" "$TMP/dashboard/assets"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
-cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$TMP/dashboard/"
-cp "$ROOT/dashboard/dist/index.js" "$ROOT/dashboard/dist/style.css" "$TMP/dashboard/dist/"
+cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
+cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$TMP/dashboard/dist/"
+cp "$ROOT/dashboard/assets/favicon.svg" "$TMP/dashboard/assets/"
 
 if command -v hermes >/dev/null 2>&1; then
   echo "[1/4] Hermes plugin doctor (staged tree)"
@@ -73,6 +77,9 @@ Worker/Verifier execution stays inside Hermes through the public
 PluginContext.subagent_lifecycle contract. No external worker service or second
 execution runtime is required.
 
-Refresh/restart the official Hermes dashboard. /sessions is replaced through
-the official Dashboard Plugin SDK; Hermes core files are never patched.
+Refresh/restart the official Hermes dashboard. Worker Studio owns the product
+home route through official Dashboard tab.override="/". Native /sessions and
+other Hermes pages remain reachable from Studio > 高级, with an official
+header-left slot providing a return path to Worker Studio. Hermes core files are
+never patched.
 EOF
