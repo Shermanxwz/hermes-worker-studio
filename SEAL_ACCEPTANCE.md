@@ -27,7 +27,9 @@ python scripts/seal_acceptance.py \
 
 If the Dashboard/API is protected, export `API_SERVER_KEY` first. `--provider` and `--model` can pin a specific configured route; otherwise the harness chooses a usable Hermes model from `/api/model/options`.
 
-The harness is intentionally conservative. Its default checks are health, execution/Worker ownership, Product 3 capabilities (including the Hermes-owned plan source), model catalog and a temporary session create → rename → archive → unarchive → delete lifecycle. `--run` additionally performs a real Hermes `/v1/runs` model turn and records event names.
+The default pass checks health, execution/Worker ownership, Product 3 capabilities, model catalog and a temporary session create → rename → archive → unarchive → delete lifecycle. `--run` is the **real model + official plan seal gate**: it starts a real Hermes `/v1/runs` turn, requires Hermes' own `todo` tool to produce at least three persisted monotonic revisions for a three-step task, requires a visible `todo.updated` or `todo.snapshot` in the Studio Run projection, requires the final canonical list to be fully completed, and verifies the final model marker from Run output or the persisted assistant transcript.
+
+This means the plan gate is no longer a separate manual assertion: `.seal/target.json` contains the canonical revision list, final todo statuses and the exact projected todo event evidence.
 
 ## Product UI gate
 
@@ -60,18 +62,17 @@ Upstream request remains open because direct Runs events are cleaner and lower-l
 
 - NousResearch/hermes-agent#99686 — `API Server Runs: expose official todo.updated snapshots on /v1/runs event stream`
 
-For sealing, a real target must run a 3+ step task that actually invokes Hermes `todo` and visibly prove the plan card follows the canonical revisions. The upstream issue is no longer a blocker by itself because the fallback is also a documented Hermes public-interface projection.
+The real-target `--run` gate now proves this automatically from both sides: persisted Hermes todo history proves the canonical source evolved, while the Studio Run snapshot proves that official state reached the product UI transport.
 
 ## Branding gate
 
-The shipped favicon/title must identify the product as Hermes Worker Studio and remain recognizably in the Hermes/NOUS family. The final icon should be derived from the official Hermes visual language rather than introducing an unrelated brand.
+The shipped favicon/title must identify the product as Hermes Worker Studio and remain recognizably in the Hermes/NOUS family. The final icon must be derived from an official Hermes asset or reuse the official Hermes favicon rather than introducing an unrelated brand.
 
 ## Release rule
 
 Do not mark the PR ready, merge it, tag a release, or write `SEALED` until:
 
 1. all PR CI checks are green;
-2. real-target `seal_acceptance.py --run` produces green evidence;
+2. real-target `seal_acceptance.py --run` produces green evidence including canonical todo revision history and a projected todo event;
 3. desktop + mobile product paths above are checked;
-4. a real Hermes todo task proves the official plan projection, including at least one revision transition;
-5. the final Hermes-family favicon is accepted.
+4. the final Hermes-family favicon is accepted.
