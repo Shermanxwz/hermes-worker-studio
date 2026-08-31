@@ -45,6 +45,7 @@ jobs:
           node --check tests/frontend_runtime.mjs
           node --check tests/frontend_runtime_v3.mjs
           node --check tests/frontend_product_v3.mjs
+          node --check tests/frontend_settings_v3.mjs
 
       - name: Shell syntax gate
         run: bash -n scripts/install.sh
@@ -156,7 +157,7 @@ jobs:
       - name: Reject committed bearer secrets
         shell: bash
         run: |
-          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' --exclude='frontend_runtime_v3.mjs' --exclude='frontend_product_v3.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
+          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' --exclude='frontend_runtime_v3.mjs' --exclude='frontend_product_v3.mjs' --exclude='frontend_settings_v3.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
       - name: Reject a second execution runtime in production files
         shell: bash
         run: |
