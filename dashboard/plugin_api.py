@@ -1,13 +1,15 @@
 """Hermes Worker Studio dashboard backend.
 
-This module is loaded by the official Hermes dashboard plugin loader and only
-bridges the browser UI to two official/stable local HTTP surfaces:
+Loaded by the official Hermes dashboard plugin loader.  This is deliberately a
+thin adapter over two documented local HTTP contracts:
 
 * Hermes API Server (default http://127.0.0.1:8642)
 * codex-worker-delegation control plane (default http://127.0.0.1:8788)
 
-No Hermes private database internals are touched here. The browser never sees
-API_SERVER_KEY or the Worker control-plane token.
+The dashboard browser never receives either upstream bearer token.  Session
+listing/search/archive/configuration continue to use the dashboard's own
+official REST API directly; this module only handles surfaces that require a
+server-side credential or streaming bridge.
 """
 from __future__ import annotations
 
@@ -15,9 +17,12 @@ import asyncio
 import json
 import os
 import socket
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -29,6 +34,9 @@ router = APIRouter()
 _JSON_LIMIT = 4 * 1024 * 1024
 _TIMEOUT = float(os.getenv("HERMES_WORKER_STUDIO_HTTP_TIMEOUT", "30"))
 _STREAM_TIMEOUT = float(os.getenv("HERMES_WORKER_STUDIO_STREAM_TIMEOUT", "7200"))
+_RUN_TTL = float(os.getenv("HERMES_WORKER_STUDIO_RUN_TTL", "21600"))
+_RUN_EVENT_LIMIT = 10000
+_RUN_EVENT_DATA_LIMIT = 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -60,20 +68,15 @@ def _worker() -> Upstream:
 
 
 def _validate_upstream(upstream: Upstream) -> None:
-    """Default to loopback-only upstreams; remote targets require explicit opt-in."""
+    """Fail closed to literal loopback hosts unless remote mode is explicit."""
     parsed = urllib.parse.urlparse(upstream.base_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(500, f"{upstream.name} URL must be http(s)")
+    if parsed.username or parsed.password:
+        raise HTTPException(500, f"{upstream.name} URL must not embed credentials")
     if _env("HERMES_WORKER_STUDIO_ALLOW_REMOTE") == "1":
         return
-    host = parsed.hostname.lower()
-    if host in {"127.0.0.1", "::1", "localhost"}:
-        return
-    try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(host, parsed.port or 80)}
-    except socket.gaierror as exc:
-        raise HTTPException(503, f"cannot resolve {upstream.name}") from exc
-    if not addresses or not all(addr.startswith("127.") or addr == "::1" for addr in addresses):
+    if parsed.hostname.lower() not in {"127.0.0.1", "::1", "localhost"}:
         raise HTTPException(
             403,
             f"remote {upstream.name} is disabled; set HERMES_WORKER_STUDIO_ALLOW_REMOTE=1 explicitly",
@@ -141,7 +144,7 @@ def _request_json(
 
 
 def _stream_request(upstream: Upstream, path: str, body: Any) -> Iterable[bytes]:
-    """Yield the upstream SSE stream without re-interpreting Hermes events."""
+    """Yield the upstream SSE stream without inventing or renaming events."""
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     headers = _headers(upstream, json_body=True)
     headers["Accept"] = "text/event-stream"
@@ -149,9 +152,8 @@ def _stream_request(upstream: Upstream, path: str, body: Any) -> Iterable[bytes]
     response = None
     try:
         response = urllib.request.urlopen(request, timeout=_STREAM_TIMEOUT)
-        # SSE is line-oriented. ``read(8192)`` may wait for a full buffer and
-        # visibly delay tool/run events; ``readline`` forwards each event line
-        # as soon as Hermes emits it while preserving the upstream wire format.
+        # SSE is line-oriented. readline() forwards lifecycle/tool events as
+        # soon as Hermes emits them instead of waiting for a large buffer.
         while True:
             chunk = response.readline()
             if not chunk:
@@ -174,6 +176,156 @@ def _worker_proxy(path: str, method: str = "GET", body: Any | None = None) -> An
 
 def _hermes_proxy(path: str, method: str = "GET", body: Any | None = None) -> Any:
     return _request_json(_hermes(), path, method=method, body=body)
+
+
+# ---------------------------------------------------------------------------
+# Pollable run bridge
+# ---------------------------------------------------------------------------
+# Dashboard plugins are officially expected to use SDK.fetchJSON(), which
+# carries the dashboard's authentication correctly in both loopback-token and
+# gated-cookie modes.  fetchJSON is intentionally JSON-only, while Hermes' run
+# surface is SSE.  To avoid teaching the plugin bundle private dashboard auth
+# details, the backend consumes the official Hermes SSE and exposes a tiny
+# cursor-based JSON poll surface.  Event names/data are preserved verbatim.
+
+_RUNS: dict[str, dict[str, Any]] = {}
+_RUNS_LOCK = threading.RLock()
+
+
+def _prune_runs(now: float | None = None) -> None:
+    now = now or time.time()
+    with _RUNS_LOCK:
+        stale = [
+            run_id
+            for run_id, run in _RUNS.items()
+            if now - float(run.get("started_at") or now) > _RUN_TTL
+        ]
+        for run_id in stale:
+            _RUNS.pop(run_id, None)
+
+
+def _safe_event_data(raw: str) -> Any:
+    if len(raw.encode("utf-8", "replace")) > _RUN_EVENT_DATA_LIMIT:
+        raw = raw[:_RUN_EVENT_DATA_LIMIT] + "\n[studio: event payload truncated]"
+    try:
+        return json.loads(raw) if raw else {}
+    except json.JSONDecodeError:
+        return {"raw": raw}
+
+
+def _append_run_event(run_id: str, name: str, data: Any) -> None:
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+        if not run:
+            return
+        events: list[dict[str, Any]] = run["events"]
+        seq = int(run.get("last_seq") or 0) + 1
+        run["last_seq"] = seq
+        events.append({"seq": seq, "event": name or "message", "data": data, "at": time.time()})
+        if len(events) > _RUN_EVENT_LIMIT:
+            del events[: len(events) - _RUN_EVENT_LIMIT]
+            run["truncated"] = True
+        if name == "run.completed":
+            run["status"] = "completed"
+            run["ended_at"] = time.time()
+        elif name in {"run.failed", "run.error", "studio.error"}:
+            run["status"] = "failed"
+            run["ended_at"] = time.time()
+
+
+def _consume_run_stream(run_id: str, session_id: str, body: dict[str, Any]) -> None:
+    event_name = "message"
+    data_lines: list[str] = []
+    path = f"/api/sessions/{urllib.parse.quote(session_id, safe='')}/chat/stream"
+    try:
+        for raw_line in _stream_request(_hermes(), path, body):
+            line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
+            if not line:
+                if data_lines:
+                    _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+                event_name = "message"
+                data_lines = []
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_name = line[6:].strip() or "message"
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+        if data_lines:
+            _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+        with _RUNS_LOCK:
+            run = _RUNS.get(run_id)
+            if run and run.get("status") == "running":
+                # A clean EOF without run.completed is still not a fabricated
+                # success. Mark it explicitly so the UI can surface the gap.
+                run["status"] = "incomplete"
+                run["ended_at"] = time.time()
+    except Exception as exc:
+        _append_run_event(
+            run_id,
+            "studio.error",
+            {"error": f"run bridge failed: {type(exc).__name__}: {exc}"},
+        )
+
+
+def _run_snapshot(run_id: str, after: int = 0) -> dict[str, Any]:
+    _prune_runs()
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+        if not run:
+            raise HTTPException(404, "run not found or expired")
+        events = [dict(item) for item in run["events"] if int(item.get("seq") or 0) > after]
+        now = time.time()
+        ended = run.get("ended_at")
+        return {
+            "id": run_id,
+            "session_id": run["session_id"],
+            "status": run["status"],
+            "started_at": run["started_at"],
+            "ended_at": ended,
+            "elapsed_ms": int(((ended or now) - run["started_at"]) * 1000),
+            "last_seq": run.get("last_seq", 0),
+            "truncated": bool(run.get("truncated")),
+            "events": events,
+        }
+
+
+@router.post("/hermes/runs")
+async def start_hermes_run(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be an object")
+    session_id = str(body.pop("session_id", "") or "").strip()
+    message = str(body.get("message") or "").strip()
+    if not session_id or not message:
+        raise HTTPException(400, "session_id and message are required")
+    _prune_runs()
+    run_id = "studio_" + uuid.uuid4().hex
+    now = time.time()
+    with _RUNS_LOCK:
+        _RUNS[run_id] = {
+            "session_id": session_id,
+            "status": "running",
+            "started_at": now,
+            "ended_at": None,
+            "last_seq": 0,
+            "events": [],
+            "truncated": False,
+        }
+    thread = threading.Thread(
+        target=_consume_run_stream,
+        args=(run_id, session_id, dict(body)),
+        name=f"hermes-worker-studio-{run_id[-8:]}",
+        daemon=True,
+    )
+    thread.start()
+    return {"id": run_id, "session_id": session_id, "status": "running", "started_at": now}
+
+
+@router.get("/hermes/runs/{run_id}")
+def get_hermes_run(run_id: str, after: int = 0) -> dict[str, Any]:
+    return _run_snapshot(run_id, max(0, after))
 
 
 @router.get("/health")
@@ -223,6 +375,7 @@ async def lock_hermes_session_model(session_id: str, request: Request) -> Any:
 
 @router.post("/hermes/sessions/{session_id}/chat/stream")
 async def stream_hermes_session_chat(session_id: str, request: Request) -> StreamingResponse:
+    """Raw SSE passthrough kept for non-dashboard clients and diagnostics."""
     body = await request.json()
     if not isinstance(body, dict) or not str(body.get("message") or "").strip():
         raise HTTPException(400, "message is required")
@@ -231,10 +384,7 @@ async def stream_hermes_session_chat(session_id: str, request: Request) -> Strea
     return StreamingResponse(
         _stream_request(upstream, path, body),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
 
 
