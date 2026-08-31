@@ -74,6 +74,7 @@ jobs:
           ref: ${{ env.HERMES_PIN }}
           path: .upstream/hermes
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/checkout@v5
         with:
           repository: Shermanxwz/codex-worker-delegation
