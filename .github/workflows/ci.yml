@@ -43,6 +43,7 @@ jobs:
           node --check dashboard/dist/index.js
           node --check dashboard/dist/index-v3.js
           node --check tests/frontend_runtime.mjs
+          node --check tests/frontend_runtime_v3.mjs
           node --check tests/frontend_product_v3.mjs
 
       - name: Shell syntax gate
@@ -56,6 +57,9 @@ jobs:
 
       - name: Dashboard product-flow runtime integration
         run: npm run test:frontend
+
+      - name: Seal acceptance harness CLI gate
+        run: python scripts/seal_acceptance.py --help >/dev/null
 
       - name: Dashboard manifest JSON gate
         run: python -m json.tool dashboard/manifest.json >/dev/null
@@ -152,7 +156,7 @@ jobs:
       - name: Reject committed bearer secrets
         shell: bash
         run: |
-          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' --exclude='frontend_product_v3.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
+          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' --exclude='frontend_runtime_v3.mjs' --exclude='frontend_product_v3.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
       - name: Reject a second execution runtime in production files
         shell: bash
         run: |
