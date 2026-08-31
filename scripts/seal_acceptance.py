@@ -6,8 +6,12 @@ HTTP surface. The default pass is deliberately low-risk: it verifies health,
 public integration ownership, Product 3 capabilities, model catalog access,
 and a complete ephemeral session CRUD lifecycle.
 
-Optional real model execution is enabled with ``--run``. Nothing changes
-approval policy; the harness never enables Full Access on its own.
+Optional real model execution is enabled with ``--run``. The real-run gate is
+intentionally stronger than a plain echo: it requires Hermes' own ``todo`` tool
+to evolve a three-step canonical plan through multiple revisions, requires the
+Studio Run projection to surface a real todo event, and verifies a final marker.
+Nothing changes approval policy; the harness never enables Full Access on its
+own.
 """
 from __future__ import annotations
 
@@ -77,6 +81,85 @@ def require(condition: Any, message: str) -> None:
         raise AcceptanceError(message)
 
 
+def _jsonish(value: Any) -> Any:
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return None
+
+
+def _textish(value: Any, depth: int = 0) -> str:
+    if isinstance(value, str):
+        return value
+    if value is None or depth > 3:
+        return ""
+    if isinstance(value, list):
+        return "".join(_textish(item, depth + 1) for item in value)
+    if isinstance(value, dict):
+        for key in ("text", "output_text", "content", "message"):
+            text = _textish(value.get(key), depth + 1)
+            if text:
+                return text
+    return ""
+
+
+def parse_todo_message(message: Any) -> dict[str, Any] | None:
+    """Return one persisted canonical Hermes todo result, if this row is one."""
+    if not isinstance(message, dict) or str(message.get("role") or "") != "tool":
+        return None
+    name = str(message.get("tool_name") or message.get("name") or "")
+    if name != "todo":
+        return None
+    raw = message.get("content") if message.get("content") not in (None, "") else message.get("text")
+    payload = _jsonish(raw)
+    if not isinstance(payload, dict) or not isinstance(payload.get("todos"), list):
+        return None
+    try:
+        revision = max(0, int(payload.get("revision") or 0))
+    except (TypeError, ValueError):
+        revision = 0
+    return {"revision": revision, "todos": payload["todos"], "timestamp": message.get("timestamp")}
+
+
+def canonical_todo_history(messages: Any) -> list[dict[str, Any]]:
+    """Deduplicate persisted todo snapshots by revision and return oldest->newest."""
+    if not isinstance(messages, list):
+        return []
+    by_revision: dict[int, dict[str, Any]] = {}
+    for message in messages:
+        snapshot = parse_todo_message(message)
+        if snapshot is not None:
+            by_revision[int(snapshot["revision"])] = snapshot
+    return [by_revision[key] for key in sorted(by_revision)]
+
+
+def projected_todo_events(run: Any) -> list[dict[str, Any]]:
+    """Return Studio-visible todo events from one Run snapshot."""
+    if not isinstance(run, dict) or not isinstance(run.get("events"), list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for event in run["events"]:
+        if not isinstance(event, dict):
+            continue
+        name = str(event.get("event") or "")
+        if "todo" not in name.lower():
+            continue
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        rows.append(
+            {
+                "event": name,
+                "revision": data.get("revision"),
+                "source": data.get("source"),
+                "todos": data.get("todos") if isinstance(data.get("todos"), list) else [],
+            }
+        )
+    return rows
+
+
 def pick_route(model_options: dict[str, Any], provider: str, model: str) -> tuple[str, str]:
     rows = model_options.get("providers") if isinstance(model_options, dict) else []
     rows = rows if isinstance(rows, list) else []
@@ -120,6 +203,67 @@ def wait_run(client: Client, run_id: str, timeout: float) -> dict[str, Any]:
     except Exception:
         pass
     raise AcceptanceError(f"Run {run_id} did not settle within {timeout:.0f}s; last={last}")
+
+
+def _session_messages(client: Client, session_id: str, limit: int = 100) -> list[dict[str, Any]]:
+    qid = urllib.parse.quote(session_id, safe="")
+    _, payload = client.request(f"/api/sessions/{qid}/messages?limit={limit}&order=latest")
+    rows = payload.get("messages") if isinstance(payload, dict) else None
+    return rows if isinstance(rows, list) else []
+
+
+def _session_has_marker(messages: list[dict[str, Any]], marker: str) -> bool:
+    for message in messages:
+        if not isinstance(message, dict) or str(message.get("role") or "") != "assistant":
+            continue
+        value = message.get("display_content")
+        if value is None:
+            value = message.get("content") if message.get("content") is not None else message.get("text")
+        if marker in _textish(value):
+            return True
+    return False
+
+
+def _validate_real_plan(
+    *,
+    client: Client,
+    session_id: str,
+    final: dict[str, Any],
+    marker: str,
+) -> dict[str, Any]:
+    messages = _session_messages(client, session_id)
+    history = canonical_todo_history(messages)
+    revisions = [int(row["revision"]) for row in history]
+    require(len(revisions) >= 3, f"Hermes todo did not produce >=3 persisted revisions: {revisions}")
+    require(revisions == sorted(set(revisions)), f"Hermes todo revisions are not monotonic/unique: {revisions}")
+    require(max((len(row["todos"]) for row in history), default=0) >= 3, f"Hermes todo never contained 3 steps: {history}")
+
+    saw_in_progress = any(
+        any(str(item.get("status") or "").lower() == "in_progress" for item in row["todos"] if isinstance(item, dict))
+        for row in history
+    )
+    require(saw_in_progress, f"Hermes todo never exposed an in_progress step: {history}")
+
+    final_todos = history[-1]["todos"]
+    final_statuses = [str(item.get("status") or "").lower() for item in final_todos if isinstance(item, dict)]
+    require(len(final_statuses) >= 3, f"Final Hermes todo snapshot lost steps: {final_todos}")
+    require(all(status == "completed" for status in final_statuses), f"Final Hermes todo is not fully completed: {final_todos}")
+
+    projection = projected_todo_events(final)
+    require(projection, f"Studio Run projection never surfaced canonical todo: {final.get('events')}")
+
+    output = str(final.get("output") or "")
+    marker_verified = marker in output or _session_has_marker(messages, marker)
+    require(marker_verified, f"Run completed but final marker {marker!r} was not observed")
+
+    return {
+        "marker_verified": True,
+        "canonical_revisions": revisions,
+        "canonical_revision_count": len(revisions),
+        "final_todo_count": len(final_statuses),
+        "final_statuses": final_statuses,
+        "projection_events": projection,
+    }
 
 
 def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
@@ -200,7 +344,14 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         if args.run:
             provider, model = pick_route(model_options, args.provider, args.model)
             marker = f"HWS_SEAL_RUN_OK_{stamp.replace('-', '_')}"
-            prompt = f"Reply with exactly {marker} and nothing else. Do not call tools."
+            prompt = (
+                "This is a Hermes Worker Studio acceptance test. You MUST use the Hermes todo tool and no other tool. "
+                "First create exactly three short todo items with one in_progress and the other two pending. "
+                "Then perform each harmless logical step and call todo after each step so the canonical todo revision "
+                "changes multiple times. Finish with all three items completed. The three logical steps are: "
+                "(1) remember the token ALPHA, (2) remember the token BETA, (3) verify ALPHA followed by BETA is ALPHABETA. "
+                f"After the todo list is fully completed, reply with exactly {marker} and nothing else."
+            )
             _, started = client.request(
                 f"{PLUGIN}/hermes/runs-v3",
                 method="POST",
@@ -211,16 +362,14 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
             require(run_id, f"Run start did not return an id: {started}")
             final = wait_run(client, run_id, args.run_timeout)
             require(str(final.get("status") or "").lower() == "completed", f"Real Hermes Run did not complete: {final}")
-            output = str(final.get("output") or "")
-            if output:
-                require(marker in output, f"Run completed but marker was not present in output: {output[:500]}")
+            plan_evidence = _validate_real_plan(client=client, session_id=created_id, final=final, marker=marker)
             evidence["checks"]["real_run"] = {
                 "run_id": run_id,
                 "provider": provider,
                 "model": model,
                 "status": final.get("status"),
-                "marker_verified": marker in output if output else None,
                 "event_names": sorted({str(x.get("event")) for x in (final.get("events") or []) if isinstance(x, dict)}),
+                **plan_evidence,
             }
 
     finally:
@@ -246,7 +395,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--url", default=os.getenv("HWS_DASHBOARD_URL", "http://127.0.0.1:19119"), help="Hermes Dashboard base URL")
     parser.add_argument("--api-key", default=os.getenv("API_SERVER_KEY", ""), help="Optional Dashboard/API bearer token")
     parser.add_argument("--http-timeout", type=float, default=30.0)
-    parser.add_argument("--run", action="store_true", help="Also submit and verify one real Hermes model Run")
+    parser.add_argument("--run", action="store_true", help="Run the real Hermes model + canonical three-step todo evolution gate")
     parser.add_argument("--provider", default=os.getenv("HWS_SEAL_PROVIDER", ""))
     parser.add_argument("--model", default=os.getenv("HWS_SEAL_MODEL", ""))
     parser.add_argument("--run-timeout", type=float, default=180.0)
