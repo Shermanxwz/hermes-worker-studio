@@ -1,0 +1,14 @@
+{
+  "name": "hermes-worker-studio-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:frontend": "node tests/frontend_runtime.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  }
+}
