@@ -55,16 +55,27 @@ for (const token of ['@media(max-width:820px)', 'env(safe-area-inset-bottom)', '
   assert.ok(css.includes(token), `missing responsive/product CSS token: ${token}`);
 }
 
-for (const token of ['raw_input: Any = body.get("input")', '"input": raw_input', '@router.post("/hermes/runs-v3")', '_legacy._hermes_proxy', 'Hermes official /v1/runs']) {
+for (const token of [
+  'raw_input: Any = body.get("input")',
+  '"input": raw_input',
+  '@router.post("/hermes/runs-v3")',
+  '_legacy._hermes_proxy',
+  'Hermes official /v1/runs',
+  'BUILD_CANDIDATE_SHA = "source-tree"',
+  '"candidate_sha": BUILD_CANDIDATE_SHA',
+]) {
   assert.ok(bridge.includes(token), `missing v3 bridge contract token: ${token}`);
 }
 assert.ok(!bridge.includes('str(body.get("message") or body.get("input")'), 'v3 bridge must preserve structured multimodal input');
 
 // The release installer rewrites only the staged bundle's favicon assignment
-// to the official same-origin Hermes Web favicon. No independent brand asset is
-// shipped in the installed Product 3 runtime.
+// to the official same-origin Hermes Web favicon and stamps the staged API
+// bridge with the exact candidate commit. No independent brand asset is shipped
+// in the installed Product 3 runtime.
 assert.ok(installer.includes("const href = baseHref('/favicon.ico');"));
 assert.ok(installer.includes('official Hermes Dashboard /favicon.ico'));
+assert.ok(installer.includes('HWS_CANDIDATE_SHA'));
+assert.ok(installer.includes('could not locate the unique Product 3 candidate marker'));
 assert.ok(!installer.includes('cp "$ROOT/dashboard/assets/favicon.svg"'));
 
 console.log('Worker Studio 3 product contract passed.');
