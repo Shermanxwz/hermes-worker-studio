@@ -300,7 +300,7 @@ assert.ok(byText('a', 'MCP'));
 await click(byText('button', '完整历史对话'));
 await waitFor(() => calls.some((x) => x.url === '/api/sessions?limit=20&offset=0&order=recent&archived=exclude'), 'history page request');
 assert.ok(byText('.hws-section-head', '20 个会话/页'));
-await click(byText('.hws-session-row', 'Conversation 1'));
+await click(byText('.hws-list-pane .hws-session-row', 'Conversation 1'));
 await waitFor(() => calls.some((x) => x.url === '/api/sessions/session-1/messages?limit=100&offset=0&order=oldest'), 'history transcript page 1');
 assert.ok(byText('.hws-detail-pane', '250 条消息'));
 const detailNext = [...window.document.querySelectorAll('.hws-detail-pane .hws-pagination button')].find((x) => x.textContent.includes('下一页'));
