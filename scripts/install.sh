@@ -8,6 +8,13 @@ DEST="$PLUGIN_ROOT/hermes-worker-studio"
 THEME_DIR="$HERMES_HOME/dashboard-themes"
 TMP="$PLUGIN_ROOT/.hermes-worker-studio.install.$$"
 BACKUP="$PLUGIN_ROOT/.hermes-worker-studio.backup.$$"
+CANDIDATE_SHA="${HWS_CANDIDATE_SHA:-}"
+if [[ -z "$CANDIDATE_SHA" ]] && command -v git >/dev/null 2>&1; then
+  CANDIDATE_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+fi
+if [[ -z "$CANDIDATE_SHA" ]]; then
+  CANDIDATE_SHA="unversioned-install"
+fi
 
 cleanup() {
   rm -rf "$TMP"
@@ -34,20 +41,34 @@ cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$TMP/d
 # Product 3 must visually remain inside the Hermes family. The official Hermes
 # Web Dashboard already ships its canonical favicon at /favicon.ico. Rewrite
 # only the staged product bundle's favicon assignment to reuse that same-origin
-# official asset instead of shipping a second independent brand mark. The
-# source bundle stays easy to mount in isolated test harnesses; the installed
-# runtime is the branded release artifact.
-python - "$TMP/dashboard/dist/index-v3.js" <<'PY'
+# official asset instead of shipping a second independent brand mark.
+#
+# The staged Product 3 API bridge is also stamped with the exact git candidate
+# being installed. Real-target seal evidence reads this value back through the
+# public product-capabilities endpoint, so CI, target execution, and browser
+# evidence can be cryptographically tied to one commit rather than merely to
+# the semantic version.
+python - "$TMP/dashboard/dist/index-v3.js" "$TMP/dashboard/plugin_api_v3.py" "$CANDIDATE_SHA" <<'PY'
 from pathlib import Path
 import sys
 
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
+bundle = Path(sys.argv[1])
+bridge = Path(sys.argv[2])
+candidate = sys.argv[3]
+
+text = bundle.read_text(encoding="utf-8")
 old = "    const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;"
 new = "    const href = baseHref('/favicon.ico');"
 if text.count(old) != 1:
     raise SystemExit("could not locate the unique Product 3 favicon assignment")
-path.write_text(text.replace(old, new), encoding="utf-8")
+bundle.write_text(text.replace(old, new), encoding="utf-8")
+
+source = bridge.read_text(encoding="utf-8")
+old_candidate = 'BUILD_CANDIDATE_SHA = "source-tree"'
+new_candidate = f'BUILD_CANDIDATE_SHA = {candidate!r}'
+if source.count(old_candidate) != 1:
+    raise SystemExit("could not locate the unique Product 3 candidate marker")
+bridge.write_text(source.replace(old_candidate, new_candidate), encoding="utf-8")
 PY
 
 if command -v hermes >/dev/null 2>&1; then
@@ -85,6 +106,7 @@ fi
 cat <<EOF
 
 Installed: $DEST
+Candidate: $CANDIDATE_SHA
 Theme:     $THEME_DIR/hermes-worker-studio.yaml
 Branding:  reuses the official Hermes Dashboard /favicon.ico
 
