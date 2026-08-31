@@ -1,54 +1,96 @@
-# Automated Test Matrix
+# Automated Test Matrix — Product 3
 
-A green GitHub workflow proves the repository is an **ARCHIVE CANDIDATE** against the pinned Hermes snapshot. It does not prove target-machine credentials/services.
+A green GitHub workflow proves the exact PR head is an **ARCHIVE CANDIDATE** against the pinned Hermes snapshot. Real target credentials/services and browser layout are closed separately by `scripts/seal_close.py`.
 
 ## Job: Studio static + unit + UI runtime
 
 | Gate | Evidence |
 |---|---|
 | Python syntax | `compileall` over plugin/backend/scripts/tests |
-| JS syntax | shipped `dashboard/dist/index.js` + jsdom harness |
-| Shell syntax | installer `bash -n` |
+| JS syntax | v2 compatibility bundle, Product 3 bundle, mounted runtime harnesses, Playwright config/spec |
+| Shell syntax | `scripts/install.sh` |
 | Architecture | `scripts/verify_contract.py` |
-| Unit/integration | `python -m unittest discover` |
-| Product UI | `tests/frontend_runtime.mjs` |
+| Unit / HTTP / installer | `python -m unittest discover` |
+| Mounted Product 3 behavior | `npm run test:frontend` |
+| Seal CLIs | `seal_acceptance.py`, `verify_seal_evidence.py`, `seal_close.py` help gates |
 | Manifest | JSON parser |
 | Frontend dependencies | high-severity `npm audit` |
 
-Product-flow test covers: recent 10, current 40, full-history pagination/search/archive, first-level navigation, four modes, Hermes model catalog, New API endpoint save, real model-probe route, unattended config/read-back/probe, Run timeline/todo/approval/steer/stop and Skills change rendering.
+Mounted Product 3 tests cover:
+
+- official Dashboard plugin registration and `/` product ownership;
+- `header-left` native return slot;
+- recent/session/history contracts;
+- lazy new-session creation + Session CRUD;
+- clipboard image → structured multimodal Run input;
+- Run polling, canonical plan rendering and completion;
+- Stop / Steer / approval control wiring;
+- Full Access config enable/readback/real-probe wiring/restore;
+- Custom Endpoint validate/edit/activate/delete and URL normalization;
+- real model-probe route wiring;
+- Worker / Verifier route persistence;
+- official Hermes favicon release rewrite and installed candidate-SHA contract.
 
 ## Job: Pinned Hermes public contracts
 
-Checks exact checkout SHA from `tests/upstream-lock.json` and verifies the required documented/plugin surfaces exist. The lock contains Hermes only.
+Checks exact Hermes checkout SHA from `tests/upstream-lock.json` and verifies required documented/plugin surfaces. The lock contains Hermes only.
 
-Contract families: Dashboard Plugin SDK, PluginContext lifecycle/hooks/tools, Runs API, model/options/custom endpoints, sessions/search/archive, approvals/config, Skills/Plugins/MCP.
+Contract families:
+
+- Dashboard Plugin SDK and slots;
+- `PluginContext` lifecycle/hooks/tools;
+- Runs submission/status/events/controls;
+- model/options/custom endpoints;
+- sessions/search/archive/messages;
+- approvals/config;
+- Skills/Plugins/MCP;
+- official `web/public/favicon.ico` provenance.
 
 ## Job: Hermes lifecycle + Runs + approvals + Plugin Doctor
 
-Installs the pinned Hermes snapshot and runs selected Hermes-owned regression suites:
+Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suites:
 
 - `tests/agent/test_subagent_lifecycle.py`
 - `tests/gateway/test_api_server_runs.py`
 - `tests/tools/test_approval.py`
 
-Then Hermes Plugin Doctor dynamically validates the Studio manifest/tool registration.
-
-This protects against a snapshot whose files still exist but semantics are broken.
+Then Hermes Plugin Doctor validates Studio manifest/tool registration and requires exactly `worker_delegate`, `worker_status`, `worker_catalog`.
 
 ## Job: Production security + dependency boundary
 
 - Bandit on production Python;
-- obvious committed-secret rejection;
+- committed-secret rejection;
 - second-runtime sentinel rejection in production/install files.
 
-`verify_contract.py` additionally rejects private Hermes delegation imports, direct SQLite persistence, duplicate model registry behavior, browser bearer-secret use and hard-coded reasoning ladders.
+`verify_contract.py` additionally rejects private Hermes delegation imports, direct SQLite persistence, duplicate model-registry behavior, browser bearer-secret use, hard-coded reasoning ladders, obsolete sidecar launchers and independent installed branding.
+
+## Real-target machine gate
+
+`python scripts/seal_close.py --url <Dashboard>` produces the evidence CI cannot manufacture on GitHub-hosted runners:
+
+1. exact candidate installation and running `/product-capabilities.candidate_sha` read-back;
+2. real Hermes session CRUD lifecycle;
+3. real model `/v1/runs` turn;
+4. three-step Hermes canonical todo with >=3 monotonic persisted revisions and fully completed final state;
+5. real Studio todo projection event;
+6. desktop Chromium real-target acceptance;
+7. Pixel 7 mobile-emulation real-target acceptance;
+8. independent cross-evidence verdict.
+
+Machine outputs:
+
+- `.seal/target.json`
+- `.seal/ui-report.json`
+- `.seal/playwright-artifacts/`
+- `.seal/SEALED.json`
 
 ## Failure policy
 
-No flaky bypass, `continue-on-error`, or “known failure” exemption is accepted for archive gates. A failing selected Hermes upstream test blocks the seal until the pin or Studio contract is deliberately updated.
+No flaky bypass, `continue-on-error`, static-only seal, or “known failure” exemption is accepted. A failing selected Hermes upstream test blocks the candidate. A target candidate mismatch blocks before final evidence closure. A failed/timed-out/interrupted Playwright result blocks the final verifier.
 
 ## Definition
 
-- PR CI all green: mergeable archive candidate.
-- `main` post-merge CI all green: repository archive candidate.
-- target-machine `SEAL_CHECKLIST.md` all green with captured evidence: **SEALED**.
+- exact PR-head CI all green: **ARCHIVE CANDIDATE**;
+- exact same SHA + real-target `seal_close.py` exit 0 + `.seal/SEALED.json eligible=true`: **technically SEALED / eligible for Ready+merge**.
+
+`SEAL_ACCEPTANCE.md` is the canonical release contract.
