@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Static archive contract checks.
 
-These checks intentionally test boundaries rather than implementation details:
-Worker Studio must remain a thin consumer of documented Hermes/Worker surfaces
-and must not quietly grow a private-database or guessed-capability dependency.
+These checks pin architectural boundaries rather than implementation trivia:
+Worker Studio must remain a thin consumer of documented Hermes/Worker surfaces,
+Hermes native Runs must be primary, and Worker delegation must fail closed
+outside AUTO/WORKER(DELEGATE).
 """
 from __future__ import annotations
 
@@ -68,14 +69,39 @@ for token in (
     "/api/model/options",
     "/api/sessions",
     "/chat/stream",
+    "/v1/runs",
+    "/events",
+    "/stop",
+    "/approval",
+    "/steer",
+    "/health/detailed",
+    "/hermes/unattended/probe",
     "/api/catalog",
     "/api/provider/connectivity",
     "/api/routing",
+    "official_runs",
+    "legacy_chat_stream",
+    "_DELEGATION_MODES",
     "HERMES_WORKER_STUDIO_ALLOW_REMOTE",
     "_RUN_EVENT_LIMIT",
 ):
     if token not in backend:
         fail(f"backend lost required contract token: {token}")
+
+native_tools = read("tools.py")
+for token in (
+    "/api/state",
+    "_DELEGATION_MODES",
+    "OFFICIAL",
+    "AUTO",
+    "DELEGATE",
+    "MAIN",
+    "delegation fails closed",
+    "studio_policy",
+    "danger-full-access",
+):
+    if token not in native_tools:
+        fail(f"native Worker tools lost four-mode/security token: {token}")
 
 frontend = read("dashboard/dist/index.js")
 for token in (
@@ -88,18 +114,17 @@ for token in (
     "reasoning?.options",
     "/hermes/runs",
     "/worker/provider/connectivity",
+    "['OFFICIAL', 'AUTO', 'DELEGATE', 'MAIN']",
     "unattended_mode: 'approve'",
 ):
     if token not in frontend:
         fail(f"frontend lost required behavior token: {token}")
 
-# The archive view passes the official filter into the shared paged-session
-# component; the final URL is assembled from that prop at runtime.
 if not re.search(r"archived:\s*['\"]only['\"]", frontend):
     fail("frontend lost archived-only view")
 
-# Never invent the common Codex effort ladder. Exact effort strings must flow
-# from the upstream capability registry. Auto is the only local sentinel.
+# Never invent the common Codex effort ladder. Exact effort strings flow from
+# upstream capability metadata. Auto is the only local sentinel.
 for guessed in ("minimal", "low", "medium", "high", "xhigh"):
     if re.search(rf"['\"]{re.escape(guessed)}['\"]", frontend):
         fail(f"frontend hard-codes reasoning effort {guessed!r}; only upstream-advertised values are allowed")
@@ -113,8 +138,20 @@ for secret in ("API_SERVER_KEY", "CWD_WEB_TOKEN", "HERMES_WORKER_STUDIO_API_KEY"
 # Keep upstream bridges loopback by default.
 if "127.0.0.1:8642" not in backend or "127.0.0.1:8788" not in backend:
     fail("backend loopback defaults changed")
-if "danger-full-access" not in read("tools.py"):
+if "danger-full-access" not in native_tools:
     fail("worker_delegate no longer defaults to requested full-access sandbox")
+
+lock_text = read("tests/upstream-lock.json")
+try:
+    lock = json.loads(lock_text)
+except Exception as exc:
+    lock = {}
+    fail(f"invalid upstream lock: {exc}")
+hermes_lock = lock.get("hermes", {}) if isinstance(lock, dict) else {}
+if hermes_lock.get("channel") != "post-release-snapshot":
+    fail("Hermes archive pin must explicitly disclose post-release snapshot channel")
+if not hermes_lock.get("release_commit") or not hermes_lock.get("snapshot_reason"):
+    fail("Hermes archive pin must record official release lineage and snapshot reason")
 
 if errors:
     print("Archive contract verification FAILED:", file=sys.stderr)
