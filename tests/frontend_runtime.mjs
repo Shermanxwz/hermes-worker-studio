@@ -3,7 +3,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import React, { act } from 'react';
-import { createRoot } from 'react-dom/client';
 import { JSDOM } from 'jsdom';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,7 +18,7 @@ const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></
 const { window } = dom;
 globalThis.window = window;
 globalThis.document = window.document;
-globalThis.navigator = window.navigator;
+Object.defineProperty(globalThis, 'navigator', { value: window.navigator, configurable: true });
 globalThis.HTMLElement = window.HTMLElement;
 globalThis.HTMLInputElement = window.HTMLInputElement;
 globalThis.HTMLTextAreaElement = window.HTMLTextAreaElement;
@@ -28,6 +27,11 @@ globalThis.MouseEvent = window.MouseEvent;
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 window.alert = () => {};
 window.__HERMES_BASE_PATH__ = '';
+
+// ReactDOM feature detection must see the jsdom document. Importing it before
+// installing the DOM globals makes React fall back to its legacy IE input
+// polyfill (attachEvent), which is not representative of a modern browser.
+const { createRoot } = await import('react-dom/client');
 
 const calls = [];
 let runPoll = 0;
