@@ -194,11 +194,14 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install pinned Hermes runtime and test harness
+      - name: Install pinned Hermes runtime and upstream-test dependencies
         working-directory: .upstream/hermes
         run: |
           python -m pip install --disable-pip-version-check -e .
-          python -m pip install --disable-pip-version-check pytest pytest-asyncio
+          python -m pip install --disable-pip-version-check \
+            'pytest==9.1.1' \
+            'pytest-asyncio==1.3.0' \
+            'aiohttp==3.14.3'
 
       - name: Run pinned Hermes own Runs, approval, and skills tests
         working-directory: .upstream/hermes
