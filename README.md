@@ -1,131 +1,117 @@
 # Hermes Worker Studio
 
-面向长期封存的 Hermes Agent Web 工作台：**不 fork Hermes Web，不复制 Hermes 私有数据库逻辑，不伪造模型能力**。日常对话、历史、搜索、技能/插件/MCP 管理继续走 Hermes 官方 Dashboard / API Server；派工只通过 `codex-worker-delegation` 的控制平面接入。
+面向长期封存的 Hermes Agent Web 工作台：**不 fork Hermes Web、不复制 Hermes 私有数据库、不伪造模型/Reasoning 能力、不把第三方线程冒充官方根代理**。对话、历史、搜索、Skills / Plugins / MCP 继续建立在 Hermes 官方 Dashboard / API Server / Plugin SDK 上；项目管理的派工只通过 `codex-worker-delegation` 的公开控制面接入。
 
-目标是把 Codex 风格的“真实工作过程 + 实时时长 + 完成后折叠”体验，和 Hermes 官方可维护接口组合成一个可以长期冻结的产品层。
+目标不是做一个“看起来像 Hermes”的平行实现，而是把 Hermes 官方可维护接口、真实 Runs 生命周期、Worker 四模式和可复现封存门禁组合成薄产品层。
 
-## 已实现
+## 封存架构
 
-- `/sessions` 由 Hermes **官方 Dashboard Plugin SDK** 覆盖；Hermes 核心仓库无需打补丁。
-- 首页只取最近 **10 个会话**；单个对话只取最近 **40 条消息**，避免长历史拖慢首屏。
-- “完整历史对话”独立分页：20 个会话/页，100 条消息/页。
-- 直接使用 Hermes 官方 FTS5 `/api/sessions/search` 做全文对话搜索。
-- 已归档对话独立页面，使用官方 `archived=only` 与官方 Session PATCH 归档接口。
-- 对话执行使用 Hermes 官方 API Server Session + `chat/stream` SSE。
-- 工作过程来自**真实 SSE run/tool/output 事件**；发现 Worker `task_id` 后继续读取真实 Worker 状态。
-- 运行中显示秒级实时工作时长；完成/失败后自动折叠所有工作过程并保留总耗时。
-- New API：输入 Base URL / API Key 后由 Worker 获取真实模型目录；可逐模型做真实连通性请求。
-- New API 同步到 Hermes 官方 Custom Endpoint API；密钥不下发到浏览器以外的额外存储层。
-- Main / Worker / Verifier / 对话模型选择共享同一 Worker Model Capability Registry。
-- 思考强度滑块只使用上游实际声明的 `reasoning.options`；没有声明时只显示 `Auto`，**不猜测、不硬编码**。
-- Hermes 高频入口一级显示：完整历史、已归档、Worker 路由、Skills、Plugins、MCP。
-- Models / Cron / Files / Logs / Analytics / Channels / Webhooks / Profiles / Keys / Config / System 放入二级“更多”。
-- 提供 Hermes 官方无人值守配置按钮：`approvals.mode=off` + unattended/single-query/cron approve。
-- Worker 本地运行脚本开启 `CWD_ALLOW_DANGER_FULL_ACCESS=1`；原生 `worker_delegate` 默认请求 `danger-full-access`，仍只绑定 loopback。
-- 原生 Hermes 插件工具：`worker_delegate`、`worker_status`、`worker_catalog`，让 Hermes 本身也能正式派工。
+### Hermes 是根代理
 
-> **权限边界**：Hermes 的 hardline blocklist 是官方不可绕过的安全底线。这里的“完全访问/无人值守”表示关闭正常交互审批并允许无人值守执行，不伪造“可以绕过官方不可绕过规则”。
-
-## 为什么是“官方优先”
-
-本项目只保留薄适配层：
-
-1. **Web 扩展**：Hermes Dashboard `manifest.json` / `tab.override` / `window.__HERMES_PLUGIN_SDK__`。
-2. **历史与搜索**：Hermes Dashboard `/api/sessions`、分页消息、FTS 搜索、归档。
-3. **对话与工作流**：Hermes API Server `/api/sessions/*`、`/chat/stream`、`/model`、`/v1/capabilities`。
-4. **模型**：Hermes `/api/model/options` + 官方 Custom Endpoint API；Worker 自己的真实 capability registry。
-5. **扩展 Agent 能力**：Hermes `plugin.yaml + register(ctx)` 原生插件接口。
-6. **Worker**：只调用 `codex-worker-delegation` 已公开的 HTTP 控制接口，不读写其内部文件。
-
-因此 Hermes 或 Worker 内部目录、SQLite schema、React 私有组件重构时，本项目通常不需要跟着修改。
-
-## 安装
-
-### 1. 前置条件
-
-- 已安装并可运行 Hermes Agent Web Dashboard。
-- Hermes API Server 已开启，默认 `127.0.0.1:8642`。
-- 已部署 `Shermanxwz/codex-worker-delegation`，默认 `127.0.0.1:8788`。
-- Python 3.11+；Node 仅用于开发期静态语法校验和测试，运行时前端是预构建 IIFE。
-
-示例环境见 `deploy/worker-studio.env.example`。
-
-### 2. 安装插件
-
-```bash
-bash scripts/install.sh
-```
-
-脚本会复制到：
+Hermes Worker Studio 的根对话始终由 **Hermes Agent** 执行。当前 Hermes 宣告 `run_submission` 时，执行主链路是官方 Runs API：
 
 ```text
-$HERMES_HOME/plugins/hermes-worker-studio
-$HERMES_HOME/dashboard-themes/hermes-worker-studio.yaml
+Dashboard Plugin SDK
+  -> Studio authenticated plugin API
+  -> POST /v1/runs
+  -> GET /v1/runs/{run_id}
+  -> GET /v1/runs/{run_id}/events
+  -> /stop | /approval | /steer
+  -> Hermes Session transcript
 ```
 
-如果本机有 `hermes` 命令，安装脚本会执行官方：
+只有运行中的 Hermes `/v1/capabilities` **明确不支持 native Runs** 时，Studio 才使用旧版 `/api/sessions/{id}/chat/stream` 兼容路径。一次 native Run 失败绝不会被静默重放到 legacy 路径。
 
-```bash
-hermes plugins doctor <plugin-path> --ci
-hermes plugins enable hermes-worker-studio
+Hermes `/v1/runs/{id}` 是终态真相；Studio 仅保留有界的实时事件投影用于 UI。SSE 断流不会被伪造为成功。
+
+### Worker 是独立委派控制面
+
+`codex-worker-delegation` 不替代 Hermes 根代理。Worker 的 Official/Third-party Main、Worker、Verifier 路由属于 Codex/Worker 控制面；Hermes 自己的模型解析仍使用 Hermes 官方 `/api/model/options` 和 Session model lock。
+
+这使两边 provenance 清晰：
+
+- Hermes Main = Hermes 官方 Agent runtime。
+- Worker/Codex Main = `codex-worker-delegation` README 定义的 Main。
+- Third-party Worker/Codex thread 保留其 App Server provenance，不冒充 Hermes 官方 provider 或 native subagent。
+
+## 四种 Worker 模式
+
+Web 的 `WORKER` 对应 Worker 内部 wire mode `DELEGATE`。语义严格跟随 `codex-worker-delegation` README：
+
+| UI 模式 | Wire mode | 项目管理的 Worker delegation | 语义 |
+|---|---|---:|---|
+| `OFFICIAL` | `OFFICIAL` | 禁止 | Worker 插件休眠；路由交还原生 Hermes/Codex 默认 |
+| `AUTO` | `AUTO` | 允许 | Main 正常工作；需要时按真实路由委派 Worker / Verifier |
+| `WORKER` | `DELEGATE` | 允许 | Main 协调，Worker 执行；显式项目协作模式 |
+| `MAIN` | `MAIN` | 禁止 | 只允许 Main；禁止新的项目 Worker / native subagent 执行 |
+
+这个边界不是只靠前端：
+
+1. Studio 后端 `/worker/start` 每次重新读取真实 `/api/state`；
+2. Hermes 原生 `worker_delegate` 每次也重新读取 `/api/state`；
+3. OFFICIAL / MAIN / 未知模式均 fail-closed；
+4. Worker 自己仍保留其上游后端强制逻辑。
+
+因此绕过 UI 直接调用 Studio API 或 Hermes native tool 也不能跨越模式边界。
+
+**OFFICIAL 故障隔离**：Worker `127.0.0.1:8788` 不可用时，Studio 把它标成 delegation degraded，不把 Hermes 本身判死。历史、搜索、归档和不依赖 Worker 的 Hermes 对话仍属于独立故障域。
+
+## 已实现的官方接入
+
+- `/sessions` 通过 Hermes **Dashboard Plugin SDK** 的 `tab.override` 覆盖；不 patch Hermes 核心文件。
+- 浏览器调用 `SDK.fetchJSON`，不读取 API Server / Worker bearer secret。
+- 最近对话 **10** 条；当前对话最近 **40** 条；完整历史 **20 会话/页**、**100 消息/页**。
+- Hermes 官方 `/api/sessions/search` FTS 搜索和官方 archive PATCH / `archived=only`。
+- Hermes native `/v1/runs` 主链路、Run status、SSE events、Stop、Approval、Steer。
+- `/health/detailed` readiness 转发和 `/v1/capabilities` feature discovery。
+- Hermes `/api/model/options` +官方 Custom Endpoint API；不维护本地 Hermes 模型表。
+- Worker `/api/catalog` 真实 capability registry；Reasoning 只读取上游 `reasoning.options`，`Auto` 是唯一 Studio sentinel。
+- Worker New API 保存、probe、逐模型 connectivity；API Key 输入成功后清空。
+- Hermes 官方 Skills / Plugins / MCP 页面保持原生入口；CI 直接运行 pinned Hermes 自己的 Skills API/editor 测试。
+- Hermes native plugin tools：`worker_delegate`、`worker_status`、`worker_catalog`。
+- 安装器使用 `hermes plugins doctor` + `hermes plugins enable`，支持 staged validation、原子替换和回滚。
+- Loopback-first：Hermes 默认 `127.0.0.1:8642`，Worker 默认 `127.0.0.1:8788`；远程必须显式 opt-in。
+
+## 无人值守 / 全授权边界
+
+Web 可以写入 Hermes 官方 approval 配置：
+
+```yaml
+approvals:
+  mode: off
+  cron_mode: approve
+  single_query_mode: approve
+  unattended_mode: approve
+  mcp_reload_confirm: false
+  destructive_slash_confirm: false
 ```
 
-### 3. 启动 Worker（本机无人值守）
-
-```bash
-CWD_REPO=/path/to/codex-worker-delegation bash scripts/run-worker-local.sh
-```
-
-该脚本固定 Worker 控制面在 `127.0.0.1:8788`，并设置：
+Studio 另外提供 authenticated server-side **真实 Hermes unattended probe**：
 
 ```text
-CWD_REQUIRE_AUTH=0
-CWD_ALLOW_DANGER_FULL_ACCESS=1
+POST /api/plugins/hermes-worker-studio/hermes/unattended/probe
+{"confirm":"RUN_SAFE_UNATTENDED_PROBE"}
 ```
 
-远程 Worker/API Server 默认被本插件拒绝。如确实跨主机部署，必须显式设置：
+它不会由 Studio 自己执行 shell。它启动真正的 Hermes `/v1/runs`，要求 Hermes 执行一个随机临时目录中的无害 marker 命令，然后轮询 Hermes Run 终态并验证 marker；通过才返回 `UNATTENDED_READY`。
 
-```text
-HERMES_WORKER_STUDIO_ALLOW_REMOTE=1
-```
+> Hermes hardline blocklist 仍是上游永久安全底线。Studio 不 patch、不绕过，也不声称能够绕过。
 
-并自行使用受保护网络、TLS/反向代理和独立 token。
+目标机最终封存必须同时保存 config read-back 和 real probe 证据；仅“PUT 配置返回 200”不算无人值守闭环。
 
-## 运行入口
+## New API 与模型边界
 
-安装并重启/刷新 Hermes Dashboard 后，Hermes 自己的 `/` 会继续按官方路由进入 `/sessions`；本插件通过官方 `tab.override: /sessions` 接管该页面，因此无需修改 Hermes 路由器。
+Worker 路由页处理的是 Worker/Codex 控制面：
 
-侧边栏：
-
-```text
-新建对话
-搜索对话
-当前对话
-完整历史对话
-已归档对话
-Worker 路由
-────────────
-Skills
-Plugins
-MCP
-更多…
-```
-
-## New API 与路由统一
-
-在 **Worker 路由** 页面：
-
-1. 输入 New API Base URL 和 API Key。
-2. 保存后 Worker 从上游真实模型接口刷新目录。
-3. 页面显示实际模型；可逐模型测试连通性。
-4. 同一模型目录供 Main / Worker / Verifier 与对话顶部模型选择器使用。
-5. reasoning 滑块 = `Auto + 上游实际 capability`。
-6. 对话顶部修改 Main 模型时，非 `OFFICIAL` Worker 模式会同步保存 Main route。
-7. 同一 New API 会通过 Hermes 官方 Custom Endpoint API 建立/更新对应 endpoint，供 Hermes Session model lock 使用。
+1. New API Base URL / API Key 写入 Worker 自己的 provider/vault 边界；
+2. Worker 从真实上游建立 Model Capability Registry；
+3. Main / Worker / Verifier 的 Worker 路由只使用该 registry；
+4. Reasoning 只显示该模型真实声明值；未声明即只有 `Auto`；
+5. 同一 endpoint 通过 Hermes 官方 Custom Endpoint API 注册给 Hermes；
+6. Hermes 对话需要 model override 时，Studio只在 `/api/model/options` 能唯一解析 provider + model 时做 Session model lock；不猜 provider；
+7. `OFFICIAL` 模式不写 Studio model/provider override，让 Hermes 官方默认完整接管。
 
 ## 性能策略
-
-日常页故意不加载完整历史：
 
 | Surface | 默认读取 |
 |---|---:|
@@ -134,35 +120,76 @@ MCP
 | 完整历史列表 | 20 个/页 |
 | 完整历史消息 | 100 条/页 |
 
-完整检索由 Hermes 自己的 SQLite/FTS5 完成，不在浏览器内扫描历史。
+完整检索由 Hermes 自己的持久层/FTS 完成，Studio 不直读 Hermes SQLite，也不在浏览器扫描完整历史。
 
-## 全线自动化验证
+## 精确封存基线
 
-CI 不再只做语法检查。当前 `main` 的门禁分成五条独立链路：
-
-1. **Studio static + integration + UI runtime**：静态合同、28+ Python 单元/HTTP/安装测试、实际预构建 Dashboard bundle 的 jsdom/React 运行时行为测试、npm 高危审计。
-2. **Pinned Hermes + Worker public contracts**：按 `tests/upstream-lock.json` 精确 checkout 上游 commit，并验证本项目依赖的官方公共合同仍存在。
-3. **Worker upstream tests + live control plane**：运行 Worker 自己的完整测试/check；确认 hosted runner 没有实机证据时 production/archive seal 必须 fail-closed；随后真正启动 pinned Worker HTTP 控制面，再让 Studio proxy 与原生 tool 对其做 live smoke。
-4. **Hermes real Plugin Doctor**：安装 pinned Hermes 运行时，使用 Hermes 自己的 Plugin Doctor 动态加载本项目并核对三个原生 Worker tools。
-5. **Production security static analysis**：Bandit 生产 Python 扫描 + 常见误提交密钥扫描。
-
-固定兼容基线目前为：
+机器锁：`tests/upstream-lock.json`。
 
 ```text
-Hermes Agent 0.20.6
-commit 4f22543509d1b91dc45bcb369447126c5eb14fb7
+Hermes Agent 0.20.6 post-release snapshot
+snapshot:       4f22543509d1b91dc45bcb369447126c5eb14fb7
+official tag:   v2026.8.27
+release commit: 5fc308a70719a83cccdbba4c0e39c23f5a8239d5
 
 codex-worker-delegation 3.2.0
-commit e965517e5bddeda57f5bc2b015a817279ea8e6e5
+commit: e965517e5bddeda57f5bc2b015a817279ea8e6e5
 ```
 
-完整覆盖矩阵见 `docs/AUTOMATED_TEST_MATRIX.md`。
+Hermes pin 被明确标成 **post-release snapshot**，不是伪装成 release tag。CI 会用真实 Git ancestry 验证 snapshot 继承记录的官方 release commit，并验证我们依赖的 native Runs / API-server unattended / Skills 合同。
 
-**CI 全绿的精确定义是“archive candidate”，不是伪造“目标机器已经 sealed”。** 真正封存仍要求在目标主机用真实 Hermes 账号、API Server、历史数据、New API、Worker、浏览器和服务管理环境完成 `docs/SEAL_CHECKLIST.md`，并保存证据包。
+## 全线自动化门禁
 
-## 本地仓库验证
+PR 和 `main` 的 CI 分成五个独立故障域：
 
-基础验证：
+1. **Studio static + integration + UI runtime**：compile、JS/Shell syntax、静态 archive contract、Python unit/真实 loopback HTTP integration、安装器、实际 shipped bundle 的 jsdom/React runtime、npm high audit。
+2. **Pinned Hermes + Worker public contracts**：精确 checkout lock SHA，验证 release lineage、Hermes 官方 API/SDK 语义以及 Worker README 的四模式/OAuth Main lock/capability/provenance 语义。
+3. **Worker upstream tests + four-mode live control plane**：Worker 自己完整 `npm test` + `check`；Hosted runner 的 production/archive seal 必须 fail-closed；启动真实 pinned `:8788` 后逐档切换 `OFFICIAL -> AUTO -> DELEGATE(WORKER) -> MAIN` 并恢复初始 mode。
+4. **Hermes native Runs + approvals + skills + Plugin Doctor**：安装 pinned Hermes，直接运行 Hermes 自己的 Runs、approval、Skills tests，再用 Hermes real Plugin Doctor 动态加载本插件并核对 native tools。
+5. **Production security static analysis**：Bandit + obvious-secret rejection。
+
+完整矩阵见 `docs/AUTOMATED_TEST_MATRIX.md`。
+
+**所有 Hosted CI 全绿的定义是 `ARCHIVE CANDIDATE`，不是目标机器 `SEALED`。** GitHub runner 无法诚实证明你的真实 Hermes account/OAuth、真实 provider/New API credential、真实历史数据、真实浏览器认证、宿主机权限和 service restart/rollback。最终 `SEALED` 必须完成 `docs/SEAL_CHECKLIST.md` 并保留证据。
+
+## 安装
+
+前置：Hermes Dashboard/API Server、pinned/兼容 Worker、Python 3.11+。Node 只用于开发和 CI；运行时前端是预构建 IIFE。
+
+```bash
+bash scripts/install.sh
+```
+
+安装器复制到：
+
+```text
+$HERMES_HOME/plugins/hermes-worker-studio
+$HERMES_HOME/dashboard-themes/hermes-worker-studio.yaml
+```
+
+存在 `hermes` 命令时自动运行：
+
+```bash
+hermes plugins doctor <staged-plugin-path> --ci
+hermes plugins enable hermes-worker-studio
+hermes plugins doctor <installed-plugin-path> --ci
+```
+
+本机 Worker：
+
+```bash
+CWD_REPO=/path/to/codex-worker-delegation bash scripts/run-worker-local.sh
+```
+
+默认仅 loopback；远程桥必须显式：
+
+```text
+HERMES_WORKER_STUDIO_ALLOW_REMOTE=1
+```
+
+并由部署者提供 TLS/私网和独立认证。
+
+## 本地复现
 
 ```bash
 python -m compileall -q __init__.py schemas.py tools.py dashboard scripts tests
@@ -170,43 +197,37 @@ node --check dashboard/dist/index.js
 bash -n scripts/install.sh scripts/run-worker-local.sh
 python scripts/verify_contract.py
 python -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-如果要运行 Dashboard 运行时测试：
-
-```bash
 npm install --ignore-scripts --no-fund
 npm run test:frontend
 npm audit --audit-level=high
-```
-
-目标 Hermes 主机至少还必须执行：
-
-```bash
 hermes plugins doctor . --ci
 ```
 
-然后逐项完成 `docs/SEAL_CHECKLIST.md`。**GitHub CI 无法替代目标机器上的真实凭据、真实模型、真实历史数据和真实浏览器/服务恢复测试。**
+上游锁验证需要对应 Hermes/Worker checkout：
+
+```bash
+python scripts/verify_upstreams.py --hermes-root /path/to/hermes-agent --worker-root /path/to/codex-worker-delegation
+```
 
 ## 目录
 
 ```text
 plugin.yaml                 Hermes 原生插件声明
-__init__.py / schemas.py    Hermes 原生 Worker tools
-tools.py                    Worker 控制面客户端
-dashboard/manifest.json     官方 Web Dashboard 插件声明
-dashboard/plugin_api.py     API Server / Worker 的安全薄代理
-dashboard/dist/*            预构建 Web UI
-themes/*                    可选深色主题
-scripts/*                   安装、启动、合同静态检查
-tests/*                     单元、HTTP、UI runtime、real Worker smoke、上游锁定验证
-docs/*                      架构、上游合同、安全边界、自动测试矩阵、封存验收
+__init__.py / schemas.py    Hermes native tool 注册/Schema
+tools.py                    Worker 控制面客户端 + 四模式 fail-closed
+dashboard/manifest.json     Hermes Dashboard Plugin SDK 声明
+dashboard/plugin_api.py     Hermes Runs / Worker 安全薄代理与 unattended probe
+dashboard/dist/*            预构建官方 SDK Web UI
+themes/*                    可选主题
+scripts/*                   安装、启动、静态合同/上游锁验证
+tests/*                     单元、HTTP、UI runtime、real Worker、upstream lock
+docs/*                      架构、安全、自动门禁、目标机 seal
 ```
 
-## 设计与验证文档
+## 维护文档
 
 - [架构与数据流](docs/ARCHITECTURE.md)
 - [上游官方合同](docs/UPSTREAM_CONTRACTS.md)
 - [安全与信任边界](docs/SECURITY.md)
 - [全线自动化测试矩阵](docs/AUTOMATED_TEST_MATRIX.md)
-- [封存级验收清单](docs/SEAL_CHECKLIST.md)
+- [封存级目标机验收](docs/SEAL_CHECKLIST.md)
