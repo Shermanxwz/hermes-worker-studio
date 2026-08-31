@@ -84,7 +84,6 @@ for token in (
     "HISTORY_SESSION_LIMIT = 20",
     "HISTORY_MESSAGE_LIMIT = 100",
     "/api/sessions/search",
-    "archived=only",
     "/api/providers/custom-endpoints",
     "reasoning?.options",
     "/hermes/runs",
@@ -94,13 +93,18 @@ for token in (
     if token not in frontend:
         fail(f"frontend lost required behavior token: {token}")
 
-# Never invent the common Codex effort ladder.  Exact effort strings must flow
-# from the upstream capability registry.  Auto is the only local sentinel.
+# The archive view passes the official filter into the shared paged-session
+# component; the final URL is assembled from that prop at runtime.
+if not re.search(r"archived:\s*['\"]only['\"]", frontend):
+    fail("frontend lost archived-only view")
+
+# Never invent the common Codex effort ladder. Exact effort strings must flow
+# from the upstream capability registry. Auto is the only local sentinel.
 for guessed in ("minimal", "low", "medium", "high", "xhigh"):
     if re.search(rf"['\"]{re.escape(guessed)}['\"]", frontend):
         fail(f"frontend hard-codes reasoning effort {guessed!r}; only upstream-advertised values are allowed")
 
-# Browser code may use official Dashboard API + plugin backend only.  Upstream
+# Browser code may use official Dashboard API + plugin backend only. Upstream
 # bearer secrets stay server side.
 for secret in ("API_SERVER_KEY", "CWD_WEB_TOKEN", "HERMES_WORKER_STUDIO_API_KEY", "HERMES_WORKER_STUDIO_WORKER_TOKEN"):
     if secret in frontend:
