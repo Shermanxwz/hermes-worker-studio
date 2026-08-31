@@ -114,16 +114,21 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertEqual(snapshot["todos"][0]["id"], "a")
         self.assertIn("/api/sessions/session%20x/messages?limit=100&order=latest", proxy.call_args.args[0])
 
-    def test_changed_session_todo_projects_once_without_inventing_a_planner(self):
+    def test_changed_session_todo_projects_each_new_revision_without_inventing_a_planner(self):
         run_id = "run-todo"
         plugin_api_v3._legacy._new_run_record(run_id, "session-todo", "running")
         plugin_api_v3._seed_todo_baseline(run_id, {"todos": [], "revision": 3})
-        next_snapshot = {
+        revision4 = {
             "todos": [{"id": "4", "content": "Verify", "status": "in_progress"}],
             "revision": 4,
             "source": "hermes_session_api",
         }
-        with patch.object(plugin_api_v3, "_latest_session_todo_snapshot", return_value=next_snapshot):
+        revision5 = {
+            "todos": [{"id": "4", "content": "Verify", "status": "completed"}],
+            "revision": 5,
+            "source": "hermes_session_api",
+        }
+        with patch.object(plugin_api_v3, "_latest_session_todo_snapshot", return_value=revision4):
             self.assertTrue(plugin_api_v3._project_session_todo_if_changed(run_id))
             with plugin_api_v3._legacy._RUNS_LOCK:
                 events = list(plugin_api_v3._legacy._RUNS[run_id]["events"])
@@ -132,6 +137,14 @@ class ProductRunsBridgeTests(unittest.TestCase):
             self.assertEqual(events[-1]["data"]["source"], "hermes_session_api")
             self.assertEqual(events[-1]["data"]["revision"], 4)
             self.assertFalse(plugin_api_v3._project_session_todo_if_changed(run_id))
+
+        with plugin_api_v3._legacy._RUNS_LOCK:
+            plugin_api_v3._legacy._RUNS[run_id]["todo_polled_at"] = 0.0
+        with patch.object(plugin_api_v3, "_latest_session_todo_snapshot", return_value=revision5):
+            self.assertTrue(plugin_api_v3._project_session_todo_if_changed(run_id))
+        with plugin_api_v3._legacy._RUNS_LOCK:
+            events = list(plugin_api_v3._legacy._RUNS[run_id]["events"])
+        self.assertEqual([event["data"]["revision"] for event in events if event["event"] == "todo.snapshot"], [4, 5])
 
     def test_official_runs_todo_event_wins_over_session_projection(self):
         run_id = "run-official-todo"
