@@ -4,12 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const [manifestRaw, js, css, bridge, favicon] = await Promise.all([
+const [manifestRaw, js, css, bridge, installer] = await Promise.all([
   fs.readFile(path.join(root, 'dashboard/manifest.json'), 'utf8'),
   fs.readFile(path.join(root, 'dashboard/dist/index-v3.js'), 'utf8'),
   fs.readFile(path.join(root, 'dashboard/dist/product.css'), 'utf8'),
   fs.readFile(path.join(root, 'dashboard/plugin_api_v3.py'), 'utf8'),
-  fs.readFile(path.join(root, 'dashboard/assets/favicon.svg'), 'utf8'),
+  fs.readFile(path.join(root, 'scripts/install.sh'), 'utf8'),
 ]);
 const manifest = JSON.parse(manifestRaw);
 
@@ -60,8 +60,11 @@ for (const token of ['raw_input: Any = body.get("input")', '"input": raw_input',
 }
 assert.ok(!bridge.includes('str(body.get("message") or body.get("input")'), 'v3 bridge must preserve structured multimodal input');
 
-assert.ok(favicon.includes('Hermes Worker Studio'));
-assert.ok(favicon.includes('#082a27'));
-assert.ok(favicon.includes('#f2dfbb'));
+// The release installer rewrites only the staged bundle's favicon assignment
+// to the official same-origin Hermes Web favicon. No independent brand asset is
+// shipped in the installed Product 3 runtime.
+assert.ok(installer.includes("const href = baseHref('/favicon.ico');"));
+assert.ok(installer.includes('official Hermes Dashboard /favicon.ico'));
+assert.ok(!installer.includes('cp "$ROOT/dashboard/assets/favicon.svg"'));
 
 console.log('Worker Studio 3 product contract passed.');
