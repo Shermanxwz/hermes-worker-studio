@@ -150,9 +150,22 @@ css = read("dashboard/dist/product.css")
 for token in ("@media(max-width:820px)", "env(safe-area-inset-bottom)", ".hws3-mobile-scrim", ".hws3-composer", ".hws3-plan-card", ".hws3-return-slot"):
     require(css, token, "product CSS")
 
-favicon = read("dashboard/assets/favicon.svg")
-for token in ("Hermes Worker Studio", "#082a27", "#f2dfbb"):
-    require(favicon, token, "favicon")
+# Branding is sealed by reuse of the official same-origin Hermes Web favicon,
+# not by maintaining a second Studio-owned mark. The source bundle stays
+# mountable in isolated tests, while the supported installer rewrites only the
+# staged release bundle to /favicon.ico. CI separately proves that exact asset
+# exists in the pinned upstream Hermes checkout.
+installer = read("scripts/install.sh")
+for token in (
+    "const href = baseHref('/favicon.ico');",
+    "official Hermes Dashboard /favicon.ico",
+    "could not locate the unique Product 3 favicon assignment",
+):
+    require(installer, token, "official Hermes branding installer")
+if 'cp "$ROOT/dashboard/assets/favicon.svg"' in installer:
+    fail("installer still ships an independent Worker Studio favicon")
+if (ROOT / "dashboard" / "assets" / "favicon.svg").exists():
+    fail("independent Worker Studio favicon asset still exists")
 
 legacy_repo = "codex-worker-" + "delegation"
 legacy_port = ":" + "8788"
