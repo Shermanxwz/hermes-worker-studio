@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import pathlib
-import shutil
 import stat
 import subprocess
 import tempfile
@@ -65,7 +64,7 @@ class InstallScriptTests(unittest.TestCase):
     def _dest(self) -> pathlib.Path:
         return self.hermes_home / "plugins" / "hermes-worker-studio"
 
-    def test_install_copies_only_runtime_surface_and_calls_official_doctor(self) -> None:
+    def test_install_copies_only_product_3_runtime_surface_and_calls_official_doctor(self) -> None:
         result = self._run()
         self.assertIn("Installed:", result.stdout)
         dest = self._dest()
@@ -76,8 +75,10 @@ class InstallScriptTests(unittest.TestCase):
             "tools.py",
             "dashboard/manifest.json",
             "dashboard/plugin_api.py",
-            "dashboard/dist/index.js",
-            "dashboard/dist/style.css",
+            "dashboard/plugin_api_v3.py",
+            "dashboard/dist/index-v3.js",
+            "dashboard/dist/product.css",
+            "dashboard/assets/favicon.svg",
         }
         actual = {
             str(path.relative_to(dest))
@@ -85,6 +86,8 @@ class InstallScriptTests(unittest.TestCase):
             if path.is_file()
         }
         self.assertEqual(actual, expected)
+        self.assertNotIn("dashboard/dist/index.js", actual)
+        self.assertNotIn("dashboard/dist/style.css", actual)
         self.assertTrue((self.hermes_home / "dashboard-themes" / "hermes-worker-studio.yaml").is_file())
         log = self.log.read_text(encoding="utf-8")
         self.assertEqual(log.count("plugins doctor"), 2)
@@ -120,6 +123,7 @@ class InstallScriptTests(unittest.TestCase):
         self.hermes.unlink()
         result = self._run()
         self.assertTrue(self._dest().is_dir())
+        self.assertTrue((self._dest() / "dashboard" / "plugin_api_v3.py").is_file())
         self.assertIn("hermes command not found", result.stderr)
         self.assertIn("Enable manually", result.stdout)
 
