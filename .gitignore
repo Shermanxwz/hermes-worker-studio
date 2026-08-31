@@ -4,3 +4,7 @@ __pycache__/
 .env.*
 !deploy/*.env.example
 .DS_Store
+node_modules/
+.seal/
+playwright-report/
+test-results/
