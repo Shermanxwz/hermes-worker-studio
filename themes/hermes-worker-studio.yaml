@@ -1,35 +1,40 @@
 name: hermes-worker-studio
 label: Hermes Worker Studio
-description: Compact low-noise theme for long-running agent work.
+description: Hermes-native teal and cream product theme for long-running agent work.
 palette:
   background:
-    hex: "#0b0d0f"
+    hex: "#071513"
     alpha: 1.0
   midground:
-    hex: "#e7e9ed"
+    hex: "#f3e8d0"
     alpha: 1.0
   foreground:
     hex: "#ffffff"
     alpha: 0.0
-  warmGlow: "rgba(255, 255, 255, 0.025)"
-  noiseOpacity: 0.10
+  warmGlow: "rgba(58, 168, 151, 0.12)"
+  noiseOpacity: 0.08
 typography:
   fontSans: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
   fontMono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
   baseSize: "14px"
-  lineHeight: "1.5"
+  lineHeight: "1.55"
   letterSpacing: "0"
 layout:
-  radius: "0.55rem"
-  density: compact
+  radius: "0.75rem"
+  density: comfortable
 layoutVariant: tiled
 componentStyles:
   card:
     boxShadow: "none"
   header:
-    background: "rgba(11, 13, 15, 0.94)"
+    background: "rgba(7, 21, 19, 0.94)"
   page:
     background: "transparent"
 colorOverrides:
-  border: "rgba(231, 233, 237, 0.12)"
-  mutedForeground: "rgba(231, 233, 237, 0.58)"
+  primary: "#e8d5ac"
+  primaryForeground: "#0a2622"
+  accent: "#3aa897"
+  ring: "#3aa897"
+  success: "#55c996"
+  border: "rgba(93, 167, 153, 0.20)"
+  mutedForeground: "rgba(210, 227, 220, 0.62)"
