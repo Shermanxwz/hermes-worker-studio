@@ -46,6 +46,8 @@ jobs:
           node --check tests/frontend_runtime_v3.mjs
           node --check tests/frontend_product_v3.mjs
           node --check tests/frontend_settings_v3.mjs
+          node --check playwright.seal.config.mjs
+          node --check tests/target_ui.spec.mjs
 
       - name: Shell syntax gate
         run: bash -n scripts/install.sh
