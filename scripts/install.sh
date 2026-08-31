@@ -17,7 +17,7 @@ trap cleanup EXIT
 for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
-  dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/assets/favicon.svg; do
+  dashboard/dist/index-v3.js dashboard/dist/product.css; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
     exit 1
@@ -26,11 +26,29 @@ done
 
 mkdir -p "$PLUGIN_ROOT" "$THEME_DIR"
 rm -rf "$TMP" "$BACKUP"
-mkdir -p "$TMP/dashboard/dist" "$TMP/dashboard/assets"
+mkdir -p "$TMP/dashboard/dist"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
 cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
 cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$TMP/dashboard/dist/"
-cp "$ROOT/dashboard/assets/favicon.svg" "$TMP/dashboard/assets/"
+
+# Product 3 must visually remain inside the Hermes family. The official Hermes
+# Web Dashboard already ships its canonical favicon at /favicon.ico. Rewrite
+# only the staged product bundle's favicon assignment to reuse that same-origin
+# official asset instead of shipping a second independent brand mark. The
+# source bundle stays easy to mount in isolated test harnesses; the installed
+# runtime is the branded release artifact.
+python - "$TMP/dashboard/dist/index-v3.js" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+old = "    const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;"
+new = "    const href = baseHref('/favicon.ico');"
+if text.count(old) != 1:
+    raise SystemExit("could not locate the unique Product 3 favicon assignment")
+path.write_text(text.replace(old, new), encoding="utf-8")
+PY
 
 if command -v hermes >/dev/null 2>&1; then
   echo "[1/4] Hermes plugin doctor (staged tree)"
@@ -68,6 +86,7 @@ cat <<EOF
 
 Installed: $DEST
 Theme:     $THEME_DIR/hermes-worker-studio.yaml
+Branding:  reuses the official Hermes Dashboard /favicon.ico
 
 Runtime contract:
   HERMES_WORKER_STUDIO_API_URL=http://127.0.0.1:8642
