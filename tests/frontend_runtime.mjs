@@ -90,6 +90,19 @@ const catalog = {
   runtime: { effectiveRouting: workerState.routing.AUTO },
 };
 
+const hermesModelOptions = {
+  providers: [
+    {
+      slug: 'custom:worker-studio-new-api',
+      aliases: ['custom:worker-studio-new-api'],
+      is_user_defined: true,
+      authenticated: true,
+      api_url: 'https://new.example/v1',
+      models: ['new-reason', 'new-no-effort'],
+    },
+  ],
+};
+
 function responseFor(url, init = {}) {
   calls.push({ url, method: init.method || 'GET', body: init.body ? JSON.parse(init.body) : null });
 
@@ -125,6 +138,7 @@ function responseFor(url, init = {}) {
   if (url === '/api/plugins/hermes-worker-studio/worker/state') return workerState;
   if (url === '/api/plugins/hermes-worker-studio/worker/catalog') return catalog;
   if (url === '/api/plugins/hermes-worker-studio/health') return { ok: true, hermes: { ok: true }, worker: { ok: true } };
+  if (url === '/api/plugins/hermes-worker-studio/hermes/model-options?refresh=0') return hermesModelOptions;
   if (url === '/api/plugins/hermes-worker-studio/worker/provider' && init.method === 'PUT') {
     providerSaved = true;
     lastProviderPayload = JSON.parse(init.body);
@@ -191,20 +205,7 @@ function responseFor(url, init = {}) {
   if (url === '/api/plugins/hermes-worker-studio/worker/status/task-runtime-1') {
     return { task_id: 'task-runtime-1', status: 'completed', output: 'verified' };
   }
-  if (url.startsWith('/api/model/options')) {
-    return {
-      providers: [
-        {
-          slug: 'custom:worker-studio-new-api',
-          aliases: ['custom:worker-studio-new-api'],
-          is_user_defined: true,
-          authenticated: true,
-          api_url: 'https://new.example/v1',
-          models: ['new-reason', 'new-no-effort'],
-        },
-      ],
-    };
-  }
+  if (url.startsWith('/api/model/options')) return hermesModelOptions;
   if (url.startsWith('/api/sessions/session-77/messages?')) return { messages: [] };
   if (url.startsWith('/api/sessions/archived-1/messages?')) return { messages: [] };
   if (url.startsWith('/api/sessions/session-21/messages?')) return { messages: [] };
@@ -326,8 +327,9 @@ await waitFor(() => byText('.hws-worker-page', 'Hermes 派工系统'), 'worker p
 assert.ok(byText('.hws-worker-page', 'auto'));
 assert.ok(byText('.hws-worker-page', 'balanced'));
 assert.ok(byText('.hws-worker-page', 'deep'));
-const noEffortCard = [...window.document.querySelectorAll('.hws-route-card')].find((el) => el.textContent.includes('No Effort Model'));
+const noEffortCard = [...window.document.querySelectorAll('.hws-route-card')].find((el) => el.querySelector('h3')?.textContent === 'Worker');
 assert.ok(noEffortCard);
+assert.equal(noEffortCard.querySelector('select:nth-of-type(2)')?.value || noEffortCard.querySelectorAll('select')[1]?.value, 'new-no-effort');
 const noEffortRange = noEffortCard.querySelector('input[type="range"]');
 assert.equal(noEffortRange.disabled, true, 'model without upstream efforts must be Auto-only');
 assert.ok(noEffortCard.textContent.includes('上游未声明思考强度'));
