@@ -6,7 +6,7 @@
 
 The pull request must be green for all CI jobs:
 
-- Studio static + unit + Product 3 UI contract
+- Studio static + unit + Product 3 mounted UI runtime
 - Hermes pinned public-contract verification
 - Hermes upstream subagent lifecycle / Runs / approvals regression tests
 - Hermes Plugin Doctor
@@ -27,7 +27,7 @@ python scripts/seal_acceptance.py \
 
 If the Dashboard/API is protected, export `API_SERVER_KEY` first. `--provider` and `--model` can pin a specific configured route; otherwise the harness chooses a usable Hermes model from `/api/model/options`.
 
-The harness is intentionally conservative. Its default checks are health, ownership/integration contracts, model catalog and a temporary session create → rename → archive → unarchive → delete lifecycle. `--run` additionally performs a real Hermes `/v1/runs` model turn and records event names.
+The harness is intentionally conservative. Its default checks are health, execution/Worker ownership, Product 3 capabilities (including the Hermes-owned plan source), model catalog and a temporary session create → rename → archive → unarchive → delete lifecycle. `--run` additionally performs a real Hermes `/v1/runs` model turn and records event names.
 
 ## Product UI gate
 
@@ -49,11 +49,18 @@ The following paths must be exercised in a real desktop browser and a real mobil
 
 Worker Studio must never invent a planner or label inferred tool activity as an "official plan".
 
-Hermes already owns canonical todo state and emits `todo.updated` on its TUI/Desktop gateway. The pinned public `/v1/runs` event bridge currently does **not** expose that snapshot. Upstream request:
+Hermes owns the canonical revisioned todo store. Hermes TUI/Desktop already emits `todo.updated`; the pinned public `/v1/runs` event bridge currently does not. Product 3 therefore uses a two-level **official-only** source strategy:
+
+1. if `/v1/runs` exposes a canonical `todo.updated`, use it directly;
+2. otherwise poll the documented Session API and project only persisted results of Hermes' own `todo` tool as `todo.snapshot` with `source=hermes_session_api`.
+
+The fallback is not a Studio planner and does not infer steps from tool calls: it parses the same `{todos, revision}` payload returned by Hermes `tools/todo_tool.py`, through `/api/sessions/{id}/messages`. The pre-run revision is captured first so an old plan is not announced as a new-turn update, and every later monotonic revision can project.
+
+Upstream request remains open because direct Runs events are cleaner and lower-latency:
 
 - NousResearch/hermes-agent#99686 — `API Server Runs: expose official todo.updated snapshots on /v1/runs event stream`
 
-Until the public Runs contract emits canonical todo snapshots (or Hermes provides an equivalent documented public contract), the Product 3 plan card is capability-driven: it renders only real `todo` events and otherwise stays absent. Closing this upstream contract is required before declaring the **official-plan portion** sealed.
+For sealing, a real target must run a 3+ step task that actually invokes Hermes `todo` and visibly prove the plan card follows the canonical revisions. The upstream issue is no longer a blocker by itself because the fallback is also a documented Hermes public-interface projection.
 
 ## Branding gate
 
@@ -66,5 +73,5 @@ Do not mark the PR ready, merge it, tag a release, or write `SEALED` until:
 1. all PR CI checks are green;
 2. real-target `seal_acceptance.py --run` produces green evidence;
 3. desktop + mobile product paths above are checked;
-4. the official-plan public-contract gate is closed or explicitly version-gated to a Hermes release that provides it;
+4. a real Hermes todo task proves the official plan projection, including at least one revision transition;
 5. the final Hermes-family favicon is accepted.
