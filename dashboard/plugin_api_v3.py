@@ -146,10 +146,14 @@ def _project_session_todo_if_changed(run_id: str) -> bool:
         run["todo_polled_at"] = now
         session_id = str(run.get("session_id") or "")
         previous_revision = int(run.get("todo_revision", -1))
-        # If official Runs starts emitting canonical todo events (upstream
-        # NousResearch/hermes-agent#99686), prefer them and stop synthesizing
-        # the Session-API projection for this run.
-        if any("todo" in str(event.get("event") or "").lower() for event in run.get("events", [])):
+        # If official Runs starts emitting its canonical todo.updated event
+        # (upstream NousResearch/hermes-agent#99686), prefer that transport and
+        # stop adding Session-API projection events. Our own todo.snapshot must
+        # NOT trigger this guard because later revisions still need to project.
+        if any(
+            str(event.get("event") or "").lower() == "todo.updated"
+            for event in run.get("events", [])
+        ):
             return False
 
     try:
