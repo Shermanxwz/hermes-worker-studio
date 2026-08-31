@@ -13,4 +13,4 @@ config_schema:
   mode:
     type: str
     default: AUTO
-    description: Studio delegation policy: OFFICIAL, AUTO, DELEGATE, or MAIN.
+    description: "Studio delegation policy: OFFICIAL, AUTO, DELEGATE, or MAIN."
