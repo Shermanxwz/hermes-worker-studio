@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:frontend": "node --input-type=module -e \"Object.defineProperty(globalThis,'navigator',{value:undefined,writable:true,configurable:true}); await import('./tests/frontend_runtime.mjs')\""
+    "test:frontend": "node tests/frontend_runtime.mjs"
   },
   "devDependencies": {
     "jsdom": "26.1.0",
