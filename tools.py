@@ -140,6 +140,10 @@ def worker_delegate(args: dict, **kwargs: Any) -> str:
     try:
         from agent.subagent_lifecycle import SubagentLaunchRequest
 
+        # Validate every optional wait value before launch. A malformed caller
+        # must never create a real child and only then discover its request was
+        # invalid.
+        wait_timeout = _wait_seconds(args.get("wait_timeout_seconds"))
         context = str(args.get("context") or "").strip() or None
         if product_role == "verifier":
             verifier_brief = (
@@ -175,7 +179,7 @@ def worker_delegate(args: dict, **kwargs: Any) -> str:
             "status": status,
         }
         if args.get("wait_for_completion") is True:
-            terminal = service.wait(handle, timeout_seconds=_wait_seconds(args.get("wait_timeout_seconds")))
+            terminal = service.wait(handle, timeout_seconds=wait_timeout)
             payload["wait"] = terminal
             payload["result"] = service.result(handle)
         return _dump(payload)
