@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import sys
 import threading
 from typing import Any
 
@@ -19,6 +20,7 @@ _spec = importlib.util.spec_from_file_location("hermes_worker_studio_v2_api", _h
 if _spec is None or _spec.loader is None:  # pragma: no cover - loader invariant
     raise RuntimeError("could not load Worker Studio compatibility bridge")
 _legacy = importlib.util.module_from_spec(_spec)
+sys.modules.setdefault(_spec.name, _legacy)
 _spec.loader.exec_module(_legacy)
 
 router = _legacy.router
