@@ -83,11 +83,11 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Verify exact upstream revisions and public contracts
+      - name: Verify exact revisions, release lineage, and public semantics
         run: python scripts/verify_upstreams.py --hermes-root .upstream/hermes --worker-root .upstream/worker
 
   worker-upstream-seal:
-    name: Worker upstream tests + live control plane
+    name: Worker upstream tests + four-mode live control plane
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -162,7 +162,7 @@ jobs:
           cat "${RUNNER_TEMP}/worker.log"
           exit 1
 
-      - name: Studio against pinned real Worker
+      - name: Studio against pinned real Worker and all four modes
         env:
           HERMES_WORKER_STUDIO_WORKER_URL: http://127.0.0.1:8788
           HERMES_WORKER_STUDIO_ALLOW_REMOTE: '0'
@@ -177,10 +177,10 @@ jobs:
           echo '--- worker log ---'
           cat "${RUNNER_TEMP}/worker.log" 2>/dev/null || true
 
-  hermes-real-plugin-doctor:
-    name: Hermes real Plugin Doctor
+  hermes-native-contract:
+    name: Hermes native Runs + approvals + skills + Plugin Doctor
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/checkout@v5
@@ -193,9 +193,21 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install pinned Hermes runtime in supported developer mode
+      - name: Install pinned Hermes runtime and test harness
         working-directory: .upstream/hermes
-        run: python -m pip install --disable-pip-version-check -e .
+        run: |
+          python -m pip install --disable-pip-version-check -e .
+          python -m pip install --disable-pip-version-check pytest pytest-asyncio
+
+      - name: Run pinned Hermes own Runs, approval, and skills tests
+        working-directory: .upstream/hermes
+        env:
+          HERMES_HOME: ${{ runner.temp }}/hermes-upstream-test-home
+        run: |
+          python -m pytest -q \
+            tests/gateway/test_api_server_runs.py \
+            tests/tools/test_approval.py \
+            tests/hermes_cli/test_web_server_skill_editor.py
 
       - name: Run Hermes runtime-backed Plugin Doctor on Studio
         env:
