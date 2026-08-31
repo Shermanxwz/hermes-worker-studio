@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import sys
 import time
 import unittest
 from unittest.mock import patch
@@ -10,6 +11,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("hws_plugin_api", ROOT / "dashboard" / "plugin_api.py")
 assert SPEC and SPEC.loader
 plugin_api = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = plugin_api
 SPEC.loader.exec_module(plugin_api)
 
 
