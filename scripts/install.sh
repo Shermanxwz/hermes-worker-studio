@@ -65,12 +65,14 @@ cat <<EOF
 Installed: $DEST
 Theme:     $THEME_DIR/hermes-worker-studio.yaml
 
-Required runtime bridge settings (prefer your service environment):
+Runtime contract:
   HERMES_WORKER_STUDIO_API_URL=http://127.0.0.1:8642
   HERMES_WORKER_STUDIO_API_KEY=<same value as API_SERVER_KEY>
-  HERMES_WORKER_STUDIO_WORKER_URL=http://127.0.0.1:8788
 
-Refresh/restart the official Hermes dashboard. /sessions will be replaced by
-Worker Studio through the official Dashboard Plugin SDK; Hermes core files are
-not patched.
+Worker/Verifier execution is in-process through Hermes public
+PluginContext.subagent_lifecycle. No Worker sidecar, Codex App Server, :8788,
+or CWD_* service is required.
+
+Refresh/restart the official Hermes dashboard. /sessions is replaced through
+the official Dashboard Plugin SDK; Hermes core files are never patched.
 EOF
