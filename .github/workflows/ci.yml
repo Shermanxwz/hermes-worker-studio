@@ -88,6 +88,8 @@ jobs:
           python-version: '3.12'
       - name: Verify exact revision and documented public semantics
         run: python scripts/verify_upstreams.py --hermes-root .upstream/hermes
+      - name: Verify official Hermes Web branding asset
+        run: test -s .upstream/hermes/web/public/favicon.ico
 
   hermes-native-contract:
     name: Hermes lifecycle + Runs + approvals + Plugin Doctor
