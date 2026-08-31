@@ -61,8 +61,11 @@ jobs:
       - name: Dashboard product-flow runtime integration
         run: npm run test:frontend
 
-      - name: Seal acceptance harness CLI gate
-        run: python scripts/seal_acceptance.py --help >/dev/null
+      - name: Seal command CLI gates
+        run: |
+          python scripts/seal_acceptance.py --help >/dev/null
+          python scripts/verify_seal_evidence.py --help >/dev/null
+          python scripts/seal_close.py --help >/dev/null
 
       - name: Dashboard manifest JSON gate
         run: python -m json.tool dashboard/manifest.json >/dev/null
