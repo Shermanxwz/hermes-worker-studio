@@ -46,7 +46,7 @@
 - 已安装并可运行 Hermes Agent Web Dashboard。
 - Hermes API Server 已开启，默认 `127.0.0.1:8642`。
 - 已部署 `Shermanxwz/codex-worker-delegation`，默认 `127.0.0.1:8788`。
-- Python 3.11+；Node 仅用于开发期静态语法校验，运行时前端是预构建 IIFE。
+- Python 3.11+；Node 仅用于开发期静态语法校验和测试，运行时前端是预构建 IIFE。
 
 示例环境见 `deploy/worker-studio.env.example`。
 
@@ -136,24 +136,57 @@ MCP
 
 完整检索由 Hermes 自己的 SQLite/FTS5 完成，不在浏览器内扫描历史。
 
-## 验证
+## 全线自动化验证
 
-仓库 CI 会执行：
+CI 不再只做语法检查。当前 `main` 的门禁分成五条独立链路：
 
-```bash
-python -m py_compile __init__.py schemas.py tools.py dashboard/plugin_api.py
-node --check dashboard/dist/index.js
-python scripts/verify_contract.py
-bash -n scripts/install.sh scripts/run-worker-local.sh
+1. **Studio static + integration + UI runtime**：静态合同、28+ Python 单元/HTTP/安装测试、实际预构建 Dashboard bundle 的 jsdom/React 运行时行为测试、npm 高危审计。
+2. **Pinned Hermes + Worker public contracts**：按 `tests/upstream-lock.json` 精确 checkout 上游 commit，并验证本项目依赖的官方公共合同仍存在。
+3. **Worker upstream tests + live control plane**：运行 Worker 自己的完整测试/check；确认 hosted runner 没有实机证据时 production/archive seal 必须 fail-closed；随后真正启动 pinned Worker HTTP 控制面，再让 Studio proxy 与原生 tool 对其做 live smoke。
+4. **Hermes real Plugin Doctor**：安装 pinned Hermes 运行时，使用 Hermes 自己的 Plugin Doctor 动态加载本项目并核对三个原生 Worker tools。
+5. **Production security static analysis**：Bandit 生产 Python 扫描 + 常见误提交密钥扫描。
+
+固定兼容基线目前为：
+
+```text
+Hermes Agent 0.20.6
+commit 4f22543509d1b91dc45bcb369447126c5eb14fb7
+
+codex-worker-delegation 3.2.0
+commit e965517e5bddeda57f5bc2b015a817279ea8e6e5
 ```
 
-在目标 Hermes 主机还应执行：
+完整覆盖矩阵见 `docs/AUTOMATED_TEST_MATRIX.md`。
+
+**CI 全绿的精确定义是“archive candidate”，不是伪造“目标机器已经 sealed”。** 真正封存仍要求在目标主机用真实 Hermes 账号、API Server、历史数据、New API、Worker、浏览器和服务管理环境完成 `docs/SEAL_CHECKLIST.md`，并保存证据包。
+
+## 本地仓库验证
+
+基础验证：
+
+```bash
+python -m compileall -q __init__.py schemas.py tools.py dashboard scripts tests
+node --check dashboard/dist/index.js
+bash -n scripts/install.sh scripts/run-worker-local.sh
+python scripts/verify_contract.py
+python -m unittest discover -s tests -p 'test_*.py' -v
+```
+
+如果要运行 Dashboard 运行时测试：
+
+```bash
+npm install --ignore-scripts --no-fund
+npm run test:frontend
+npm audit --audit-level=high
+```
+
+目标 Hermes 主机至少还必须执行：
 
 ```bash
 hermes plugins doctor . --ci
 ```
 
-然后按 `docs/SEAL_CHECKLIST.md` 做一次实机验收。**GitHub CI 无法替代你机器上的 Hermes + API Server + New API + Worker 端到端运行验证。**
+然后逐项完成 `docs/SEAL_CHECKLIST.md`。**GitHub CI 无法替代目标机器上的真实凭据、真实模型、真实历史数据和真实浏览器/服务恢复测试。**
 
 ## 目录
 
@@ -166,12 +199,14 @@ dashboard/plugin_api.py     API Server / Worker 的安全薄代理
 dashboard/dist/*            预构建 Web UI
 themes/*                    可选深色主题
 scripts/*                   安装、启动、合同静态检查
-docs/*                      架构、上游合同、安全边界、封存验收
+tests/*                     单元、HTTP、UI runtime、real Worker smoke、上游锁定验证
+docs/*                      架构、上游合同、安全边界、自动测试矩阵、封存验收
 ```
 
-## 设计文档
+## 设计与验证文档
 
 - [架构与数据流](docs/ARCHITECTURE.md)
 - [上游官方合同](docs/UPSTREAM_CONTRACTS.md)
 - [安全与信任边界](docs/SECURITY.md)
+- [全线自动化测试矩阵](docs/AUTOMATED_TEST_MATRIX.md)
 - [封存级验收清单](docs/SEAL_CHECKLIST.md)
