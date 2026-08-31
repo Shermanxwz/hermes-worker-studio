@@ -1,22 +1,25 @@
 """Hermes Worker Studio dashboard backend.
 
-Loaded by the official Hermes dashboard plugin loader.  This is deliberately a
-thin adapter over two documented local HTTP contracts:
+Archive-grade bridge built only on public Hermes and codex-worker-delegation
+HTTP contracts.  The browser never receives upstream bearer credentials.
 
-* Hermes API Server (default http://127.0.0.1:8642)
-* codex-worker-delegation control plane (default http://127.0.0.1:8788)
-
-The dashboard browser never receives either upstream bearer token.  Session
-listing/search/archive/configuration continue to use the dashboard's own
-official REST API directly; this module only handles surfaces that require a
-server-side credential or streaming bridge.
+Execution policy:
+* Prefer Hermes' native /v1/runs lifecycle and control endpoints.
+* Fall back to the legacy Session chat/stream contract only when the running
+  Hermes capability document explicitly lacks run submission.
+* Treat Hermes run status as authoritative; Studio only caches event projection.
+* Enforce Worker four-mode delegation boundaries server-side in addition to UI
+  and the native Hermes plugin tool.
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import pathlib
+import shlex
 import socket
+import tempfile
 import threading
 import time
 import urllib.error
@@ -37,6 +40,9 @@ _STREAM_TIMEOUT = float(os.getenv("HERMES_WORKER_STUDIO_STREAM_TIMEOUT", "7200")
 _RUN_TTL = float(os.getenv("HERMES_WORKER_STUDIO_RUN_TTL", "21600"))
 _RUN_EVENT_LIMIT = 10000
 _RUN_EVENT_DATA_LIMIT = 1024 * 1024
+_TERMINAL_RUN_STATES = {"completed", "failed", "cancelled", "stopped", "incomplete"}
+_DELEGATION_MODES = {"AUTO", "DELEGATE"}
+_VALID_WORKER_MODES = {"OFFICIAL", "AUTO", "DELEGATE", "MAIN"}
 
 
 @dataclass(frozen=True)
@@ -90,8 +96,11 @@ def _url(upstream: Upstream, path: str) -> str:
     return upstream.base_url + path
 
 
-def _headers(upstream: Upstream, *, json_body: bool = False) -> dict[str, str]:
-    headers = {"Accept": "application/json", "User-Agent": "hermes-worker-studio/1.0"}
+def _headers(upstream: Upstream, *, json_body: bool = False, sse: bool = False) -> dict[str, str]:
+    headers = {
+        "Accept": "text/event-stream" if sse else "application/json",
+        "User-Agent": "hermes-worker-studio/1.1",
+    }
     if upstream.bearer:
         headers["Authorization"] = f"Bearer {upstream.bearer}"
     if json_body:
@@ -143,17 +152,24 @@ def _request_json(
         raise HTTPException(502, f"{upstream.name} returned invalid JSON") from exc
 
 
-def _stream_request(upstream: Upstream, path: str, body: Any) -> Iterable[bytes]:
-    """Yield the upstream SSE stream without inventing or renaming events."""
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    headers = _headers(upstream, json_body=True)
-    headers["Accept"] = "text/event-stream"
-    request = urllib.request.Request(_url(upstream, path), data=data, method="POST", headers=headers)
+def _stream_request(
+    upstream: Upstream,
+    path: str,
+    body: Any | None = None,
+    *,
+    method: str = "POST",
+) -> Iterable[bytes]:
+    """Yield an upstream SSE stream without inventing or renaming events."""
+    data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        _url(upstream, path),
+        data=data,
+        method=method,
+        headers=_headers(upstream, json_body=body is not None, sse=True),
+    )
     response = None
     try:
         response = urllib.request.urlopen(request, timeout=_STREAM_TIMEOUT)
-        # SSE is line-oriented. readline() forwards lifecycle/tool events as
-        # soon as Hermes emits them instead of waiting for a large buffer.
         while True:
             chunk = response.readline()
             if not chunk:
@@ -161,10 +177,10 @@ def _stream_request(upstream: Upstream, path: str, body: Any) -> Iterable[bytes]
             yield chunk
     except urllib.error.HTTPError as exc:
         message = _decode_error(exc, upstream).detail
-        yield f"event: studio.error\ndata: {json.dumps({'error': message}, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield f"event: studio.transport.error\ndata: {json.dumps({'error': message}, ensure_ascii=False)}\n\n".encode("utf-8")
     except Exception as exc:
         payload = {"error": f"{upstream.name} stream failed: {type(exc).__name__}: {exc}"}
-        yield f"event: studio.error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
+        yield f"event: studio.transport.error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
     finally:
         if response is not None:
             response.close()
@@ -178,15 +194,41 @@ def _hermes_proxy(path: str, method: str = "GET", body: Any | None = None) -> An
     return _request_json(_hermes(), path, method=method, body=body)
 
 
+def _feature(capabilities: Any, name: str) -> bool:
+    if not isinstance(capabilities, dict):
+        return False
+    features = capabilities.get("features")
+    if isinstance(features, dict) and name in features:
+        return features.get(name) is True
+    return capabilities.get(name) is True
+
+
+def _run_support() -> dict[str, bool]:
+    """Discover the stable Hermes API-server surface; never version-guess."""
+    try:
+        capabilities = _hermes_proxy("/v1/capabilities")
+    except HTTPException as exc:
+        if exc.status_code in {404, 405}:
+            return {"submission": False, "events": False, "stop": False, "approval": False, "steer": False}
+        raise
+    return {
+        "submission": _feature(capabilities, "run_submission"),
+        "events": _feature(capabilities, "run_events_sse"),
+        "stop": _feature(capabilities, "run_stop"),
+        "approval": _feature(capabilities, "run_approval"),
+        # run steer landed as an additive Runs endpoint; older capability
+        # documents may omit a dedicated flag, so availability is probed only
+        # when the user explicitly calls the endpoint.
+        "steer": _feature(capabilities, "run_steer"),
+    }
+
+
 # ---------------------------------------------------------------------------
-# Pollable run bridge
+# Run projection cache
 # ---------------------------------------------------------------------------
-# Dashboard plugins are officially expected to use SDK.fetchJSON(), which
-# carries the dashboard's authentication correctly in both loopback-token and
-# gated-cookie modes.  fetchJSON is intentionally JSON-only, while Hermes' run
-# surface is SSE.  To avoid teaching the plugin bundle private dashboard auth
-# details, the backend consumes the official Hermes SSE and exposes a tiny
-# cursor-based JSON poll surface.  Event names/data are preserved verbatim.
+# Hermes owns execution and terminal truth.  Studio keeps only a bounded event
+# projection because Dashboard SDK.fetchJSON is the stable authenticated plugin
+# transport while Hermes run events are SSE.
 
 _RUNS: dict[str, dict[str, Any]] = {}
 _RUNS_LOCK = threading.RLock()
@@ -195,11 +237,7 @@ _RUNS_LOCK = threading.RLock()
 def _prune_runs(now: float | None = None) -> None:
     now = now or time.time()
     with _RUNS_LOCK:
-        stale = [
-            run_id
-            for run_id, run in _RUNS.items()
-            if now - float(run.get("started_at") or now) > _RUN_TTL
-        ]
+        stale = [run_id for run_id, run in _RUNS.items() if now - float(run.get("started_at") or now) > _RUN_TTL]
         for run_id in stale:
             _RUNS.pop(run_id, None)
 
@@ -228,45 +266,82 @@ def _append_run_event(run_id: str, name: str, data: Any) -> None:
         if name == "run.completed":
             run["status"] = "completed"
             run["ended_at"] = time.time()
-        elif name in {"run.failed", "run.error", "studio.error"}:
+        elif name in {"run.failed", "run.error"}:
             run["status"] = "failed"
+            run["ended_at"] = time.time()
+        elif name in {"run.cancelled", "run.canceled", "run.stopped"}:
+            run["status"] = "cancelled"
             run["ended_at"] = time.time()
 
 
-def _consume_run_stream(run_id: str, session_id: str, body: dict[str, Any]) -> None:
+def _consume_sse(run_id: str, wire: Iterable[bytes], *, legacy_eof_incomplete: bool) -> None:
     event_name = "message"
     data_lines: list[str] = []
-    path = f"/api/sessions/{urllib.parse.quote(session_id, safe='')}/chat/stream"
-    try:
-        for raw_line in _stream_request(_hermes(), path, body):
-            line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
-            if not line:
-                if data_lines:
-                    _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
-                event_name = "message"
-                data_lines = []
-                continue
-            if line.startswith(":"):
-                continue
-            if line.startswith("event:"):
-                event_name = line[6:].strip() or "message"
-            elif line.startswith("data:"):
-                data_lines.append(line[5:].lstrip())
-        if data_lines:
-            _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+    for raw_line in wire:
+        line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
+        if not line:
+            if data_lines:
+                _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+            event_name = "message"
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("event:"):
+            event_name = line[6:].strip() or "message"
+        elif line.startswith("data:"):
+            data_lines.append(line[5:].lstrip())
+    if data_lines:
+        _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+    if legacy_eof_incomplete:
         with _RUNS_LOCK:
             run = _RUNS.get(run_id)
-            if run and run.get("status") == "running":
-                # A clean EOF without run.completed is still not a fabricated
-                # success. Mark it explicitly so the UI can surface the gap.
+            if run and run.get("status") not in _TERMINAL_RUN_STATES:
                 run["status"] = "incomplete"
                 run["ended_at"] = time.time()
+
+
+def _consume_legacy_chat_stream(run_id: str, session_id: str, body: dict[str, Any]) -> None:
+    path = f"/api/sessions/{urllib.parse.quote(session_id, safe='')}/chat/stream"
+    try:
+        _consume_sse(run_id, _stream_request(_hermes(), path, body, method="POST"), legacy_eof_incomplete=True)
     except Exception as exc:
-        _append_run_event(
-            run_id,
-            "studio.error",
-            {"error": f"run bridge failed: {type(exc).__name__}: {exc}"},
-        )
+        _append_run_event(run_id, "run.error", {"error": f"legacy run bridge failed: {type(exc).__name__}: {exc}"})
+
+
+def _refresh_official_run(run_id: str) -> dict[str, Any]:
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+        if not run:
+            raise HTTPException(404, "run not found or expired")
+        upstream_run_id = str(run.get("upstream_run_id") or run_id)
+    payload = _hermes_proxy(f"/v1/runs/{urllib.parse.quote(upstream_run_id, safe='')}")
+    if not isinstance(payload, dict):
+        raise HTTPException(502, "Hermes run status is not an object")
+    status = str(payload.get("status") or "running").lower()
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+        if run:
+            run["status"] = status
+            for field in ("output", "usage", "error", "model", "provider", "pending_steer"):
+                if field in payload:
+                    run[field] = payload[field]
+            if status in _TERMINAL_RUN_STATES and not run.get("ended_at"):
+                run["ended_at"] = time.time()
+    return payload
+
+
+def _consume_official_run_events(run_id: str, upstream_run_id: str) -> None:
+    path = f"/v1/runs/{urllib.parse.quote(upstream_run_id, safe='')}/events"
+    try:
+        _consume_sse(run_id, _stream_request(_hermes(), path, None, method="GET"), legacy_eof_incomplete=False)
+    finally:
+        # Event transport expiry/closure does not decide run truth.  Refresh the
+        # authoritative Hermes status once; later UI polls keep refreshing it.
+        try:
+            _refresh_official_run(run_id)
+        except HTTPException as exc:
+            _append_run_event(run_id, "studio.transport.error", {"error": str(exc.detail)})
 
 
 def _run_snapshot(run_id: str, after: int = 0) -> dict[str, Any]:
@@ -275,11 +350,24 @@ def _run_snapshot(run_id: str, after: int = 0) -> dict[str, Any]:
         run = _RUNS.get(run_id)
         if not run:
             raise HTTPException(404, "run not found or expired")
+        transport = run.get("transport")
+    sync_error = None
+    if transport == "official_runs":
+        try:
+            _refresh_official_run(run_id)
+        except HTTPException as exc:
+            sync_error = str(exc.detail)
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+        if not run:
+            raise HTTPException(404, "run not found or expired")
         events = [dict(item) for item in run["events"] if int(item.get("seq") or 0) > after]
         now = time.time()
         ended = run.get("ended_at")
-        return {
+        snapshot = {
             "id": run_id,
+            "upstream_run_id": run.get("upstream_run_id"),
+            "transport": run.get("transport"),
             "session_id": run["session_id"],
             "status": run["status"],
             "started_at": run["started_at"],
@@ -289,6 +377,51 @@ def _run_snapshot(run_id: str, after: int = 0) -> dict[str, Any]:
             "truncated": bool(run.get("truncated")),
             "events": events,
         }
+        for field in ("output", "usage", "error", "model", "provider", "pending_steer"):
+            if field in run:
+                snapshot[field] = run[field]
+        if sync_error:
+            snapshot["status_sync_error"] = sync_error
+        return snapshot
+
+
+def _new_run_record(
+    run_id: str,
+    session_id: str,
+    *,
+    transport: str,
+    upstream_run_id: str | None = None,
+    status: str = "running",
+) -> dict[str, Any]:
+    now = time.time()
+    with _RUNS_LOCK:
+        _RUNS[run_id] = {
+            "session_id": session_id,
+            "transport": transport,
+            "upstream_run_id": upstream_run_id,
+            "status": status,
+            "started_at": now,
+            "ended_at": None,
+            "last_seq": 0,
+            "events": [],
+            "truncated": False,
+        }
+    return {"id": run_id, "session_id": session_id, "transport": transport, "status": status, "started_at": now}
+
+
+def _official_run_body(body: dict[str, Any], session_id: str, message: str) -> dict[str, Any]:
+    outgoing: dict[str, Any] = {"input": message, "session_id": session_id}
+    for key in (
+        "instructions",
+        "conversation_history",
+        "previous_response_id",
+        "model",
+        "provider",
+        "model_options",
+    ):
+        if key in body and body[key] not in (None, "", {}):
+            outgoing[key] = body[key]
+    return outgoing
 
 
 @router.post("/hermes/runs")
@@ -296,31 +429,60 @@ async def start_hermes_run(request: Request) -> dict[str, Any]:
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(400, "body must be an object")
-    session_id = str(body.pop("session_id", "") or "").strip()
-    message = str(body.get("message") or "").strip()
+    session_id = str(body.get("session_id") or "").strip()
+    message = str(body.get("message") or body.get("input") or "").strip()
     if not session_id or not message:
         raise HTTPException(400, "session_id and message are required")
     _prune_runs()
-    run_id = "studio_" + uuid.uuid4().hex
-    now = time.time()
-    with _RUNS_LOCK:
-        _RUNS[run_id] = {
-            "session_id": session_id,
-            "status": "running",
-            "started_at": now,
-            "ended_at": None,
-            "last_seq": 0,
-            "events": [],
-            "truncated": False,
-        }
+    support = await asyncio.to_thread(_run_support)
+    if support["submission"]:
+        upstream = await asyncio.to_thread(
+            _hermes_proxy,
+            "/v1/runs",
+            method="POST",
+            body=_official_run_body(body, session_id, message),
+        )
+        if not isinstance(upstream, dict):
+            raise HTTPException(502, "Hermes /v1/runs returned a non-object")
+        upstream_run_id = str(upstream.get("run_id") or upstream.get("id") or "").strip()
+        if not upstream_run_id:
+            raise HTTPException(502, "Hermes /v1/runs did not return run_id")
+        status = str(upstream.get("status") or "running").lower()
+        initial = _new_run_record(
+            upstream_run_id,
+            session_id,
+            transport="official_runs",
+            upstream_run_id=upstream_run_id,
+            status=status,
+        )
+        initial["capabilities"] = support
+        if support["events"]:
+            thread = threading.Thread(
+                target=_consume_official_run_events,
+                args=(upstream_run_id, upstream_run_id),
+                name=f"hermes-worker-studio-run-{upstream_run_id[-8:]}",
+                daemon=True,
+            )
+            thread.start()
+        return initial
+
+    # Compatibility path for older Hermes only.  The fallback is capability
+    # gated; a failed current Runs request is never silently re-executed here.
+    run_id = "studio_legacy_" + uuid.uuid4().hex
+    legacy_body = {"message": message}
+    for key in ("instructions", "conversation_history", "previous_response_id"):
+        if key in body:
+            legacy_body[key] = body[key]
+    initial = _new_run_record(run_id, session_id, transport="legacy_chat_stream")
+    initial["capabilities"] = support
     thread = threading.Thread(
-        target=_consume_run_stream,
-        args=(run_id, session_id, dict(body)),
-        name=f"hermes-worker-studio-{run_id[-8:]}",
+        target=_consume_legacy_chat_stream,
+        args=(run_id, session_id, legacy_body),
+        name=f"hermes-worker-studio-legacy-{run_id[-8:]}",
         daemon=True,
     )
     thread.start()
-    return {"id": run_id, "session_id": session_id, "status": "running", "started_at": now}
+    return initial
 
 
 @router.get("/hermes/runs/{run_id}")
@@ -328,9 +490,64 @@ def get_hermes_run(run_id: str, after: int = 0) -> dict[str, Any]:
     return _run_snapshot(run_id, max(0, after))
 
 
+def _official_control_target(run_id: str) -> str:
+    with _RUNS_LOCK:
+        run = _RUNS.get(run_id)
+        if not run:
+            raise HTTPException(404, "run not found or expired")
+        if run.get("transport") != "official_runs":
+            raise HTTPException(409, "this run uses legacy chat/stream and has no native Runs control plane")
+        return str(run.get("upstream_run_id") or run_id)
+
+
+@router.post("/hermes/runs/{run_id}/stop")
+def stop_hermes_run(run_id: str) -> Any:
+    target = _official_control_target(run_id)
+    result = _hermes_proxy(f"/v1/runs/{urllib.parse.quote(target, safe='')}/stop", method="POST", body={})
+    try:
+        _refresh_official_run(run_id)
+    except HTTPException:
+        pass
+    return result
+
+
+@router.post("/hermes/runs/{run_id}/approval")
+async def approve_hermes_run(run_id: str, request: Request) -> Any:
+    target = _official_control_target(run_id)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "approval body must be an object")
+    choice = str(body.get("choice") or "").lower()
+    if choice not in {"once", "session", "always", "deny"}:
+        raise HTTPException(400, "choice must be one of once/session/always/deny")
+    clean = {"choice": choice}
+    if "resolve_all" in body:
+        clean["resolve_all"] = body.get("resolve_all") is True
+    return await asyncio.to_thread(
+        _hermes_proxy,
+        f"/v1/runs/{urllib.parse.quote(target, safe='')}/approval",
+        method="POST",
+        body=clean,
+    )
+
+
+@router.post("/hermes/runs/{run_id}/steer")
+async def steer_hermes_run(run_id: str, request: Request) -> Any:
+    target = _official_control_target(run_id)
+    body = await request.json()
+    if not isinstance(body, dict) or not str(body.get("input") or "").strip():
+        raise HTTPException(400, "steer input is required")
+    return await asyncio.to_thread(
+        _hermes_proxy,
+        f"/v1/runs/{urllib.parse.quote(target, safe='')}/steer",
+        method="POST",
+        body={"input": str(body["input"]).strip()},
+    )
+
+
 @router.get("/health")
 def health() -> dict[str, Any]:
-    result: dict[str, Any] = {"ok": True, "hermes": None, "worker": None}
+    result: dict[str, Any] = {"ok": True, "hermes": None, "worker": None, "worker_degraded": False}
     try:
         result["hermes"] = _hermes_proxy("/health")
     except HTTPException as exc:
@@ -339,13 +556,45 @@ def health() -> dict[str, Any]:
     try:
         result["worker"] = _worker_proxy("/api/health")
     except HTTPException as exc:
+        # Worker is an optional delegation plane.  Its outage must never mark
+        # Hermes OFFICIAL operation itself unhealthy.
+        result["worker_degraded"] = True
         result["worker"] = {"ok": False, "status": exc.status_code, "error": exc.detail}
     return result
+
+
+@router.get("/integration")
+def integration_status() -> dict[str, Any]:
+    hermes_support = _run_support()
+    worker = None
+    worker_error = None
+    try:
+        worker = _worker_proxy("/api/state")
+    except HTTPException as exc:
+        worker_error = str(exc.detail)
+    mode = str(worker.get("mode") or "").upper() if isinstance(worker, dict) else None
+    return {
+        "hermes": {
+            "runs": hermes_support,
+            "execution_plane": "official_runs" if hermes_support["submission"] else "legacy_chat_stream",
+        },
+        "worker": {
+            "available": worker is not None,
+            "mode": mode,
+            "delegation_allowed": mode in _DELEGATION_MODES if mode else False,
+            "error": worker_error,
+        },
+    }
 
 
 @router.get("/hermes/capabilities")
 def hermes_capabilities() -> Any:
     return _hermes_proxy("/v1/capabilities")
+
+
+@router.get("/hermes/readiness")
+def hermes_readiness() -> Any:
+    return _hermes_proxy("/health/detailed")
 
 
 @router.get("/hermes/model-options")
@@ -365,6 +614,8 @@ async def create_hermes_session(request: Request) -> Any:
 @router.post("/hermes/sessions/{session_id}/model")
 async def lock_hermes_session_model(session_id: str, request: Request) -> Any:
     body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "model body must be an object")
     return await asyncio.to_thread(
         _hermes_proxy,
         f"/api/sessions/{urllib.parse.quote(session_id, safe='')}/model",
@@ -375,17 +626,111 @@ async def lock_hermes_session_model(session_id: str, request: Request) -> Any:
 
 @router.post("/hermes/sessions/{session_id}/chat/stream")
 async def stream_hermes_session_chat(session_id: str, request: Request) -> StreamingResponse:
-    """Raw SSE passthrough kept for non-dashboard clients and diagnostics."""
+    """Raw legacy SSE passthrough retained only for diagnostics/compatibility."""
     body = await request.json()
     if not isinstance(body, dict) or not str(body.get("message") or "").strip():
         raise HTTPException(400, "message is required")
-    upstream = _hermes()
     path = f"/api/sessions/{urllib.parse.quote(session_id, safe='')}/chat/stream"
     return StreamingResponse(
-        _stream_request(upstream, path, body),
+        _stream_request(_hermes(), path, body, method="POST"),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
+
+
+@router.post("/hermes/unattended/probe")
+async def hermes_unattended_probe(request: Request) -> dict[str, Any]:
+    """Run a safe real API-server approval probe after config read-back.
+
+    The browser must explicitly opt in.  Hermes itself is asked to execute a
+    harmless `bash -c` write to a random file in the system temp directory.
+    That command shape normally passes through Hermes' approval gate, so a
+    successful marker proves the API-server path did not block waiting for a
+    human.  Studio does not alter or bypass Hermes' hardline blocklist.
+    """
+    body = await request.json()
+    if not isinstance(body, dict) or body.get("confirm") != "RUN_SAFE_UNATTENDED_PROBE":
+        raise HTTPException(400, "explicit unattended probe confirmation is required")
+    support = await asyncio.to_thread(_run_support)
+    if not support["submission"]:
+        raise HTTPException(409, "Hermes native Runs API is required for the unattended probe")
+    marker = pathlib.Path(tempfile.gettempdir()) / f"hws-unattended-{uuid.uuid4().hex}.txt"
+    marker_text = "HERMES_WORKER_STUDIO_UNATTENDED_OK"
+    command = f"bash -c {shlex.quote('printf %s ' + shlex.quote(marker_text) + ' > ' + shlex.quote(str(marker)))}"
+    prompt = (
+        "This is a local unattended-mode verification initiated by the authenticated operator. "
+        "Use the terminal tool to execute exactly this harmless command once, then reply with "
+        f"{marker_text}: {command}"
+    )
+    upstream = await asyncio.to_thread(_hermes_proxy, "/v1/runs", method="POST", body={"input": prompt})
+    run_id = str(upstream.get("run_id") or upstream.get("id") or "") if isinstance(upstream, dict) else ""
+    if not run_id:
+        raise HTTPException(502, "Hermes unattended probe did not return run_id")
+    deadline = time.time() + float(os.getenv("HERMES_WORKER_STUDIO_UNATTENDED_PROBE_TIMEOUT", "90"))
+    final: dict[str, Any] = {}
+    try:
+        while time.time() < deadline:
+            final = await asyncio.to_thread(_hermes_proxy, f"/v1/runs/{urllib.parse.quote(run_id, safe='')}")
+            status = str(final.get("status") or "").lower() if isinstance(final, dict) else ""
+            if status in _TERMINAL_RUN_STATES:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            try:
+                await asyncio.to_thread(_hermes_proxy, f"/v1/runs/{urllib.parse.quote(run_id, safe='')}/stop", method="POST", body={})
+            except HTTPException:
+                pass
+            raise HTTPException(504, "Hermes unattended probe timed out")
+        status = str(final.get("status") or "").lower()
+        marker_ok = marker.is_file() and marker.read_text(encoding="utf-8", errors="replace") == marker_text
+        if status != "completed" or not marker_ok:
+            raise HTTPException(
+                409,
+                {
+                    "message": "Hermes unattended probe did not complete the approval-gated marker command",
+                    "run_id": run_id,
+                    "status": status,
+                    "marker_ok": marker_ok,
+                    "error": final.get("error") if isinstance(final, dict) else None,
+                },
+            )
+        return {"ok": True, "status": "UNATTENDED_READY", "run_id": run_id, "marker_verified": True}
+    finally:
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Worker control plane
+# ---------------------------------------------------------------------------
+
+
+def _normalize_worker_mode(value: Any) -> str:
+    mode = str(value or "").strip().upper()
+    if mode == "WORKER":
+        mode = "DELEGATE"
+    if mode not in _VALID_WORKER_MODES:
+        raise HTTPException(400, "mode must be OFFICIAL/AUTO/WORKER(DELEGATE)/MAIN")
+    return mode
+
+
+def _worker_mode_state() -> tuple[str, Any]:
+    state = _worker_proxy("/api/state")
+    if not isinstance(state, dict):
+        raise HTTPException(502, "Worker state is not an object")
+    return _normalize_worker_mode(state.get("mode") or "OFFICIAL"), state
+
+
+def _require_worker_delegation_mode() -> tuple[str, Any]:
+    mode, state = _worker_mode_state()
+    if mode not in _DELEGATION_MODES:
+        raise HTTPException(
+            409,
+            f"project-managed Worker delegation is disabled in {mode}; use AUTO or WORKER/DELEGATE",
+        )
+    return mode, state
 
 
 @router.get("/worker/health")
@@ -424,13 +769,23 @@ async def worker_provider_connectivity(request: Request) -> Any:
 @router.put("/worker/mode")
 async def worker_mode(request: Request) -> Any:
     body = await request.json()
-    return await asyncio.to_thread(_worker_proxy, "/api/mode", method="PUT", body=body)
+    if not isinstance(body, dict):
+        raise HTTPException(400, "mode body must be an object")
+    mode = _normalize_worker_mode(body.get("mode"))
+    return await asyncio.to_thread(_worker_proxy, "/api/mode", method="PUT", body={"mode": mode})
 
 
 @router.put("/worker/routing")
 async def worker_routing(request: Request) -> Any:
     body = await request.json()
-    return await asyncio.to_thread(_worker_proxy, "/api/routing", method="PUT", body=body)
+    if not isinstance(body, dict):
+        raise HTTPException(400, "routing body must be an object")
+    mode = _normalize_worker_mode(body.get("mode"))
+    if mode == "OFFICIAL":
+        raise HTTPException(409, "OFFICIAL delegates all routing policy to the native runtime and accepts no project routes")
+    clean = dict(body)
+    clean["mode"] = mode
+    return await asyncio.to_thread(_worker_proxy, "/api/routing", method="PUT", body=clean)
 
 
 @router.post("/worker/codex/install")
@@ -446,6 +801,9 @@ def worker_verify_coexistence() -> Any:
 @router.post("/worker/start")
 async def worker_start(request: Request) -> Any:
     body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "worker body must be an object")
+    await asyncio.to_thread(_require_worker_delegation_mode)
     return await asyncio.to_thread(_worker_proxy, "/api/worker/start", method="POST", body=body)
 
 
