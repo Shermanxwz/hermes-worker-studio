@@ -175,7 +175,9 @@ def _run_support() -> dict[str, bool]:
         "submission": _feature(capabilities, "run_submission"),
         "events": _feature(capabilities, "run_events_sse"),
         "stop": _feature(capabilities, "run_stop"),
-        "approval": _feature(capabilities, "run_approval"),
+        # Hermes 0.20.6 names this capability ``run_approval_response``;
+        # retain the shorter alias for older public snapshots.
+        "approval": _feature(capabilities, "run_approval_response") or _feature(capabilities, "run_approval"),
         "steer": _feature(capabilities, "run_steer"),
     }
 
@@ -215,6 +217,16 @@ def _safe_event_data(raw: str) -> Any:
         return {"raw": raw}
 
 
+def _project_sse_event(event_name: str, data: Any) -> tuple[str, Any]:
+    """Project Hermes' generic SSE envelope to its documented event name."""
+    effective_name = event_name or "message"
+    if effective_name == "message" and isinstance(data, dict):
+        embedded_name = data.get("event")
+        if isinstance(embedded_name, str) and embedded_name.strip():
+            effective_name = embedded_name.strip()
+    return effective_name, data
+
+
 def _append_run_event(run_id: str, name: str, data: Any) -> None:
     with _RUNS_LOCK:
         run = _RUNS.get(run_id)
@@ -246,7 +258,12 @@ def _consume_sse(run_id: str, wire: Iterable[bytes]) -> None:
         line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
         if not line:
             if data_lines:
-                _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+                data = _safe_event_data("\n".join(data_lines))
+                # Hermes 0.20.6 may use the generic SSE envelope
+                # ``event: message`` while carrying the documented lifecycle
+                # name in the JSON payload.
+                effective_name, data = _project_sse_event(event_name, data)
+                _append_run_event(run_id, effective_name, data)
             event_name = "message"
             data_lines = []
             continue
@@ -257,7 +274,9 @@ def _consume_sse(run_id: str, wire: Iterable[bytes]) -> None:
         elif line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
     if data_lines:
-        _append_run_event(run_id, event_name, _safe_event_data("\n".join(data_lines)))
+        data = _safe_event_data("\n".join(data_lines))
+        effective_name, data = _project_sse_event(event_name, data)
+        _append_run_event(run_id, effective_name, data)
 
 
 def _new_run_record(run_id: str, session_id: str | None, status: str) -> dict[str, Any]:

@@ -70,6 +70,29 @@ class RunProjectionTests(unittest.TestCase):
         self.assertEqual(snap["events"][0]["data"], {"raw": "first\nsecond"})
         self.assertEqual(snap["status"], "running")
 
+    def test_generic_sse_envelope_projects_embedded_hermes_event_name(self):
+        run_id = self._seed()
+        plugin_api._consume_sse(run_id, iter([
+            b"event: message\n",
+            b'data: {"event":"message.delta","delta":"hello"}\n', b"\n",
+            b"event: message\n",
+            b'data: {"event":"run.completed","output":"done"}\n', b"\n",
+        ]))
+        with patch.object(plugin_api, "_hermes_proxy", return_value={"status": "completed", "output": "done"}):
+            snap = plugin_api._run_snapshot(run_id)
+        self.assertEqual([x["event"] for x in snap["events"]], ["message.delta", "run.completed"])
+        self.assertEqual(snap["status"], "completed")
+
+    def test_explicit_sse_event_name_still_wins_over_payload_field(self):
+        run_id = self._seed()
+        plugin_api._consume_sse(run_id, iter([
+            b"event: tool.started\n",
+            b'data: {"event":"payload.name","tool_name":"terminal"}\n', b"\n",
+        ]))
+        with patch.object(plugin_api, "_hermes_proxy", return_value={"status": "running"}):
+            snap = plugin_api._run_snapshot(run_id)
+        self.assertEqual(snap["events"][0]["event"], "tool.started")
+
     def test_native_run_body_is_allowlisted(self):
         outgoing = plugin_api._official_run_body({
             "message": "go",

@@ -46,7 +46,10 @@ class InstallScriptTests(unittest.TestCase):
             {
                 "HOME": str(self.home),
                 "HERMES_HOME": str(self.hermes_home),
-                "PATH": str(self.bin) + os.pathsep + env.get("PATH", ""),
+                # Keep the real host's /usr/local/bin/hermes out of this
+                # negative-path test; the fixture intentionally removes its
+                # only Hermes binary.
+                "PATH": str(self.bin) + os.pathsep + "/usr/bin:/bin",
             }
         )
         return subprocess.run(

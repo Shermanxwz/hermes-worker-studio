@@ -233,6 +233,7 @@
     if (name === 'run.completed') return '任务执行完成';
     if (['run.failed', 'run.error'].includes(name)) return '任务执行失败';
     if (['run.cancelled', 'run.canceled', 'run.stopped'].includes(name)) return '任务已停止';
+    if (name === 'message.delta') return 'Hermes 文本流';
     if (name === 'tool.started') return `执行工具 · ${toolName(data)}`;
     if (name === 'tool.completed') return `工具完成 · ${toolName(data)}`;
     if (name === 'tool.failed') return `工具失败 · ${toolName(data)}`;
@@ -365,7 +366,7 @@
     const started = Number(run.started_at || 0) * 1000;
     const ended = run.ended_at ? Number(run.ended_at) * 1000 : null;
     const duration = run.elapsed_ms != null ? run.elapsed_ms : Math.max(0, (ended || now) - started);
-    const lifecycle = (run.events || []).filter((e) => e.event !== 'assistant.delta');
+    const lifecycle = (run.events || []).filter((e) => !['assistant.delta', 'message.delta'].includes(e.event));
     return h('section', { className: `hws-work ${done ? 'done' : 'running'}` },
       h('button', { className: 'hws-work-head', type: 'button', onClick: () => setExpanded(!expanded) },
         h('span', { className: 'hws-work-state' }, done ? (run.status === 'completed' ? '✓' : '!') : h(Spinner)),
@@ -961,7 +962,7 @@
           const incoming = data.events || [];
           if (incoming.length) {
             ref.seq = Math.max(ref.seq, ...incoming.map((e) => Number(e.seq || 0)));
-            const delta = incoming.filter((e) => e.event === 'assistant.delta').map((e) => deltaText(e.data)).join('');
+            const delta = incoming.filter((e) => ['assistant.delta', 'message.delta'].includes(e.event)).map((e) => deltaText(e.data)).join('');
             if (delta) setStreamText((x) => x + delta);
           }
           setRun((prev) => ({

@@ -80,7 +80,7 @@ class HermesHandler(BaseHTTPRequestHandler):
                 "run_submission": self.runs_enabled,
                 "run_events_sse": self.runs_enabled,
                 "run_stop": self.runs_enabled,
-                "run_approval": self.runs_enabled,
+                "run_approval_response": self.runs_enabled,
                 "run_steer": self.runs_enabled,
             }})
         if self.path.startswith("/api/model/options"):
@@ -201,6 +201,7 @@ class BackendIntegrationTests(unittest.TestCase):
         integration = self.client.get(self.base + "/integration").json()
         self.assertEqual(integration["hermes"]["execution_plane"], "official_runs")
         self.assertEqual(integration["hermes"]["worker_plane"], "PluginContext.subagent_lifecycle")
+        self.assertTrue(integration["hermes"]["runs"]["approval"])
         options = self.client.get(self.base + "/hermes/model-options?refresh=1").json()
         self.assertEqual(options["model"], "model-main")
         self.assertTrue(any(row["authorization"] == "Bearer hermes-secret" for row in self.recorder.snapshot()))
