@@ -1,9 +1,16 @@
 manifest_version: 2
 api_version: 1
 name: hermes-worker-studio
-version: 1.0.0
-description: Official-surface-first Hermes dashboard studio with codex-worker-delegation routing.
+version: 2.0.0
+description: Hermes-native worker studio built only on documented Hermes plugin, dashboard, Runs, model, approvals, and subagent lifecycle contracts.
 provides_tools:
   - worker_delegate
   - worker_status
   - worker_catalog
+provides_hooks:
+  - pre_tool_call
+config_schema:
+  mode:
+    type: str
+    default: AUTO
+    description: Studio delegation policy: OFFICIAL, AUTO, DELEGATE, or MAIN.
