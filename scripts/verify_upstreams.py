@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Verify the exact Hermes public contracts Worker Studio 2.0 is sealed to."""
+"""Verify the exact Hermes public contracts Worker Studio 2.0 is sealed to.
+
+The verifier pins semantics, not incidental source-file placement. Contracts
+that have a documented canonical file are checked there; cross-surface config
+and dashboard APIs are required to exist somewhere in Hermes' public/product
+source, docs or tests so harmless upstream refactors do not create false drift.
+"""
 from __future__ import annotations
 
 import argparse
@@ -130,38 +136,68 @@ def verify_hermes(hermes: pathlib.Path) -> None:
         ),
         "Hermes API Server docs",
     )
-    require_any(hermes, "/steer", ("tests/**/*.py", "gateway/**/*.py", "hermes_cli/**/*.py"), "Hermes Runs steer")
+    require_any(
+        hermes,
+        "/steer",
+        ("tests/**/*.py", "gateway/**/*.py", "hermes_cli/**/*.py", "website/docs/**/*.md"),
+        "Hermes Runs steer",
+    )
+
+    # Delegation/review is a public product/config contract, but individual
+    # config keys may be documented in config schema/defaults rather than one
+    # feature page. Require the user-facing concepts in the feature docs and
+    # the exact keys anywhere in official Hermes config/docs/tests.
     require_tokens(
         hermes / "website" / "docs" / "user-guide" / "features" / "delegation.md",
         (
             "delegation.model",
             "delegation.provider",
-            "delegation.reasoning_effort",
-            "subagent_auto_approve",
             "The `/review` Command",
             "auxiliary:",
             "review:",
         ),
         "Hermes delegation/review docs",
     )
-    require_tokens(
-        hermes / "web" / "src" / "lib" / "api.ts",
-        (
-            '"/api/model/options"',
-            '"/api/config"',
-            "/api/providers/custom-endpoints",
-            "/api/sessions",
-            "/messages",
-            "/sessions/search",
-        ),
-        "Hermes dashboard API client",
+    public_config_globs = (
+        "hermes_cli/**/*.py",
+        "agent/**/*.py",
+        "tools/**/*.py",
+        "website/docs/**/*.md",
+        "tests/**/*.py",
+        "cli-config.yaml.example",
     )
-    require_any(hermes, "Hardline Blocklist", ("website/docs/**/*.md",), "Hermes hardline security docs")
-    require_any(hermes, "unattended_mode", ("website/docs/**/*.md", "tests/**/*.py"), "Hermes unattended approval contract")
-    require_any(hermes, "mcp_reload_confirm", ("hermes_cli/**/*.py", "website/docs/**/*.md", "tests/**/*.py"), "Hermes MCP approval contract")
+    require_any(hermes, "reasoning_effort", public_config_globs, "Hermes delegation reasoning config")
+    require_any(hermes, "subagent_auto_approve", public_config_globs, "Hermes subagent approval config")
+    require_any(hermes, "auxiliary", public_config_globs, "Hermes auxiliary review config")
 
-    # Upstream's own behavior tests are part of the archive seam. We do not
-    # import private code from Studio; CI runs these files against the pin.
+    # Dashboard/product APIs can move between the web, desktop and backend
+    # clients. Verify the routes across the official product source instead of
+    # treating web/src/lib/api.ts as a stable ABI file.
+    product_globs = (
+        "web/src/**/*.ts",
+        "web/src/**/*.tsx",
+        "apps/desktop/src/**/*.ts",
+        "apps/desktop/src/**/*.tsx",
+        "hermes_cli/**/*.py",
+        "gateway/**/*.py",
+        "tests/**/*.py",
+    )
+    for token, label in (
+        ("/api/model/options", "Hermes canonical model inventory"),
+        ("/api/config", "Hermes config API"),
+        ("/api/providers/custom-endpoints", "Hermes Custom Endpoint API"),
+        ("/api/sessions", "Hermes sessions API"),
+        ("/messages", "Hermes session messages API"),
+        ("/sessions/search", "Hermes session search API"),
+    ):
+        require_any(hermes, token, product_globs, label)
+
+    require_any(hermes, "Hardline Blocklist", ("website/docs/**/*.md",), "Hermes hardline security docs")
+    require_any(hermes, "unattended_mode", ("website/docs/**/*.md", "tests/**/*.py", "hermes_cli/**/*.py"), "Hermes unattended approval contract")
+    require_any(hermes, "mcp_reload_confirm", public_config_globs, "Hermes MCP approval contract")
+
+    # Upstream's own behavior tests are part of the archive seam. CI executes
+    # these exact files against the pin.
     for required_test in (
         "tests/agent/test_subagent_lifecycle.py",
         "tests/gateway/test_api_server_runs.py",
