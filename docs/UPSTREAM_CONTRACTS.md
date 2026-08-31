@@ -1,63 +1,73 @@
 # Upstream Contracts
 
-This document is the maintenance boundary. If a future upstream release changes internals but the contracts below still work, **do not modify Worker Studio**.
+This document is the maintenance boundary for a sealed Worker Studio release. If upstream internals move but these documented/public contracts still pass, **do not couple Studio to private implementation details**.
 
-## Hermes Dashboard Plugin contract
+## Exact compatibility lock
 
-Source: Hermes' documented Web Dashboard extension system.
+`tests/upstream-lock.json` is authoritative.
 
-Used surfaces:
+- Hermes Agent `0.20.6`, pinned post-release snapshot `4f22543509d1b91dc45bcb369447126c5eb14fb7`.
+- Recorded official release lineage: `v2026.8.27` / `5fc308a70719a83cccdbba4c0e39c23f5a8239d5`.
+- codex-worker-delegation `3.2.0`, pinned `e965517e5bddeda57f5bc2b015a817279ea8e6e5`.
+
+The Hermes pin is intentionally disclosed as a post-release snapshot because the seal depends on the native Runs control surface plus post-release API-server unattended approval classification. CI verifies the release commit is a real ancestor of the snapshot.
+
+## Hermes Dashboard Plugin SDK
+
+Used public surfaces:
 
 - `~/.hermes/plugins/<plugin>/dashboard/manifest.json`
 - `tab.override: "/sessions"`
-- prebuilt IIFE entry bundle
-- optional plugin CSS
-- `dashboard/plugin_api.py` FastAPI router
-- routes mounted below `/api/plugins/<plugin-name>/`
+- prebuilt IIFE entry bundle + optional CSS
+- `dashboard/plugin_api.py` router under `/api/plugins/<plugin-name>/`
 - `window.__HERMES_PLUGIN_SDK__`
 - `SDK.React`, `SDK.hooks`, `SDK.fetchJSON`
 - `window.__HERMES_PLUGINS__.register(name, component)`
 
-Worker Studio intentionally does not import Hermes' React source modules or depend on generated bundle chunk names.
+Studio does not import Hermes private React modules or depend on generated chunk names.
 
-## Hermes Dashboard REST contracts
+## Hermes Dashboard REST
 
-The browser uses these official dashboard routes directly through `SDK.fetchJSON`:
+Browser-side official routes include:
 
 | Contract | Use |
 |---|---|
 | `GET /api/sessions?limit=&offset=&order=&archived=` | recent/full/archive lists |
-| `GET /api/sessions/{id}/messages?limit=&offset=&order=` | transcript tail and pages |
-| `GET /api/sessions/search?q=&limit=` | FTS session/message search |
+| `GET /api/sessions/{id}/messages?...` | transcript tail/pages |
+| `GET /api/sessions/search?q=&limit=` | official FTS search |
 | `PATCH /api/sessions/{id}` | archive/unarchive |
-| `GET /api/config` | read approval configuration |
-| `PUT /api/config` | save official unattended configuration |
-| `GET /api/providers/custom-endpoints` | find the Studio New API endpoint |
-| `POST /api/providers/custom-endpoints/validate` | validate New API with Hermes provider logic |
-| `POST /api/providers/custom-endpoints` | create/update the Hermes Custom Endpoint |
+| `GET /api/config` / `PUT /api/config` | approval config read/write |
+| `GET /api/skills` | authoritative Skills inventory/native Skills UI |
+| Custom Endpoint REST | register/validate New API with Hermes provider logic |
 
-No direct `state.db` access is permitted in this repository.
+Direct Hermes SQLite/state.db access is forbidden.
 
-## Hermes API Server contracts
+## Hermes API Server — native Runs is primary
 
-Server-side bridge only. Bearer auth is supplied from `HERMES_WORKER_STUDIO_API_KEY` or `API_SERVER_KEY`.
+Server-side bridge only; bearer auth is resolved from `HERMES_WORKER_STUDIO_API_KEY` or `API_SERVER_KEY`.
 
 | Contract | Use |
 |---|---|
-| `GET /health` | health |
-| `GET /v1/capabilities` | runtime contract discovery/diagnostics |
-| `GET /api/model/options` | Hermes-aware provider/model mapping |
-| `POST /api/sessions` | create persisted conversation |
-| `POST /api/sessions/{id}/model` | confirmed session runtime lock when provider can be resolved |
-| `POST /api/sessions/{id}/chat/stream` | actual conversation turn + lifecycle SSE |
+| `GET /health` | liveness |
+| `GET /health/detailed` | bounded readiness |
+| `GET /v1/capabilities` | feature discovery |
+| `GET /api/model/options` | Hermes provider/model inventory |
+| `POST /api/sessions` | persisted conversation |
+| `POST /api/sessions/{id}/model` | model lock only after unique provider resolution |
+| `POST /v1/runs` | authoritative turn submission |
+| `GET /v1/runs/{run_id}` | authoritative run status/output/usage |
+| `GET /v1/runs/{run_id}/events` | lifecycle/tool/subagent SSE |
+| `POST /v1/runs/{run_id}/stop` | interrupt |
+| `POST /v1/runs/{run_id}/approval` | resolve pending approval |
+| `POST /v1/runs/{run_id}/steer` | inject guidance into an active run |
 
-Expected stream event families include `assistant.delta`, `tool.started`, `tool.completed`, and `run.completed`. Unknown future events are retained and displayed generically rather than dropped.
+Legacy `POST /api/sessions/{id}/chat/stream` is compatibility-only. Studio may use it **only** when `/v1/capabilities` explicitly lacks native run submission. A native Runs error is never silently replayed through legacy chat.
 
-A missing `run.completed` is not interpreted as success.
+Unknown SSE events are retained generically. Hermes `/v1/runs/{id}` remains terminal truth; an event-stream EOF does not manufacture a terminal state.
 
-## Hermes approval contract
+## Hermes approval/unattended contract
 
-Only documented keys are written:
+Only upstream-supported keys are written:
 
 - `approvals.mode = off`
 - `approvals.cron_mode = approve`
@@ -66,77 +76,85 @@ Only documented keys are written:
 - `approvals.mcp_reload_confirm = false`
 - `approvals.destructive_slash_confirm = false`
 
-The hardline blocklist is upstream-owned and remains in force.
+Target seal requires config read-back plus Studio's real Hermes `/hermes/unattended/probe`. The probe starts a native Hermes Run and verifies a harmless marker command completed through Hermes itself. The hardline blocklist is upstream-owned and remains mandatory.
 
-## Hermes model capability contract
+## Hermes model boundary
 
-`/api/model/options` is treated as a provider/model inventory, not as a hard-coded provider list. Worker Studio uses:
+Hermes root-agent model resolution comes from `/api/model/options`, not Worker catalog imitation. Studio consumes provider slug/auth/model/current/user-defined/API URL data only when it can uniquely map an intended model to an actual Hermes provider. Otherwise it does not guess.
 
-- provider `slug`
-- `authenticated`
-- `models[]`
-- `is_current`
-- `is_user_defined`
-- `api_url`
-- aliases when available
+In `OFFICIAL`, Studio sends no custom model/provider lock and leaves Hermes defaults untouched.
 
-If these fields cannot uniquely resolve the selected Worker route to an actual Hermes provider, Studio does not guess.
+## Worker four-mode contract
 
-## codex-worker-delegation contracts
+Worker Studio follows the pinned Worker README semantics exactly:
 
-Worker Studio only calls its public HTTP control surface:
+| UI | Wire | Project Worker delegation |
+|---|---|---:|
+| OFFICIAL | OFFICIAL | forbidden |
+| AUTO | AUTO | allowed |
+| WORKER | DELEGATE | allowed |
+| MAIN | MAIN | forbidden |
+
+OFFICIAL gives control back to the native Codex/Hermes runtime. MAIN permits Main only. Unknown modes fail closed. Studio enforces this in both the dashboard backend and native Hermes `worker_delegate`; the Worker remains the final upstream authority.
+
+Worker README invariants locked by CI include:
+
+- OFFICIAL `:8788` fault isolation;
+- ChatGPT OAuth observed through official App Server `account/read` locks Worker/Codex Main to Official;
+- third-party Main only without OAuth and only as explicit standalone App Server provenance;
+- `WORKER` maps to `DELEGATE`;
+- `account/read`, `model/list`, optional `modelProvider/capabilities/read` feed the live Model Capability Registry;
+- Reasoning is model-advertised only;
+- third-party threads are not presented as native subagents;
+- production/release/archive seals fail closed without target-host evidence.
+
+## Worker HTTP contracts
 
 | Contract | Use |
 |---|---|
 | `GET /api/health` | health |
-| `GET /api/state` | persisted mode/provider/routing state |
+| `GET /api/state` | persisted mode/provider/routing; execution-policy read |
 | `GET /api/catalog` | actual model/capability registry |
-| `PUT /api/provider` | save New API credentials/config |
-| `POST /api/provider/probe` | upstream connectivity probe |
-| `POST /api/provider/connectivity` | per-model real request test |
+| `PUT /api/provider` | New API config |
+| `POST /api/provider/probe` | upstream probe |
+| `POST /api/provider/connectivity` | per-model real request |
 | `PUT /api/mode` | OFFICIAL/AUTO/DELEGATE/MAIN |
-| `PUT /api/routing` | Main/Worker/Verifier route configuration |
+| `PUT /api/routing` | Main/Worker/Verifier routing |
 | `POST /api/codex/install` | official Codex integration install |
 | `POST /api/verify/coexistence` | coexistence verification |
 | `POST /api/worker/start` | async worker task |
-| `POST /api/worker/run` | synchronous worker task for native tool calls |
-| `GET /api/worker/status/{task_id}` | real Worker progress/state |
+| `POST /api/worker/run` | synchronous native-tool task |
+| `GET /api/worker/status/{task_id}` | real progress/state |
 
-The native Hermes plugin tools call the same endpoints. There is no second Worker implementation in this repository.
+There is no second Worker implementation in Studio.
 
-## Worker model/capability rules
+## Capability integrity
 
-The Worker registry is authoritative for route editing. The UI consumes actual model rows from:
+Worker routing uses `catalog.registry.providers.<provider>.models`. Reasoning values come only from model capability metadata. `Auto` is the sole local sentinel. A model with no advertised efforts remains Auto-only.
 
-```text
-catalog.registry.providers.<provider>.models
-```
+## Failure rule
 
-Reasoning values are read from model capability metadata. `Auto` is the only locally defined sentinel. A model that advertises no effort levels gets a disabled one-position slider labelled Auto.
+When a public upstream contract is unavailable:
 
-## Version negotiation and failure rule
-
-Worker Studio prefers capability/shape detection over version string branching.
-
-When an upstream contract is missing:
-
-1. Keep unrelated surfaces working.
-2. Display the exact failing feature boundary.
-3. Do not substitute a private database/internal import.
-4. Do not fabricate models, reasoning levels, tool events, or success states.
-5. Add a compatibility adapter only when the replacement is itself documented/stable.
+1. keep unrelated Hermes surfaces usable;
+2. display/fail at the exact missing boundary;
+3. never substitute a private DB/internal import;
+4. never fabricate models, efforts, events, task IDs, approval states, or success;
+5. use a compatibility adapter only when the replacement is itself stable/documented;
+6. keep OFFICIAL independent from a failed Worker delegation control plane.
 
 ## Forbidden dependencies
 
-A sealed release must not add any of the following without an explicit architecture revision:
+A sealed release must not add, without an explicit architecture revision:
 
 - direct SQLite access to Hermes or Worker databases;
-- imports from `hermes_state` or Hermes private Web components;
-- scraping Hermes/Codex terminal output to infer runtime state when an API exists;
-- browser storage of upstream API bearer keys;
-- a locally maintained model list;
-- a locally maintained reasoning-effort ladder;
-- patched files inside the Hermes installation;
-- patched files inside codex-worker-delegation.
+- `hermes_state`/private Hermes UI imports;
+- CLI-output scraping when an API exists;
+- browser storage/exposure of upstream bearer secrets;
+- a local model list or reasoning-effort ladder;
+- patched Hermes files;
+- patched codex-worker-delegation files;
+- third-party provenance masquerading as official/native execution;
+- silent Runs-to-legacy replay after a native execution failure.
 
-`scripts/verify_contract.py` enforces a subset of these mechanically.
+`scripts/verify_contract.py` and `scripts/verify_upstreams.py` mechanically enforce key portions of this boundary.
