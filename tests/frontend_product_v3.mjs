@@ -35,7 +35,7 @@ for (const token of [
   "plugin('/hermes/runs-v3'",
   '官方计划',
   'todo',
-  "plugin('/hermes/runs/",
+  '/hermes/runs/',
   '/steer',
   '/stop',
   '/approval',
