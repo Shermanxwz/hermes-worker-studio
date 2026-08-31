@@ -1,0 +1,16 @@
+{
+  "name": "hermes-worker-studio",
+  "label": "Worker Studio",
+  "description": "Archive-grade conversation UI and codex-worker-delegation control surface built only on official Hermes dashboard/API/plugin contracts.",
+  "icon": "MessageSquare",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/worker-studio",
+    "override": "/sessions",
+    "position": "before:sessions",
+    "hidden": false
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

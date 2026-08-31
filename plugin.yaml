@@ -1,0 +1,9 @@
+manifest_version: 2
+api_version: 1
+name: hermes-worker-studio
+version: 1.0.0
+description: Official-surface-first Hermes dashboard studio with codex-worker-delegation routing.
+provides_tools:
+  - worker_delegate
+  - worker_status
+  - worker_catalog

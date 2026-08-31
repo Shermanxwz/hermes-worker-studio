@@ -1,0 +1,35 @@
+name: hermes-worker-studio
+label: Hermes Worker Studio
+description: Compact low-noise theme for long-running agent work.
+palette:
+  background:
+    hex: "#0b0d0f"
+    alpha: 1.0
+  midground:
+    hex: "#e7e9ed"
+    alpha: 1.0
+  foreground:
+    hex: "#ffffff"
+    alpha: 0.0
+  warmGlow: "rgba(255, 255, 255, 0.025)"
+  noiseOpacity: 0.10
+typography:
+  fontSans: "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif"
+  fontMono: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+  baseSize: "14px"
+  lineHeight: "1.5"
+  letterSpacing: "0"
+layout:
+  radius: "0.55rem"
+  density: compact
+layoutVariant: tiled
+componentStyles:
+  card:
+    boxShadow: "none"
+  header:
+    background: "rgba(11, 13, 15, 0.94)"
+  page:
+    background: "transparent"
+colorOverrides:
+  border: "rgba(231, 233, 237, 0.12)"
+  mutedForeground: "rgba(231, 233, 237, 0.58)"
