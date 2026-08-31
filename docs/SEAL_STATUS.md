@@ -106,7 +106,7 @@ and `/v1/responses` for Codex Responses. There is no missing `/v1` rewrite in
 Studio.
 
 Authenticated model-probe Runs through the official Hermes `/v1/runs` path
-completed for 8 of the 13 discovered models: `MiniMax-M3`, both `cc-deepseek`
+completed for 7 of the 13 discovered models: `MiniMax-M3`, both `cc-deepseek`
 models, `cc-laguna-s-2.1-free`, `cc-mimo-v2.5`, and both `deepseek-v4` models.
 The three `gpt-5.6-*` models returned Hermes' Chat Completions unsupported
 error. Direct, credentialed SSE requests to New API `/v1/responses` for those
