@@ -3,6 +3,7 @@ from . import schemas, tools
 
 
 def register(ctx):
+    tools.bind_context(ctx)
     ctx.register_tool(
         name="worker_delegate",
         toolset="worker-studio",
@@ -21,3 +22,4 @@ def register(ctx):
         schema=schemas.WORKER_CATALOG,
         handler=tools.worker_catalog,
     )
+    ctx.register_hook("pre_tool_call", tools.policy_pre_tool_call)
