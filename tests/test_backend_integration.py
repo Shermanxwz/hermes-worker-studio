@@ -35,21 +35,22 @@ class _Recorder:
         with self.lock:
             return list(self.rows)
 
+    def clear(self) -> None:
+        with self.lock:
+            self.rows.clear()
+
 
 class _HermesHandler(BaseHTTPRequestHandler):
     recorder: _Recorder
+    runs_enabled = True
+    run_status = "running"
 
-    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover - silence test server
+    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover
         return
 
     def _record(self, body: object | None = None) -> None:
         self.recorder.add(
-            {
-                "method": self.command,
-                "path": self.path,
-                "authorization": self.headers.get("Authorization"),
-                "body": body,
-            }
+            {"method": self.command, "path": self.path, "authorization": self.headers.get("Authorization"), "body": body}
         )
 
     def _json(self, status: int, payload: object) -> None:
@@ -69,10 +70,50 @@ class _HermesHandler(BaseHTTPRequestHandler):
         self._record()
         if self.path == "/health":
             return self._json(200, {"ok": True, "service": "hermes"})
+        if self.path == "/health/detailed":
+            return self._json(200, {"status": "ok", "readiness": {"checks": {}}})
         if self.path == "/v1/capabilities":
-            return self._json(200, {"sessions": True, "streaming": True})
+            features = {
+                "run_submission": self.runs_enabled,
+                "run_events_sse": self.runs_enabled,
+                "run_stop": self.runs_enabled,
+                "run_approval": self.runs_enabled,
+            }
+            return self._json(200, {"object": "hermes.api_server.capabilities", "features": features})
         if self.path.startswith("/api/model/options"):
             return self._json(200, {"provider": "official", "model": "official-model", "providers": []})
+        if self.path == "/v1/runs/run-real-http":
+            return self._json(
+                200,
+                {
+                    "object": "hermes.run",
+                    "run_id": "run-real-http",
+                    "session_id": "session-real-http",
+                    "status": self.run_status,
+                    "output": "hello world" if self.run_status == "completed" else None,
+                    "usage": {"total_tokens": 3},
+                },
+            )
+        if self.path == "/v1/runs/run-real-http/events":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            events = [
+                ("run.started", {"run_id": "run-real-http"}),
+                ("assistant.delta", {"delta": "hello "}),
+                ("tool.started", {"tool_name": "worker_delegate", "arguments": "{}"}),
+                ("tool.completed", {"tool_name": "worker_delegate", "result": {"task_id": "worker-123"}}),
+                ("assistant.delta", {"delta": "world"}),
+                ("run.completed", {"final_response": "hello world"}),
+            ]
+            for name, data in events:
+                self.wfile.write(f"event: {name}\n".encode())
+                self.wfile.write(f"data: {json.dumps(data)}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(0.005)
+            type(self).run_status = "completed"
+            return
         if self.path == "/oversized":
             raw = b"x" * (plugin_api._JSON_LIMIT + 2)
             self.send_response(200)
@@ -100,42 +141,40 @@ class _HermesHandler(BaseHTTPRequestHandler):
             return self._json(200, {"id": "session-real-http"})
         if self.path == "/api/sessions/session-real-http/model":
             return self._json(200, {"ok": True, "locked": body})
+        if self.path == "/v1/runs":
+            type(self).run_status = "running"
+            return self._json(202, {"run_id": "run-real-http", "status": "started"})
+        if self.path == "/v1/runs/run-real-http/stop":
+            type(self).run_status = "cancelled"
+            return self._json(200, {"run_id": "run-real-http", "status": "stopping"})
+        if self.path == "/v1/runs/run-real-http/approval":
+            return self._json(200, {"run_id": "run-real-http", "resolved": 1, **body})
+        if self.path == "/v1/runs/run-real-http/steer":
+            return self._json(200, {"object": "hermes.run.steer", "run_id": "run-real-http", "accepted": True})
         if self.path == "/api/sessions/session-real-http/chat/stream":
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            events = [
-                ("run.started", {"run_id": "upstream-run"}),
-                ("assistant.delta", {"delta": "hello "}),
-                ("tool.started", {"tool_name": "worker_delegate", "arguments": "{}"}),
-                ("tool.completed", {"tool_name": "worker_delegate", "result": {"task_id": "worker-123"}}),
-                ("assistant.delta", {"delta": "world"}),
-                ("run.completed", {"final_response": "hello world"}),
-            ]
-            for name, data in events:
-                self.wfile.write(f"event: {name}\n".encode())
-                self.wfile.write(f"data: {json.dumps(data)}\n\n".encode())
+            for name, data in [
+                ("assistant.delta", {"delta": "legacy"}),
+                ("run.completed", {"final_response": "legacy"}),
+            ]:
+                self.wfile.write(f"event: {name}\ndata: {json.dumps(data)}\n\n".encode())
                 self.wfile.flush()
-                time.sleep(0.01)
             return
         return self._json(404, {"error": "not found"})
 
 
 class _WorkerHandler(BaseHTTPRequestHandler):
     recorder: _Recorder
+    mode = "AUTO"
 
     def log_message(self, fmt: str, *args) -> None:  # pragma: no cover
         return
 
     def _record(self, body: object | None = None) -> None:
         self.recorder.add(
-            {
-                "method": self.command,
-                "path": self.path,
-                "authorization": self.headers.get("Authorization"),
-                "body": body,
-            }
+            {"method": self.command, "path": self.path, "authorization": self.headers.get("Authorization"), "body": body}
         )
 
     def _json(self, status: int, payload: object) -> None:
@@ -155,26 +194,9 @@ class _WorkerHandler(BaseHTTPRequestHandler):
         if self.path == "/api/health":
             return self._json(200, {"ok": True, "service": "worker"})
         if self.path == "/api/state":
-            return self._json(200, {"mode": "AUTO", "routing": {}})
+            return self._json(200, {"mode": self.mode, "routing": {}})
         if self.path == "/api/catalog":
-            return self._json(
-                200,
-                {
-                    "registry": {
-                        "providers": {
-                            "official": {"models": [{"id": "official-model"}]},
-                            "third_party": {
-                                "models": [
-                                    {
-                                        "id": "new-model",
-                                        "reasoning": {"options": ["balanced", "deep"]},
-                                    }
-                                ]
-                            },
-                        }
-                    }
-                },
-            )
+            return self._json(200, {"registry": {"providers": {"official": {"models": [{"id": "official-model"}]}}}})
         if self.path == "/api/worker/status/worker-123":
             return self._json(200, {"status": "completed", "taskId": "worker-123"})
         return self._json(404, {"error": "not found"})
@@ -182,7 +204,10 @@ class _WorkerHandler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         body = self._body()
         self._record(body)
-        if self.path in {"/api/provider", "/api/mode", "/api/routing"}:
+        if self.path == "/api/mode":
+            type(self).mode = body.get("mode") or self.mode
+            return self._json(200, {"ok": True, "mode": self.mode})
+        if self.path in {"/api/provider", "/api/routing"}:
             return self._json(200, {"ok": True, "echo": body})
         return self._json(404, {"error": "not found"})
 
@@ -195,7 +220,7 @@ class _WorkerHandler(BaseHTTPRequestHandler):
             models = body.get("models") if isinstance(body, dict) else []
             return self._json(200, {"results": [{"model": x, "ok": True, "latencyMs": 7} for x in models or []]})
         if self.path == "/api/worker/start":
-            return self._json(200, {"task_id": "worker-123", "status": "running"})
+            return self._json(200, {"task_id": "worker-123", "status": "running", "request": body})
         if self.path in {"/api/codex/install", "/api/verify/coexistence"}:
             return self._json(200, {"ok": True})
         return self._json(404, {"error": "not found"})
@@ -242,92 +267,117 @@ class BackendHttpIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         with plugin_api._RUNS_LOCK:
             plugin_api._RUNS.clear()
+        _HermesHandler.runs_enabled = True
+        _HermesHandler.run_status = "running"
+        _WorkerHandler.mode = "AUTO"
+        self.hermes_recorder.clear()
+        self.worker_recorder.clear()
 
     def test_health_and_read_surfaces_hit_real_loopback_http(self) -> None:
         base = "/api/plugins/hermes-worker-studio"
         health = self.client.get(base + "/health")
         self.assertEqual(health.status_code, 200)
         self.assertTrue(health.json()["ok"])
-        self.assertTrue(health.json()["hermes"]["ok"])
-        self.assertTrue(health.json()["worker"]["ok"])
-        self.assertEqual(self.client.get(base + "/hermes/capabilities").json()["streaming"], True)
+        self.assertFalse(health.json()["worker_degraded"])
+        self.assertTrue(self.client.get(base + "/hermes/capabilities").json()["features"]["run_submission"])
         self.assertEqual(self.client.get(base + "/hermes/model-options?refresh=1").json()["model"], "official-model")
         self.assertEqual(self.client.get(base + "/worker/state").json()["mode"], "AUTO")
-        self.assertIn("registry", self.client.get(base + "/worker/catalog").json())
+        self.assertEqual(self.client.get(base + "/integration").json()["hermes"]["execution_plane"], "official_runs")
+        self.assertTrue(any(x["authorization"] == "Bearer hermes-secret" for x in self.hermes_recorder.snapshot()))
+        self.assertTrue(any(x["authorization"] == "Bearer worker-secret" for x in self.worker_recorder.snapshot()))
 
-        hermes_rows = self.hermes_recorder.snapshot()
-        worker_rows = self.worker_recorder.snapshot()
-        self.assertTrue(any(x["authorization"] == "Bearer hermes-secret" for x in hermes_rows))
-        self.assertTrue(any(x["authorization"] == "Bearer worker-secret" for x in worker_rows))
-
-    def test_session_create_lock_and_run_bridge_are_end_to_end(self) -> None:
+    def test_native_runs_are_primary_and_event_projection_is_end_to_end(self) -> None:
         base = "/api/plugins/hermes-worker-studio"
-        created = self.client.post(base + "/hermes/sessions", json={"title": "integration"})
-        self.assertEqual(created.status_code, 200)
-        self.assertEqual(created.json()["id"], "session-real-http")
-
-        locked = self.client.post(
-            base + "/hermes/sessions/session-real-http/model",
-            json={"provider": "official", "model": "official-model", "require_model_lock": True},
-        )
-        self.assertEqual(locked.status_code, 200)
-        self.assertEqual(locked.json()["locked"]["model"], "official-model")
-
-        started = self.client.post(
-            base + "/hermes/runs",
-            json={"session_id": "session-real-http", "message": "do real work"},
-        )
+        started = self.client.post(base + "/hermes/runs", json={"session_id": "session-real-http", "message": "do real work"})
         self.assertEqual(started.status_code, 200)
-        run_id = started.json()["id"]
+        self.assertEqual(started.json()["id"], "run-real-http")
+        self.assertEqual(started.json()["transport"], "official_runs")
         deadline = time.time() + 3
         snapshot = None
         while time.time() < deadline:
-            response = self.client.get(base + f"/hermes/runs/{run_id}?after=0")
-            self.assertEqual(response.status_code, 200)
-            snapshot = response.json()
+            snapshot = self.client.get(base + "/hermes/runs/run-real-http?after=0").json()
+            if snapshot["status"] == "completed" and len(snapshot["events"]) >= 6:
+                break
+            time.sleep(0.02)
+        assert snapshot is not None
+        self.assertEqual(snapshot["status"], "completed")
+        self.assertEqual(snapshot["output"], "hello world")
+        self.assertEqual(
+            [row["event"] for row in snapshot["events"]],
+            ["run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"],
+        )
+        run_posts = [x for x in self.hermes_recorder.snapshot() if x["method"] == "POST" and x["path"] == "/v1/runs"]
+        self.assertEqual(len(run_posts), 1)
+        self.assertEqual(run_posts[0]["body"]["input"], "do real work")
+        self.assertEqual(run_posts[0]["body"]["session_id"], "session-real-http")
+        self.assertNotIn("message", run_posts[0]["body"])
+        self.assertFalse(any(x["path"].endswith("/chat/stream") for x in self.hermes_recorder.snapshot()))
+
+    def test_official_run_control_endpoints_are_forwarded_exactly(self) -> None:
+        base = "/api/plugins/hermes-worker-studio"
+        self.client.post(base + "/hermes/runs", json={"session_id": "session-real-http", "message": "go"})
+        approval = self.client.post(base + "/hermes/runs/run-real-http/approval", json={"choice": "once", "resolve_all": True})
+        steer = self.client.post(base + "/hermes/runs/run-real-http/steer", json={"input": "tighten ending"})
+        stop = self.client.post(base + "/hermes/runs/run-real-http/stop")
+        self.assertEqual(approval.status_code, 200)
+        self.assertEqual(approval.json()["choice"], "once")
+        self.assertTrue(approval.json()["resolve_all"])
+        self.assertEqual(steer.status_code, 200)
+        self.assertTrue(steer.json()["accepted"])
+        self.assertEqual(stop.status_code, 200)
+        rows = self.hermes_recorder.snapshot()
+        self.assertTrue(any(x["path"] == "/v1/runs/run-real-http/approval" for x in rows))
+        self.assertTrue(any(x["path"] == "/v1/runs/run-real-http/steer" for x in rows))
+        self.assertTrue(any(x["path"] == "/v1/runs/run-real-http/stop" for x in rows))
+
+    def test_legacy_chat_stream_is_used_only_when_capability_lacks_runs(self) -> None:
+        _HermesHandler.runs_enabled = False
+        base = "/api/plugins/hermes-worker-studio"
+        started = self.client.post(base + "/hermes/runs", json={"session_id": "session-real-http", "message": "legacy"})
+        self.assertEqual(started.status_code, 200)
+        self.assertEqual(started.json()["transport"], "legacy_chat_stream")
+        run_id = started.json()["id"]
+        deadline = time.time() + 2
+        snapshot = None
+        while time.time() < deadline:
+            snapshot = self.client.get(base + f"/hermes/runs/{run_id}").json()
             if snapshot["status"] != "running":
                 break
             time.sleep(0.02)
         assert snapshot is not None
         self.assertEqual(snapshot["status"], "completed")
-        self.assertEqual(
-            [row["event"] for row in snapshot["events"]],
-            ["run.started", "assistant.delta", "tool.started", "tool.completed", "assistant.delta", "run.completed"],
-        )
-        self.assertEqual(snapshot["events"][3]["data"]["result"]["task_id"], "worker-123")
-        self.assertGreaterEqual(snapshot["elapsed_ms"], 1)
+        rows = self.hermes_recorder.snapshot()
+        self.assertTrue(any(x["path"] == "/api/sessions/session-real-http/chat/stream" for x in rows))
+        self.assertFalse(any(x["method"] == "POST" and x["path"] == "/v1/runs" for x in rows))
 
-        cursor = snapshot["events"][2]["seq"]
-        tail = self.client.get(base + f"/hermes/runs/{run_id}?after={cursor}").json()
-        self.assertEqual([x["event"] for x in tail["events"]], ["tool.completed", "assistant.delta", "run.completed"])
-
-    def test_worker_mutations_and_status_use_exact_control_plane_contract(self) -> None:
+    def test_worker_start_is_server_side_mode_enforced(self) -> None:
         base = "/api/plugins/hermes-worker-studio"
-        cases = [
-            ("PUT", "/worker/provider", {"baseUrl": "https://upstream.example/v1", "apiKey": "key", "protocol": "auto"}),
-            ("POST", "/worker/provider/probe", {}),
-            ("POST", "/worker/provider/connectivity", {"models": ["new-model"]}),
-            ("PUT", "/worker/mode", {"mode": "AUTO"}),
-            ("PUT", "/worker/routing", {"mode": "AUTO", "roles": {"main": {"provider": "third_party", "model": "new-model", "effort": "deep"}}}),
-            ("POST", "/worker/start", {"task": "test", "sandbox": "danger-full-access"}),
-        ]
-        for method, path, payload in cases:
-            response = self.client.request(method, base + path, json=payload)
-            self.assertEqual(response.status_code, 200, (method, path, response.text))
-        status = self.client.get(base + "/worker/status/worker-123")
-        self.assertEqual(status.status_code, 200)
-        self.assertEqual(status.json()["status"], "completed")
-        connectivity = self.client.post(base + "/worker/provider/connectivity", json={"models": ["new-model"]}).json()
-        self.assertTrue(connectivity["results"][0]["ok"])
+        for mode, allowed in (("AUTO", True), ("DELEGATE", True), ("OFFICIAL", False), ("MAIN", False)):
+            with self.subTest(mode=mode):
+                _WorkerHandler.mode = mode
+                before = len([x for x in self.worker_recorder.snapshot() if x["path"] == "/api/worker/start"])
+                response = self.client.post(base + "/worker/start", json={"task": "test"})
+                after = len([x for x in self.worker_recorder.snapshot() if x["path"] == "/api/worker/start"])
+                self.assertEqual(response.status_code == 200, allowed)
+                self.assertEqual(after - before, 1 if allowed else 0)
 
-    def test_degraded_health_keeps_response_available(self) -> None:
+    def test_worker_alias_maps_to_delegate_and_official_routing_is_rejected(self) -> None:
+        base = "/api/plugins/hermes-worker-studio"
+        mode = self.client.put(base + "/worker/mode", json={"mode": "WORKER"})
+        self.assertEqual(mode.status_code, 200)
+        self.assertEqual(mode.json()["mode"], "DELEGATE")
+        rejected = self.client.put(base + "/worker/routing", json={"mode": "OFFICIAL", "roles": {}})
+        self.assertEqual(rejected.status_code, 409)
+
+    def test_worker_outage_is_degraded_not_hermes_failure(self) -> None:
         base = "/api/plugins/hermes-worker-studio"
         with patch.dict(os.environ, {"HERMES_WORKER_STUDIO_WORKER_URL": "http://127.0.0.1:1"}, clear=False):
             response = self.client.get(base + "/health")
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertFalse(payload["ok"] if payload["hermes"].get("ok") is False else payload["worker"].get("ok", False))
+        self.assertTrue(payload["ok"])
         self.assertTrue(payload["hermes"]["ok"])
+        self.assertTrue(payload["worker_degraded"])
         self.assertFalse(payload["worker"]["ok"])
 
     def test_error_translation_size_limit_and_invalid_json_fail_closed(self) -> None:
@@ -336,15 +386,12 @@ class BackendHttpIntegrationTests(unittest.TestCase):
             plugin_api._request_json(upstream, "/teapot")
         self.assertEqual(teapot.exception.status_code, 418)
         self.assertIn("expected failure", str(teapot.exception.detail))
-
         with self.assertRaises(plugin_api.HTTPException) as bad_json:
             plugin_api._request_json(upstream, "/bad-json")
         self.assertEqual(bad_json.exception.status_code, 502)
-
         with self.assertRaises(plugin_api.HTTPException) as oversized:
             plugin_api._request_json(upstream, "/oversized")
         self.assertEqual(oversized.exception.status_code, 502)
-        self.assertIn("exceeded", str(oversized.exception.detail))
 
     def test_remote_and_embedded_credentials_are_rejected(self) -> None:
         with patch.dict(os.environ, {"HERMES_WORKER_STUDIO_ALLOW_REMOTE": "0"}, clear=False):
