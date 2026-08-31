@@ -1,0 +1,12 @@
+{
+  "hermes": {
+    "repository": "NousResearch/hermes-agent",
+    "commit": "4f22543509d1b91dc45bcb369447126c5eb14fb7",
+    "version": "0.20.6"
+  },
+  "worker": {
+    "repository": "Shermanxwz/codex-worker-delegation",
+    "commit": "e965517e5bddeda57f5bc2b015a817279ea8e6e5",
+    "version": "3.2.0"
+  }
+}
