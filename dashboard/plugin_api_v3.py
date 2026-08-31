@@ -31,6 +31,11 @@ router = _legacy.router
 _base_run_snapshot = _legacy._run_snapshot
 _TODO_POLL_INTERVAL = 0.5
 _TODO_MESSAGE_LIMIT = 100
+# The supported installer rewrites this exact source-tree marker in the staged
+# release artifact to the git commit being installed. A running target can then
+# prove that its loaded Product 3 bridge is the same candidate whose CI and
+# browser evidence are being sealed.
+BUILD_CANDIDATE_SHA = "source-tree"
 
 
 def _has_input(value: Any) -> bool:
@@ -256,6 +261,7 @@ async def start_hermes_run_v3(request: Request) -> dict[str, Any]:
 def product_capabilities() -> dict[str, Any]:
     return {
         "version": 3,
+        "candidate_sha": BUILD_CANDIDATE_SHA,
         "execution": "Hermes official /v1/runs",
         "multimodal_runs": True,
         "session_crud": True,
