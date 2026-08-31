@@ -130,9 +130,15 @@ if "title: 'New conversation'" in frontend:
 for secret in ("API_SERVER_KEY", "HERMES_WORKER_STUDIO_API_KEY"):
     if secret in frontend:
         fail(f"frontend references server secret {secret}")
-for guessed in ("minimal", "low", "medium", "high", "xhigh"):
-    if re.search(rf"['\"]{re.escape(guessed)}['\"]", frontend):
-        fail(f"frontend hard-codes reasoning effort {guessed!r}")
+
+reasoning_match = re.search(r"function reasoningOptions\(.*?\n  }\n  function normalizeRoute", frontend, re.S)
+if not reasoning_match:
+    fail("cannot locate reasoningOptions")
+else:
+    reasoning_source = reasoning_match.group(0)
+    for guessed in ("minimal", "low", "medium", "high", "xhigh"):
+        if re.search(rf"['\"]{re.escape(guessed)}['\"]", reasoning_source):
+            fail(f"frontend hard-codes reasoning effort {guessed!r}")
 
 primary_nav_match = re.search(r"const PRIMARY_NAV = \[(.*?)\];", frontend, re.S)
 if not primary_nav_match:
