@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Hermes Worker Studio</title>
+  <desc id="desc">A Hermes-inspired teal and cream worker mark.</desc>
+  <rect width="64" height="64" rx="13" fill="#082a27"/>
+  <path d="M18 13h28v7H35v31h-7V20H18z" fill="#f2dfbb"/>
+  <path d="M14 34c8-10 28-10 36 0-8-3-13-2-18 2-5-4-10-5-18-2z" fill="#2b9c8e"/>
+  <circle cx="32" cy="36" r="5" fill="#f2dfbb"/>
+  <path d="M12 45c7 1 12 4 16 9M52 45c-7 1-12 4-16 9" stroke="#2b9c8e" stroke-width="4" stroke-linecap="round"/>
+</svg>
