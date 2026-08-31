@@ -1,9 +1,9 @@
 {
   "name": "hermes-worker-studio",
   "label": "Worker Studio",
-  "description": "Archive-grade conversation UI and codex-worker-delegation control surface built only on official Hermes dashboard/API/plugin contracts.",
+  "description": "Hermes-native conversation, delegation, models and unattended control surface built only on official Hermes dashboard/API/plugin contracts.",
   "icon": "MessageSquare",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "tab": {
     "path": "/worker-studio",
     "override": "/sessions",

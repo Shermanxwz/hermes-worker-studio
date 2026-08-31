@@ -1,195 +1,193 @@
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
-import os
 import pathlib
-import threading
+import sys
+import types
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+@dataclasses.dataclass(frozen=True)
+class FakeLaunchRequest:
+    goal: str
+    context: str | None = None
+    role: str = "leaf"
+    model: str | None = None
+    allowed_toolsets: tuple[str, ...] | None = None
+    blocked_tools: tuple[str, ...] = ()
+    working_directory: str | None = None
+    parent_session_id: str | None = None
+    correlation_id: str | None = None
+    metadata: dict = dataclasses.field(default_factory=dict)
+    timeout_seconds: float | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class FakeHandle:
+    subagent_id: str
+    parent_session_id: str = "parent-1"
+    capability: str = "opaque"
+
+    def to_dict(self):
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, value):
+        return cls(**value)
+
+
+agent_mod = types.ModuleType("agent")
+lifecycle_mod = types.ModuleType("agent.subagent_lifecycle")
+lifecycle_mod.SubagentLaunchRequest = FakeLaunchRequest
+lifecycle_mod.SubagentHandle = FakeHandle
+sys.modules.setdefault("agent", agent_mod)
+sys.modules["agent.subagent_lifecycle"] = lifecycle_mod
+
 SPEC = importlib.util.spec_from_file_location("hws_native_tools", ROOT / "tools.py")
 assert SPEC and SPEC.loader
 tools = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tools)
 
 
-class _Handler(BaseHTTPRequestHandler):
-    rows: list[dict] = []
-    lock = threading.Lock()
-    mode = "AUTO"
+class FakeService:
+    def __init__(self):
+        self.requests = []
+        self.handles = {}
+        self.waits = []
 
-    def log_message(self, fmt: str, *args) -> None:  # pragma: no cover
-        return
+    def launch(self, request):
+        self.requests.append(request)
+        handle = FakeHandle(f"child-{len(self.requests)}")
+        self.handles[handle.subagent_id] = handle
+        return handle
 
-    def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        return json.loads(self.rfile.read(n).decode()) if n else {}
+    def status(self, handle):
+        return {"state": "RUNNING", "subagent_id": handle.subagent_id}
 
-    def _record(self, body=None):
-        with self.lock:
-            self.rows.append(
-                {
-                    "method": self.command,
-                    "path": self.path,
-                    "authorization": self.headers.get("Authorization"),
-                    "body": body,
-                }
-            )
+    def wait(self, handle, timeout_seconds=None):
+        self.waits.append((handle.subagent_id, timeout_seconds))
+        return {"state": "SUCCEEDED", "completed": True, "timed_out": False}
 
-    def _json(self, status, body):
-        raw = json.dumps(body).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
+    def result(self, handle):
+        return {"ready": True, "terminal_state": "SUCCEEDED", "summary": f"done:{handle.subagent_id}"}
 
-    def do_GET(self):
-        self._record()
-        if self.path == "/api/state":
-            return self._json(200, {"mode": self.mode, "routing": {}})
-        if self.path == "/api/catalog":
-            return self._json(200, {"registry": {"providers": {"official": {"models": [{"id": "m1"}]}}}})
-        if self.path == "/api/worker/status/task-1":
-            return self._json(200, {"task_id": "task-1", "status": "completed"})
-        return self._json(404, {"error": "not found"})
 
-    def do_POST(self):
-        body = self._body()
-        self._record(body)
-        if self.path == "/api/worker/start":
-            return self._json(200, {"task_id": "task-1", "status": "running", "request": body})
-        if self.path == "/api/worker/run":
-            return self._json(200, {"task_id": "task-1", "status": "completed", "request": body})
-        return self._json(404, {"error": "not found"})
+class FakeContext:
+    def __init__(self, mode="AUTO"):
+        self.mode = mode
+        self.subagent_lifecycle = FakeService()
+
+    def get_config(self, key, default=None):
+        if key == "mode":
+            return self.mode
+        return default
 
 
 class NativeToolsTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        _Handler.rows = []
-        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
-        cls.thread.start()
-        cls.env = patch.dict(
-            os.environ,
-            {
-                "HERMES_WORKER_STUDIO_WORKER_URL": f"http://127.0.0.1:{cls.server.server_port}",
-                "HERMES_WORKER_STUDIO_WORKER_TOKEN": "native-secret",
-                "HERMES_WORKER_STUDIO_ALLOW_REMOTE": "0",
-                "HERMES_WORKER_STUDIO_DEFAULT_SANDBOX": "danger-full-access",
-            },
-            clear=False,
-        )
-        cls.env.start()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.env.stop()
-        cls.server.shutdown()
-        cls.server.server_close()
-
     def setUp(self):
-        _Handler.mode = "AUTO"
-        with _Handler.lock:
-            _Handler.rows.clear()
+        self.ctx = FakeContext("AUTO")
+        tools.bind_context(self.ctx)
+        with tools._HANDLES_LOCK:
+            tools._HANDLES.clear()
 
-    def test_delegate_async_defaults_to_requested_unattended_sandbox(self):
-        out = json.loads(tools.worker_delegate({"task": "implement feature"}))
-        self.assertTrue(out["ok"])
-        self.assertEqual(out["mode"], "AUTO")
-        request = out["result"]["request"]
-        self.assertEqual(request["task"], "implement feature")
-        self.assertEqual(request["role"], "worker")
-        self.assertEqual(request["profile"], "standard")
-        self.assertEqual(request["sandbox"], "danger-full-access")
-        self.assertNotIn("waitForCompletion", request)
+    def test_auto_launches_only_public_hermes_lifecycle(self):
+        payload = json.loads(tools.worker_delegate({
+            "task": "implement feature",
+            "context": "repo context",
+            "model": "provider/model",
+            "allowed_toolsets": ["file", "terminal"],
+            "correlation_id": "corr-1",
+        }))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["transport"], "hermes_subagent_lifecycle_v1")
+        self.assertEqual(payload["task_id"], "child-1")
+        request = self.ctx.subagent_lifecycle.requests[0]
+        self.assertEqual(request.goal, "implement feature")
+        self.assertEqual(request.context, "repo context")
+        self.assertEqual(request.role, "leaf")
+        self.assertEqual(request.model, "provider/model")
+        self.assertEqual(request.allowed_toolsets, ("file", "terminal"))
+        self.assertEqual(request.correlation_id, "corr-1")
+        self.assertEqual(request.metadata, {"studio_role": "worker"})
+        self.assertIsNone(request.working_directory)
+        self.assertIsNone(request.timeout_seconds)
 
-    def test_delegate_wait_role_cwd_and_explicit_sandbox_are_forwarded(self):
-        _Handler.mode = "DELEGATE"
-        out = json.loads(
-            tools.worker_delegate(
-                {
-                    "task": "verify",
-                    "role": "verifier",
-                    "profile": "quick",
-                    "cwd": "/tmp/project",
-                    "sandbox": "read-only",
-                    "wait_for_completion": True,
-                }
-            )
-        )
-        self.assertTrue(out["ok"])
-        self.assertEqual(out["mode"], "DELEGATE")
-        request = out["result"]["request"]
-        self.assertEqual(request["role"], "verifier")
-        self.assertEqual(request["profile"], "quick")
-        self.assertEqual(request["cwd"], "/tmp/project")
-        self.assertEqual(request["sandbox"], "read-only")
-        self.assertTrue(request["waitForCompletion"])
+    def test_verifier_is_independent_leaf_brief_not_private_runtime(self):
+        payload = json.loads(tools.worker_delegate({"task": "verify change", "role": "verifier", "context": "diff"}))
+        self.assertTrue(payload["ok"])
+        request = self.ctx.subagent_lifecycle.requests[0]
+        self.assertEqual(request.role, "leaf")
+        self.assertEqual(request.metadata["studio_role"], "verifier")
+        self.assertIn("independent verifier", request.context)
+        self.assertIn("diff", request.context)
 
-    def test_official_and_main_fail_closed_before_worker_start(self):
-        for mode in ("OFFICIAL", "MAIN"):
-            with self.subTest(mode=mode):
-                _Handler.mode = mode
-                out = json.loads(tools.worker_delegate({"task": "must not start"}))
-                self.assertFalse(out["ok"])
-                self.assertIn(mode, out["error"])
-                with _Handler.lock:
-                    self.assertFalse(any(row["path"] in {"/api/worker/start", "/api/worker/run"} for row in _Handler.rows))
-                with _Handler.lock:
-                    _Handler.rows.clear()
+    def test_wait_is_a_wait_only_and_does_not_set_child_timeout(self):
+        payload = json.loads(tools.worker_delegate({
+            "task": "long job",
+            "wait_for_completion": True,
+            "wait_timeout_seconds": 12.5,
+        }))
+        self.assertTrue(payload["ok"])
+        self.assertEqual(self.ctx.subagent_lifecycle.waits, [("child-1", 12.5)])
+        self.assertEqual(payload["result"]["terminal_state"], "SUCCEEDED")
+        self.assertIsNone(self.ctx.subagent_lifecycle.requests[0].timeout_seconds)
 
-    def test_unknown_mode_fails_closed(self):
-        _Handler.mode = "MYSTERY"
-        out = json.loads(tools.worker_delegate({"task": "must not start"}))
-        self.assertFalse(out["ok"])
-        self.assertIn("unknown Worker mode", out["error"])
+    def test_status_accepts_retained_task_id_or_serialized_handle(self):
+        started = json.loads(tools.worker_delegate({"task": "check"}))
+        by_id = json.loads(tools.worker_status({"task_id": started["task_id"]}))
+        by_handle = json.loads(tools.worker_status({"handle": started["handle"], "wait_timeout_seconds": 1}))
+        self.assertTrue(by_id["ok"])
+        self.assertTrue(by_handle["ok"])
+        self.assertEqual(by_id["task_id"], "child-1")
+        self.assertEqual(by_handle["result"]["summary"], "done:child-1")
 
-    def test_status_and_catalog_are_live_worker_reads_with_policy_snapshot(self):
-        status = json.loads(tools.worker_status({"task_id": "task-1"}))
+    def test_official_leaves_delegation_to_native_delegate_task(self):
+        self.ctx.mode = "OFFICIAL"
+        payload = json.loads(tools.worker_delegate({"task": "do not launch"}))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(self.ctx.subagent_lifecycle.requests, [])
+        self.assertIsNone(tools.policy_pre_tool_call("delegate_task", {}))
+        directive = tools.policy_pre_tool_call("worker_delegate", {})
+        self.assertEqual(directive["action"], "block")
+
+    def test_main_fails_closed_at_public_pre_tool_policy_boundary(self):
+        self.ctx.mode = "MAIN"
+        for name in ("delegate_task", "worker_delegate"):
+            directive = tools.policy_pre_tool_call(name, {})
+            self.assertEqual(directive["action"], "block")
+            self.assertIn("MAIN", directive["message"])
+        payload = json.loads(tools.worker_delegate({"task": "must not launch"}))
+        self.assertFalse(payload["ok"])
+        self.assertEqual(self.ctx.subagent_lifecycle.requests, [])
+
+    def test_delegate_alias_and_unknown_mode_policy(self):
+        self.ctx.mode = "WORKER"
+        allowed = json.loads(tools.worker_delegate({"task": "go"}))
+        self.assertTrue(allowed["ok"])
+        self.assertEqual(allowed["mode"], "DELEGATE")
+
+        self.ctx.mode = "MYSTERY"
         catalog = json.loads(tools.worker_catalog({}))
-        self.assertTrue(status["ok"])
-        self.assertEqual(status["result"]["status"], "completed")
+        self.assertEqual(catalog["mode"], "MAIN")
+        self.assertFalse(catalog["delegation_allowed"])
+
+    def test_catalog_points_to_hermes_as_single_source_of_truth(self):
+        catalog = json.loads(tools.worker_catalog({}))
         self.assertTrue(catalog["ok"])
-        self.assertEqual(catalog["result"]["registry"]["providers"]["official"]["models"][0]["id"], "m1")
-        self.assertEqual(catalog["result"]["studio_policy"]["mode"], "AUTO")
-        self.assertTrue(catalog["result"]["studio_policy"]["delegation_allowed"])
+        self.assertEqual(catalog["execution"], "PluginContext.subagent_lifecycle")
+        self.assertEqual(catalog["model_catalog"], "/api/model/options")
+        self.assertIn("delegation.*", catalog["worker_configuration"])
+        self.assertNotIn("codex", json.dumps(catalog).lower())
 
-    def test_worker_alias_is_reported_as_delegate(self):
-        _Handler.mode = "WORKER"
-        catalog = json.loads(tools.worker_catalog({}))
-        self.assertEqual(catalog["result"]["studio_policy"]["mode"], "DELEGATE")
-        self.assertEqual(catalog["result"]["studio_policy"]["ui_mode"], "WORKER")
-
-    def test_bearer_token_stays_server_side_and_is_forwarded(self):
-        json.loads(tools.worker_catalog({}))
-        with _Handler.lock:
-            rows = list(_Handler.rows)
-        self.assertTrue(any(row["authorization"] == "Bearer native-secret" for row in rows))
-
-    def test_validation_and_network_errors_return_structured_failures(self):
+    def test_validation_errors_are_structured(self):
         self.assertFalse(json.loads(tools.worker_delegate({}))["ok"])
+        self.assertFalse(json.loads(tools.worker_delegate({"task": "x", "role": "unknown"}))["ok"])
         self.assertFalse(json.loads(tools.worker_status({}))["ok"])
-        with patch.dict(os.environ, {"HERMES_WORKER_STUDIO_WORKER_URL": "https://example.com"}, clear=False):
-            out = json.loads(tools.worker_catalog({}))
-        self.assertFalse(out["ok"])
-        self.assertIn("remote Worker URL", out["error"])
-
-    def test_embedded_credentials_are_rejected(self):
-        with patch.dict(os.environ, {"HERMES_WORKER_STUDIO_WORKER_URL": "http://u:p@127.0.0.1:8788"}, clear=False):
-            out = json.loads(tools.worker_catalog({}))
-        self.assertFalse(out["ok"])
-        self.assertIn("must not embed credentials", out["error"])
-
-    def test_invalid_default_sandbox_falls_back_to_danger_full_access(self):
-        with patch.dict(os.environ, {"HERMES_WORKER_STUDIO_DEFAULT_SANDBOX": "made-up"}, clear=False):
-            out = json.loads(tools.worker_delegate({"task": "safe fallback"}))
-        self.assertTrue(out["ok"])
-        self.assertEqual(out["result"]["request"]["sandbox"], "danger-full-access")
+        self.assertFalse(json.loads(tools.worker_delegate({"task": "x", "wait_timeout_seconds": -1}))["ok"])
 
 
 if __name__ == "__main__":

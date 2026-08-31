@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Static archive contract checks.
+"""Archive contract checks for Hermes Worker Studio 2.x.
 
-These checks pin architectural boundaries rather than implementation trivia:
-Worker Studio must remain a thin consumer of documented Hermes/Worker surfaces,
-Hermes native Runs must be primary, and Worker delegation must fail closed
-outside AUTO/WORKER(DELEGATE).
+The seal is architectural: Studio must remain a thin product layer over public
+Hermes contracts. CI deliberately fails if a second worker runtime, private
+Hermes implementation dependency, guessed reasoning ladder, or duplicate model
+registry re-enters production code.
 """
 from __future__ import annotations
 
@@ -23,11 +23,16 @@ def fail(message: str) -> None:
 
 
 def read(path: str) -> str:
-    p = ROOT / path
-    if not p.is_file():
+    target = ROOT / path
+    if not target.is_file():
         fail(f"missing required file: {path}")
         return ""
-    return p.read_text(encoding="utf-8")
+    return target.read_text(encoding="utf-8")
+
+
+def require(text: str, token: str, label: str) -> None:
+    if token not in text:
+        fail(f"{label} lost required contract token: {token}")
 
 
 manifest_text = read("dashboard/manifest.json")
@@ -36,23 +41,24 @@ try:
 except Exception as exc:
     manifest = {}
     fail(f"invalid dashboard/manifest.json: {exc}")
-
 if manifest.get("tab", {}).get("override") != "/sessions":
-    fail("dashboard plugin must override /sessions through official tab.override")
+    fail("dashboard must replace /sessions through official tab.override")
 if manifest.get("entry") != "dist/index.js" or manifest.get("api") != "plugin_api.py":
     fail("dashboard manifest entry/api contract drifted")
+if str(manifest.get("version")) != "2.0.0":
+    fail("dashboard manifest must remain on sealed 2.0.0 contract")
 
 plugin_yaml = read("plugin.yaml")
-for tool in ("worker_delegate", "worker_status", "worker_catalog"):
-    if tool not in plugin_yaml:
-        fail(f"native plugin no longer declares {tool}")
+for token in ("version: 2.0.0", "worker_delegate", "worker_status", "worker_catalog", "pre_tool_call", "config_schema", "mode:"):
+    require(plugin_yaml, token, "plugin manifest")
 
-for py_name in ("__init__.py", "schemas.py", "tools.py", "dashboard/plugin_api.py"):
-    source = read(py_name)
+production_python = ["__init__.py", "schemas.py", "tools.py", "dashboard/plugin_api.py"]
+for path in production_python:
+    source = read(path)
     try:
-        tree = ast.parse(source, filename=py_name)
+        tree = ast.parse(source, filename=path)
     except SyntaxError as exc:
-        fail(f"Python syntax error in {py_name}: {exc}")
+        fail(f"Python syntax error in {path}: {exc}")
         continue
     for node in ast.walk(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -60,48 +66,45 @@ for py_name in ("__init__.py", "schemas.py", "tools.py", "dashboard/plugin_api.p
             if isinstance(node, ast.ImportFrom) and node.module:
                 names.append(node.module)
             for name in names:
-                if name.startswith("hermes_state") or name.startswith("sqlite3"):
-                    fail(f"{py_name} imports private/persistence layer {name}; use official HTTP/plugin contracts")
+                if name.startswith("sqlite3"):
+                    fail(f"{path} directly imports persistence layer {name}")
+                if name.startswith("tools.delegate_tool"):
+                    fail(f"{path} imports private Hermes delegation implementation {name}")
+
+native_tools = read("tools.py")
+for token in (
+    "subagent_lifecycle",
+    "SubagentLaunchRequest",
+    "policy_pre_tool_call",
+    'mode == "MAIN"',
+    'mode == "OFFICIAL"',
+    '"delegate_task"',
+    '"DELEGATE"',
+    '"/api/model/options"',
+):
+    require(native_tools, token, "native tools")
+if "AIAgent" in native_tools or "_build_child" in native_tools or "_run_child" in native_tools:
+    fail("native tools crossed the public subagent lifecycle boundary")
 
 backend = read("dashboard/plugin_api.py")
 for token in (
     "/v1/capabilities",
-    "/api/model/options",
-    "/api/sessions",
-    "/chat/stream",
     "/v1/runs",
     "/events",
     "/stop",
     "/approval",
     "/steer",
-    "/health/detailed",
+    "/api/model/options",
+    "/hermes/model-probe",
     "/hermes/unattended/probe",
-    "/api/catalog",
-    "/api/provider/connectivity",
-    "/api/routing",
     "official_runs",
-    "legacy_chat_stream",
-    "_DELEGATION_MODES",
-    "HERMES_WORKER_STUDIO_ALLOW_REMOTE",
-    "_RUN_EVENT_LIMIT",
+    "no legacy execution fallback",
+    "127.0.0.1:8642",
 ):
-    if token not in backend:
-        fail(f"backend lost required contract token: {token}")
-
-native_tools = read("tools.py")
-for token in (
-    "/api/state",
-    "_DELEGATION_MODES",
-    "OFFICIAL",
-    "AUTO",
-    "DELEGATE",
-    "MAIN",
-    "delegation fails closed",
-    "studio_policy",
-    "danger-full-access",
-):
-    if token not in native_tools:
-        fail(f"native Worker tools lost four-mode/security token: {token}")
+    require(backend, token, "dashboard backend")
+for forbidden in ("/chat/stream", "_worker(", "worker_proxy", "WORKER_TOKEN"):
+    if forbidden in backend:
+        fail(f"dashboard backend reintroduced obsolete execution surface: {forbidden}")
 
 frontend = read("dashboard/dist/index.js")
 for token in (
@@ -109,58 +112,88 @@ for token in (
     "CHAT_MESSAGE_LIMIT = 40",
     "HISTORY_SESSION_LIMIT = 20",
     "HISTORY_MESSAGE_LIMIT = 100",
+    "['chat', '对话'",
+    "['worker', 'Worker'",
+    "['models', '模型'",
+    "['unattended', '无人值守'",
+    "['history', '完整历史'",
+    "['/skills', '技能'",
+    "['/plugins', '插件'",
+    "['/mcp', 'MCP'",
     "/api/sessions/search",
+    "archived=${kind}",
+    "/api/model/options",
     "/api/providers/custom-endpoints",
-    "reasoning?.options",
+    "/hermes/model-probe",
     "/hermes/runs",
-    "/hermes/unattended/probe",
-    "RUN_SAFE_UNATTENDED_PROBE",
-    "/stop",
-    "/steer",
-    "/approval",
-    "/api/skills",
-    "approvalChoices",
+    "todo.updated",
     "Hermes Skills 变化",
-    "应用并实测无人值守",
-    "/worker/provider/connectivity",
-    "['OFFICIAL', 'AUTO', 'DELEGATE', 'MAIN']",
-    "unattended_mode: 'approve'",
+    "subagent_auto_approve",
+    "Hardline 边界永久保留",
+    "auxiliary.review",
+    "delegation.reasoning_effort",
 ):
-    if token not in frontend:
-        fail(f"frontend lost required behavior token: {token}")
+    require(frontend, token, "frontend")
 
-if not re.search(r"archived:\s*['\"]only['\"]", frontend):
-    fail("frontend lost archived-only view")
-
-# Never invent the common Codex effort ladder. Exact effort strings flow from
-# upstream capability metadata. Auto is the only local sentinel.
+# Reasoning values must originate in upstream metadata. Auto is Studio's only
+# local sentinel. Never recreate a familiar provider-specific effort ladder.
 for guessed in ("minimal", "low", "medium", "high", "xhigh"):
     if re.search(rf"['\"]{re.escape(guessed)}['\"]", frontend):
-        fail(f"frontend hard-codes reasoning effort {guessed!r}; only upstream-advertised values are allowed")
+        fail(f"frontend hard-codes reasoning effort {guessed!r}")
 
-# Browser code may use official Dashboard API + plugin backend only. Upstream
-# bearer secrets stay server side.
-for secret in ("API_SERVER_KEY", "CWD_WEB_TOKEN", "HERMES_WORKER_STUDIO_API_KEY", "HERMES_WORKER_STUDIO_WORKER_TOKEN"):
+# Navigation duplication is a product-contract regression: model credentials
+# and custom endpoints belong under Models rather than their own first-level
+# Keys/Providers items.
+primary_nav_match = re.search(r"const PRIMARY_NAV = \[(.*?)\];", frontend, re.S)
+if primary_nav_match:
+    primary_nav = primary_nav_match.group(1)
+    if "Keys" in primary_nav or "Providers" in primary_nav:
+        fail("Keys/Providers reappeared as duplicate first-level navigation")
+else:
+    fail("cannot locate PRIMARY_NAV")
+
+# Browser code must never receive server bearer secrets.
+for secret in ("API_SERVER_KEY", "HERMES_WORKER_STUDIO_API_KEY"):
     if secret in frontend:
         fail(f"frontend references server secret {secret}")
 
-# Keep upstream bridges loopback by default.
-if "127.0.0.1:8642" not in backend or "127.0.0.1:8788" not in backend:
-    fail("backend loopback defaults changed")
-if "danger-full-access" not in native_tools:
-    fail("worker_delegate no longer defaults to requested full-access sandbox")
+# Entire runtime/install surface must have no second worker service. Build the
+# legacy sentinels from fragments so this verifier does not self-match them.
+legacy_repo = "codex-worker-" + "delegation"
+legacy_port = ":" + "8788"
+legacy_env = "CWD" + "_"
+legacy_app_server = "Codex" + " App Server"
+runtime_paths = [
+    "plugin.yaml", "__init__.py", "schemas.py", "tools.py",
+    "dashboard/manifest.json", "dashboard/plugin_api.py",
+    "dashboard/dist/index.js", "deploy/worker-studio.env.example",
+    "scripts/install.sh",
+]
+for path in runtime_paths:
+    text = read(path)
+    for sentinel in (legacy_repo, legacy_port, legacy_env, legacy_app_server):
+        if sentinel in text:
+            fail(f"{path} still contains removed sidecar runtime sentinel {sentinel!r}")
+
+if (ROOT / "scripts" / "run-worker-local.sh").exists():
+    fail("obsolete worker sidecar launcher still exists")
+if (ROOT / "tests" / "real_worker_smoke.py").exists():
+    fail("obsolete worker sidecar smoke test still exists")
 
 lock_text = read("tests/upstream-lock.json")
 try:
     lock = json.loads(lock_text)
 except Exception as exc:
     lock = {}
-    fail(f"invalid upstream lock: {exc}")
-hermes_lock = lock.get("hermes", {}) if isinstance(lock, dict) else {}
-if hermes_lock.get("channel") != "post-release-snapshot":
-    fail("Hermes archive pin must explicitly disclose post-release snapshot channel")
-if not hermes_lock.get("release_commit") or not hermes_lock.get("snapshot_reason"):
-    fail("Hermes archive pin must record official release lineage and snapshot reason")
+    fail(f"invalid tests/upstream-lock.json: {exc}")
+if set(lock) != {"hermes"}:
+    fail("archive lock must have Hermes as its only runtime upstream")
+hermes = lock.get("hermes", {}) if isinstance(lock, dict) else {}
+for key in ("repository", "commit", "version", "channel", "snapshot_date", "snapshot_reason"):
+    if not hermes.get(key):
+        fail(f"Hermes archive lock missing {key}")
+if hermes.get("repository") != "NousResearch/hermes-agent":
+    fail("Hermes archive lock points at unexpected repository")
 
 if errors:
     print("Archive contract verification FAILED:", file=sys.stderr)
@@ -168,4 +201,4 @@ if errors:
         print(f"  - {item}", file=sys.stderr)
     raise SystemExit(1)
 
-print("Archive contract verification passed.")
+print("Archive contract verification passed: Hermes is the sole execution/model/policy upstream.")

@@ -1,259 +1,157 @@
-# Production / Archive Seal Checklist
+# Final Seal Checklist
 
-A release is called **SEALED** only after every applicable target-machine item below passes and its evidence is retained. Hosted GitHub CI proves the repository/archive-candidate layer deeply, but it cannot honestly prove private OAuth, real provider credentials, the intended browser, host permissions or service recovery.
+Use this checklist only after PR CI and post-merge `main` CI are green. Repository CI proves compatibility with the pinned snapshot; this checklist proves the real target machine.
 
-Record with the evidence bundle:
+Record date, host identifier, Hermes commit/version, Studio commit, evidence paths and operator for every run.
 
-- Studio exact commit SHA;
-- Hermes exact commit/version/profile;
-- Worker exact commit/version;
-- OS / Python / Node versions;
-- test timestamp and operator;
-- CI run URL for the exact commit.
+## A. Immutable baseline
 
-## A. Exact repository gate
+- [ ] `git rev-parse HEAD` for Studio equals intended release commit.
+- [ ] Hermes checkout equals `tests/upstream-lock.json` commit.
+- [ ] `python scripts/verify_upstreams.py --hermes-root <checkout>` passes.
+- [ ] `python scripts/verify_contract.py` passes.
+- [ ] Working trees are clean or deviations are documented and rejected from seal.
 
-- [ ] PR CI is green on the exact proposed head SHA.
-- [ ] PR is merged without bypassing required checks.
-- [ ] CI is green again on the exact resulting `main` SHA.
-- [ ] `python scripts/verify_contract.py` passes locally from that exact checkout.
-- [ ] `tests/upstream-lock.json` matches the intended Hermes/Worker deployment.
-- [ ] Hermes pin is visibly recorded as `0.20.6 post-release-snapshot`, not mislabeled as the official release tag.
-- [ ] Release lineage records `v2026.8.27` / `5fc308a70719a83cccdbba4c0e39c23f5a8239d5` and the snapshot `4f22543509d1b91dc45bcb369447126c5eb14fb7`.
+## B. Plugin installation
 
-A green Section A means **ARCHIVE CANDIDATE**, not SEALED.
+- [ ] `bash scripts/install.sh` completes.
+- [ ] staged `hermes plugins doctor` passes.
+- [ ] plugin enable succeeds.
+- [ ] installed-tree doctor passes.
+- [ ] registered tools are exactly `worker_delegate`, `worker_status`, `worker_catalog`.
+- [ ] `/sessions` is replaced through Dashboard `tab.override`; no Hermes core file is patched.
 
-## B. Hermes native plugin installation
+## C. Hermes API readiness
 
-On the target Hermes machine:
+- [ ] `/health` responds.
+- [ ] authenticated `/health/detailed` is not failed.
+- [ ] authenticated `/v1/capabilities` advertises Run submission/status/events/stop and required control features.
+- [ ] Browser never receives `API_SERVER_KEY`.
 
-- [ ] `hermes plugins doctor . --ci` passes.
-- [ ] `hermes plugins enable hermes-worker-studio` succeeds.
-- [ ] Hermes starts normally with the plugin enabled.
-- [ ] `/sessions` renders Studio through official `tab.override`.
-- [ ] No Hermes source/application file was patched.
-- [ ] Disable plugin -> native Hermes behavior returns without reinstalling Hermes.
-- [ ] Re-enable plugin -> Studio returns without database migration.
+## D. Sessions/history UX
 
-Save Plugin Doctor output.
+- [ ] recent rail requests at most 10 sessions.
+- [ ] opening a conversation initially requests latest 40 messages.
+- [ ] Full History paginates 20 sessions/page.
+- [ ] transcript history paginates 100 messages/page.
+- [ ] FTS search returns a known historical phrase.
+- [ ] archive/unarchive moves a test conversation correctly.
 
-## C. Network/authentication boundary
+## E. Native Runs / work timeline
 
-- [ ] Hermes API Server is loopback-only unless an explicit hardened remote design is being sealed.
-- [ ] `API_SERVER_KEY` / Studio Hermes key are configured correctly.
-- [ ] Worker is loopback `127.0.0.1:8788` for local mode.
-- [ ] Non-loopback Hermes/Worker URL is rejected while `HERMES_WORKER_STUDIO_ALLOW_REMOTE != 1`.
-- [ ] Embedded credentials in upstream URLs are rejected.
-- [ ] Browser DevTools/network payloads contain no Hermes API Server key or Worker bearer token.
-- [ ] Dashboard uses Hermes' own authentication gate; Studio introduces no second login system.
+Run a harmless real task through the Studio.
 
-## D. Hermes native Runs execution plane
+- [ ] execution is `POST /v1/runs`; no legacy chat transport is used.
+- [ ] status polling reflects the authoritative Run status.
+- [ ] SSE events render real tool lifecycle.
+- [ ] when Hermes emits todo/subagent events they render without fabricated steps.
+- [ ] elapsed time advances while running and freezes at terminal state.
+- [ ] completed work auto-collapses and can be reopened.
+- [ ] Stop works on a disposable long-running Run.
+- [ ] Steer is accepted when supported.
+- [ ] an approval event can be resolved through the official Run approval endpoint when approval mode is intentionally enabled for this test.
 
-From Studio, run a turn that uses at least one Hermes tool.
-
-- [ ] `/api/plugins/hermes-worker-studio/integration` reports `execution_plane=official_runs` on the pinned Hermes.
-- [ ] Sending a turn creates a Hermes `/v1/runs` run, not a Studio synthetic executor.
-- [ ] Run ID shown/observed by Studio matches Hermes native run ID.
-- [ ] `GET /v1/runs/{run_id}` reaches `completed` for a successful turn.
-- [ ] Studio final status/output matches Hermes' authoritative status.
-- [ ] SSE lifecycle includes real `run.started` / tool / assistant / terminal events as emitted upstream.
-- [ ] Work duration increments while active and freezes at terminal state.
-- [ ] Final transcript reloads from Hermes Session storage.
-- [ ] Completed work panel collapses and can be reopened with preserved events.
-
-Fault injection:
-
-- [ ] Interrupt native Run event SSE while the Run itself continues; Studio does **not** invent `incomplete` or `completed` from transport EOF and later status polling reconciles with Hermes.
-- [ ] Force a real native Run failure; Studio does not replay the prompt through legacy `chat/stream`.
-- [ ] On a deliberately old Hermes instance with `run_submission=false`, legacy compatibility is used and a clean EOF without `run.completed` becomes `incomplete`, never success.
-
-## E. Native Run controls
-
-Use the authenticated Studio plugin API against a disposable run where appropriate.
-
-- [ ] `POST /hermes/runs/{id}/stop` reaches Hermes native `/v1/runs/{id}/stop` and the run settles to cancelled/stopped according to Hermes.
-- [ ] A pending approval can be resolved through `/hermes/runs/{id}/approval` with a valid Hermes choice (`once`, `session`, `always`, `deny`).
-- [ ] Invalid approval choices are rejected by Studio before forwarding.
-- [ ] `/hermes/runs/{id}/steer` is accepted for an active Hermes run and rejected by Hermes for an inactive run.
-- [ ] A legacy compatibility run refuses native Runs control instead of pretending the control succeeded.
-
-Retain sanitized request/status evidence for one stop and, when practical, one approval/steer case.
-
-## F. Conversation/history/search/archive performance
-
-Prepare 100+ Sessions and at least one 1,000+ message Session.
-
-- [ ] Recent rail fetches exactly 10 Sessions.
-- [ ] Normal conversation opens only latest 40 messages.
-- [ ] Full History fetches 20 Sessions/page.
-- [ ] Full transcript fetches 100 messages/page.
-- [ ] Normal open of 1,000+ message Session does not fetch the whole transcript.
-- [ ] Browser remains responsive during history pagination.
-- [ ] Search finds old content not present in recent 10 via `/api/sessions/search`.
-- [ ] Search finds a known Session ID.
-- [ ] Search is server-side FTS, not browser full-history scanning.
-- [ ] Archive removes the Session from normal recent list.
-- [ ] Archived page uses official `archived=only`.
-- [ ] Restore/unarchive returns it to normal visibility.
-
-## G. Hermes Skills / Plugins / MCP official surfaces
-
-- [ ] Studio primary navigation opens native Hermes Skills page.
-- [ ] Native `/api/skills` returns the real target profile's Skills inventory.
-- [ ] Enable/disable/edit a disposable Skill through Hermes native UI and verify it persists.
-- [ ] Plugins page opens native Hermes plugin management.
-- [ ] MCP page opens native Hermes MCP management.
-- [ ] A new/changed Skill is visible through native `/api/skills`; no Studio private skill store exists.
-
-Do not claim a Studio-specific “learned skill” notification unless the shipped UI visibly provides it; native Skills state is the authority.
-
-## H. Worker four modes — real control plane
-
-Use the same real Worker instance intended for seal. Verify mode via Worker `/api/state` and Studio/native tool behavior.
+## F. Hermes-native Worker modes
 
 ### OFFICIAL
-
-- [ ] Set `OFFICIAL`; `/api/state.mode == OFFICIAL`.
-- [ ] Studio does not write project custom routing overrides.
-- [ ] Native `worker_delegate` fails closed without starting `/api/worker/start`/`run`.
-- [ ] Studio `/worker/start` also returns 409 before Worker execution.
-- [ ] Stop Worker `:8788`; Hermes history/search/archive stay usable.
-- [ ] With Worker stopped, a Hermes turn that does not require project Worker delegation still works.
-- [ ] Restart Worker; routing page recovers without reinstalling Studio.
+- [ ] `worker_delegate` is blocked with OFFICIAL explanation.
+- [ ] native Hermes `delegate_task` remains usable according to Hermes defaults.
 
 ### AUTO
+- [ ] `worker_delegate` launches a real Hermes `SubagentHandle`.
+- [ ] `worker_status` reaches terminal result through public lifecycle.
 
-- [ ] Set `AUTO`; `/api/state.mode == AUTO`.
-- [ ] Main / Worker / Verifier route cards use real Worker registry.
-- [ ] `worker_delegate` can create a real project Worker task.
-- [ ] Real task ID is observed and `/api/worker/status/{task_id}` matches Studio display.
-
-### WORKER / DELEGATE
-
-- [ ] UI `WORKER` persists wire `DELEGATE`.
-- [ ] Main coordinates while project Worker delegation is allowed.
-- [ ] Native `worker_catalog.studio_policy.ui_mode == WORKER` and `mode == DELEGATE`.
-- [ ] Worker/Verifier execution provenance matches the Worker audit/state.
+### WORKER
+- [ ] UI displays WORKER while stored/wire semantics are DELEGATE.
+- [ ] worker delegation launches Hermes child agent and returns real child identity.
 
 ### MAIN
+- [ ] direct `worker_delegate` is blocked.
+- [ ] native `delegate_task` is also blocked by `pre_tool_call` before child launch.
 
-- [ ] Set `MAIN`; `/api/state.mode == MAIN`.
-- [ ] New project Worker delegation is rejected by Studio backend.
-- [ ] Native `worker_delegate` also rejects it before worker start/run.
-- [ ] Main-only operation continues.
+- [ ] invalid/unknown mode fails closed.
 
-### Unknown/faulted state
+## G. Models / New API
 
-- [ ] A controlled invalid/unknown mode test in non-production harness fails closed rather than assuming delegation is allowed.
+Use a disposable or approved real endpoint credential.
 
-## I. Worker OAuth/Main provenance
+- [ ] Custom Endpoint is saved through Hermes official API.
+- [ ] API key is not returned to browser after save; input clears.
+- [ ] `GET /api/model/options?refresh=1` contains discovered models.
+- [ ] conversation, Worker and Review selectors derive from the same Hermes model inventory.
+- [ ] per-model “test” launches a minimal real Hermes Run with target provider+model.
+- [ ] a known-good model passes.
+- [ ] a deliberately invalid model/credential fails clearly.
+- [ ] models without explicit effort metadata show `Auto` only.
+- [ ] no model-name heuristic creates fake reasoning levels.
 
-On a real signed-in Linux target where Worker production seal can observe ChatGPT OAuth:
+## H. Worker / Review routing
 
-- [ ] Worker official App Server `account/read` observes the actual account state.
-- [ ] When account type is ChatGPT, Worker/Codex Main provider is Official-locked server-side.
-- [ ] Bypassing browser and attempting third-party Main while OAuth-active is rejected.
-- [ ] Worker/Verifier may still use legitimate third-party routes if configured.
-- [ ] If testing no-OAuth mode, third-party Main runs only as standalone App Server provenance using `codex_worker_gateway`.
-- [ ] UI/audit does not claim that standalone third-party Main replaced the official ChatGPT/Hermes root provider.
-- [ ] Third-party threads are not labeled native subagents.
+- [ ] Worker configuration writes only Hermes `delegation.*` fields.
+- [ ] Review configuration writes only Hermes `auxiliary.review.*` fields.
+- [ ] Main follows the active conversation/session model route instead of storing a duplicate Studio Main registry.
+- [ ] a Worker launch uses configured Hermes delegation route or documented inheritance.
+- [ ] `/review` uses configured reviewer route.
 
-## J. New API + model capability integrity
+## I. Skills / Plugins / MCP
 
-Use a real OpenAI-compatible upstream.
+- [ ] first-level Skills link opens Hermes native Skills surface.
+- [ ] a newly created/learned Skill appears through Hermes state/API without Studio synchronization database.
+- [ ] Plugins link opens native Plugin management.
+- [ ] MCP link opens native MCP management.
+- [ ] no duplicate management store exists in Studio.
 
-- [ ] Save Base URL + API Key through Worker Routing.
-- [ ] Worker `/api/catalog` refreshes with the real model list.
-- [ ] Password input is cleared after success.
-- [ ] Hermes official Custom Endpoint is created/updated without a Studio secret store.
-- [ ] Re-saving the same endpoint updates rather than intentionally creating a duplicate Studio-owned provider DB.
-- [ ] Per-model connectivity performs a real Worker request.
-- [ ] Bad key/model visibly fails.
-- [ ] Embedding/vector models do not become generation routes when Worker marks them non-generation.
+## J. Unattended
 
-For Reasoning:
+Apply from the visible first-level Unattended page.
 
-- [ ] Model with advertised efforts shows exactly `Auto + advertised values` in advertised order.
-- [ ] Model without advertised efforts shows only disabled `Auto`.
-- [ ] Switching model recomputes valid effort immediately.
-- [ ] No common ladder (`low/medium/high/xhigh`) appears merely because Studio recognizes the strings.
-- [ ] Backend rejects unsupported injected effort according to Worker upstream policy.
+- [ ] read current `/api/config` before change.
+- [ ] write `approvals.mode=off`.
+- [ ] set cron/single-query/unattended modes to approve.
+- [ ] set `mcp_reload_confirm=false` and `destructive_slash_confirm=false`.
+- [ ] set `delegation.subagent_auto_approve=true`.
+- [ ] read config back and verify every value.
+- [ ] authenticated real unattended marker Run returns `UNATTENDED_READY` and `marker_verified=true`.
+- [ ] marker is removed after probe.
+- [ ] a Hermes Hardline Blocklist case remains blocked; no bypass exists.
 
-## K. Hermes model/provider resolution
+## K. Restart / persistence / failure injection
 
-- [ ] `OFFICIAL` sends no Studio custom model/provider lock and follows Hermes default.
-- [ ] In non-OFFICIAL mode, a selected model is locked to a Hermes Session only when `/api/model/options` uniquely resolves provider + model.
-- [ ] Ambiguous provider mapping is not guessed.
-- [ ] Worker catalog is never presented as the authoritative Hermes root model inventory.
+- [ ] restart Hermes gateway; sessions/history remain authoritative.
+- [ ] reconnect Studio; no stale Run is invented as success.
+- [ ] lifecycle child process-restart limitations are represented honestly; Studio does not fake reconnect.
+- [ ] API Server unavailable => clear error, no fallback execution runtime starts.
+- [ ] invalid Custom Endpoint => model probe fails without affecting Hermes core health.
+- [ ] installer staged doctor failure preserves prior installed plugin.
 
-## L. Unattended / full-authority closure
+## L. Security sweep
 
-Use a disposable trusted environment.
+- [ ] no second execution service listening/required for Studio.
+- [ ] no production references to removed Worker sidecar/runtime.
+- [ ] no bearer secret in browser source, network payloads or committed files.
+- [ ] remote API bridge remains disabled unless explicitly intended.
+- [ ] no direct SQLite/private Hermes state access.
+- [ ] no private Hermes delegation imports.
 
-1. Apply the official unattended configuration.
-2. Read `/api/config` back.
-3. Verify exact values:
+## M. Final archive evidence
 
-- [ ] `approvals.mode == off`.
-- [ ] `cron_mode == approve`.
-- [ ] `single_query_mode == approve`.
-- [ ] `unattended_mode == approve`.
-- [ ] `mcp_reload_confirm == false`.
-- [ ] `destructive_slash_confirm == false`.
+Capture:
 
-Then run the real probe:
+- Studio commit SHA;
+- Hermes commit SHA/version;
+- GitHub PR CI URL/result;
+- GitHub post-merge main CI URL/result;
+- `verify_contract.py` output;
+- `verify_upstreams.py` output;
+- Plugin Doctor output;
+- real Run evidence;
+- four-mode evidence;
+- New API/model probe evidence;
+- unattended config read-back + marker evidence;
+- restart/failure-injection evidence.
 
-```text
-POST /api/plugins/hermes-worker-studio/hermes/unattended/probe
-{"confirm":"RUN_SAFE_UNATTENDED_PROBE"}
-```
+Only after A–M pass may the release be labelled:
 
-- [ ] Probe returns `ok=true`, `status=UNATTENDED_READY`, `marker_verified=true`.
-- [ ] Probe's run ID is a real Hermes native Run.
-- [ ] No manual approval was required.
-- [ ] Marker was created by Hermes tool execution and cleaned by the probe.
-- [ ] A safe hardline representative remains blocked by Hermes without execution.
+> **SEALED — Hermes Worker Studio 2.0, Hermes-native, single-runtime archive baseline**
 
-Save sanitized config excerpt + probe result. **Config write without read-back + probe is not a seal.**
-
-## M. Degraded operation/recovery
-
-- [ ] Stop Worker: Hermes non-Worker surfaces remain usable.
-- [ ] Restart Worker: Studio recovers without reinstall.
-- [ ] Stop Hermes API Server: history/management UI still renders where served by Dashboard; new runs fail clearly.
-- [ ] Restart API Server: new turns work without reinstall.
-- [ ] Invalid New API does not break existing Hermes history/native provider operation.
-- [ ] Browser refresh during/after a run reconciles from authoritative Hermes Session/status as supported by the runtime.
-
-## N. Upgrade / rollback
-
-- [ ] Re-run all repository/upstream contracts against the intended long-term Hermes/Worker versions before changing the lock.
-- [ ] Worker `npm run seal:production` passes on this same signed-in target.
-- [ ] Worker `npm run seal:release` passes where required by the Worker release process.
-- [ ] Worker `npm run seal:archive` reaches its real archive-ready result on this same target.
-- [ ] `scripts/install.sh` is idempotent.
-- [ ] Previous Studio tag/commit remains available.
-- [ ] Roll back by replacing/disabling Studio plugin only; no Studio-owned Hermes DB migration is required.
-- [ ] After rollback, native Hermes `/sessions` behavior is restored.
-
-## O. Final evidence bundle
-
-Attach/store with the exact sealed tag:
-
-- [ ] green PR CI URL + head SHA;
-- [ ] green post-merge `main` CI URL + exact main SHA;
-- [ ] Hermes Plugin Doctor output;
-- [ ] sanitized `/v1/capabilities` + `/health/detailed`;
-- [ ] native Runs create/status/events evidence;
-- [ ] stop and, if applicable, approval/steer evidence;
-- [ ] Worker `/api/health`, `/api/state`, sanitized `/api/catalog`;
-- [ ] four-mode screenshots/logs including OFFICIAL worker-outage isolation;
-- [ ] 10-session recent rail + paged full-history evidence;
-- [ ] real New API connectivity + real reasoning capability values;
-- [ ] native Skills evidence;
-- [ ] unattended sanitized config read-back + `UNATTENDED_READY` result;
-- [ ] Worker real production/release/archive seal outputs;
-- [ ] service stop/restart and rollback evidence;
-- [ ] version matrix and OS/browser/runtime details.
-
-Only after every applicable item is satisfied should the exact commit/tag be called **SEALED**. Until then the strongest valid repository-only label is **ARCHIVE CANDIDATE**.
+If target-machine evidence cannot be collected, label the repository **ARCHIVE CANDIDATE**, never SEALED.

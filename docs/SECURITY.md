@@ -1,130 +1,57 @@
-# Security Model
+# Security Boundary
 
-Worker Studio inherits Hermes authentication/safety instead of creating a competing security subsystem. The authenticated operator is trusted to use the powerful Hermes Dashboard; Studio's job is to preserve provenance, secret boundaries, failure isolation, and fail-closed execution policy.
+## Trust model
 
-## Trust boundaries
+Hermes is the sole execution/model/policy authority. Studio is an authenticated product layer and must never become a second security boundary with hidden authority.
 
-Local upstreams by default:
+## Credentials
 
-- Hermes API Server: `127.0.0.1:8642`
-- codex-worker-delegation: `127.0.0.1:8788`
+- Browser code uses Hermes Dashboard SDK / plugin API only.
+- `API_SERVER_KEY` stays server-side.
+- Custom Endpoint API keys are submitted to Hermes official endpoint management and are not persisted in Studio/browser state.
+- URL-embedded credentials are rejected.
+- Upstream target defaults to loopback `127.0.0.1:8642`; remote use requires explicit opt-in and operator-provided secure transport.
 
-Unless `HERMES_WORKER_STUDIO_ALLOW_REMOTE=1`, both bridges require a literal loopback hostname/address. DNS names that merely resolve to loopback are not accepted. Embedded URL credentials are rejected.
+## Execution
 
-Remote opt-in transfers responsibility for TLS/private networking and strong upstream authentication to the operator.
+Studio does not execute child work itself. `worker_delegate` uses `PluginContext.subagent_lifecycle`. Native Hermes `delegate_task` remains the official default path in OFFICIAL mode.
 
-## Secrets
+`MAIN` mode is enforced through Hermes `pre_tool_call`, so blocking occurs before the delegated tool executes. Unknown mode fails closed.
 
-The browser bundle never references or receives:
+No private `AIAgent` constructors, private delegate helpers, direct process spawning or second Worker daemon are permitted in production code.
 
-- `API_SERVER_KEY`
-- `HERMES_WORKER_STUDIO_API_KEY`
-- `CWD_WEB_TOKEN`
-- `HERMES_WORKER_STUDIO_WORKER_TOKEN`
+## Approvals / unattended
 
-The dashboard plugin backend adds those credentials server-side.
+Unattended mode changes only Hermes official configuration and verifies read-back. It also enables `delegation.subagent_auto_approve` so child work does not silently reintroduce an approval stop.
 
-A New API key entered in Worker Routing is intentionally submitted to two authorized owners only:
+A real authenticated Hermes Run writes a random temporary marker; `UNATTENDED_READY` is returned only when the Run reaches successful terminal state and the marker is observed.
 
-1. codex-worker-delegation, which owns Worker provider/vault/routing state;
-2. Hermes' official Custom Endpoint API, which owns Hermes provider configuration.
+Hermes Hardline Blocklist remains permanent. Studio cannot and does not bypass it.
 
-The input is cleared after successful save. Studio creates no third secret store.
+## Persistence/privacy
 
-## Hermes execution truth
+Studio does not read Hermes SQLite or private state files. Conversation/session data is obtained through official APIs. The in-memory Run event projection and lifecycle handle convenience map are bounded and disposable; authoritative state remains Hermes.
 
-When `/v1/capabilities` advertises native run submission, Studio uses Hermes `/v1/runs` as the authoritative execution plane. `/v1/runs/{id}` is terminal truth; Studio's in-memory event list is only a bounded UI projection.
+## Model integrity
 
-Security consequences:
+Studio does not infer provider/model capabilities from model names. Reasoning controls are rendered only from explicit upstream metadata; absent effort metadata means `Auto`.
 
-- event-stream EOF is not success;
-- a failed native Run is not silently replayed through legacy Session chat;
-- stop/approval/steer are sent to the same Hermes run ID;
-- transport state expiration cannot fabricate completion;
-- Studio never executes model-requested tools itself in place of Hermes.
+New API connectivity probes use real Hermes Runs, preventing a shallow `/models` response from being mistaken for end-to-end model usability.
 
-Legacy `/api/sessions/{id}/chat/stream` exists only for a capability-confirmed older Hermes runtime.
+## UI evidence
 
-## Worker four-mode enforcement
+The work timeline shows observable operational events only: tools, todo state, approvals, subagent lifecycle, timestamps and Skills deltas. Hidden chain-of-thought is not requested, stored or rendered.
 
-Worker mode is an execution policy, not a UI preference.
+## Archive enforcement
 
-- `AUTO` and `DELEGATE` (`WORKER` in UI) permit project-managed Worker delegation.
-- `OFFICIAL` and `MAIN` reject new project-managed delegation.
-- Unknown modes fail closed.
+CI rejects:
 
-This is enforced twice in Studio:
+- second-runtime production sentinels;
+- private delegation imports;
+- direct persistence imports;
+- browser bearer-secret references;
+- hard-coded reasoning ladders;
+- obvious committed credentials;
+- Bandit high-risk findings outside the documented URL-validation exception.
 
-1. dashboard backend before `/api/worker/start`;
-2. native Hermes `worker_delegate` before `/api/worker/start` or `/api/worker/run`.
-
-The Worker server remains the final independent enforcement layer.
-
-`OFFICIAL` is also a fault-isolation boundary. A dead Worker control plane is reported as degraded delegation, not as dead Hermes. Hermes history/search/archive and native non-Worker operation remain independent.
-
-## OAuth/Main provenance
-
-Studio does not weaken the Worker's README contract:
-
-- active ChatGPT OAuth observed through official Codex App Server `account/read` locks Worker/Codex Main to Official;
-- no OAuth is the only condition in which third-party standalone Main may be used;
-- third-party Main/Worker/Verifier App Server threads retain explicit third-party provenance;
-- Studio never labels a third-party thread as Hermes official provider or native subagent.
-
-Hermes root-agent model resolution uses Hermes `/api/model/options`; Worker catalog does not impersonate the Hermes model picker.
-
-## Browser rendering
-
-Conversation text, tool output, search snippets, Worker JSON and errors are rendered as React text/preformatted content. The shipped bundle does not use `dangerouslySetInnerHTML`, `innerHTML`, `eval`, or dynamic script injection for untrusted model/tool output.
-
-## Local Worker passwordless mode
-
-`scripts/run-worker-local.sh` may use `CWD_REQUIRE_AUTH=0` only with loopback binding. Never copy passwordless mode to a public bind. Network-reachable Worker deployments must use the Worker's own hardened authentication/deployment path and an appropriate Studio Worker token.
-
-## Full access / unattended
-
-The intended autonomous local mode is deliberately powerful:
-
-- Worker default requested sandbox: `danger-full-access`;
-- local Worker opt-in: `CWD_ALLOW_DANGER_FULL_ACCESS=1`;
-- Hermes `approvals.mode=off`;
-- Hermes headless modes: `approve`.
-
-This is appropriate only inside a deliberately trusted machine/workspace.
-
-Studio does **not** remove Hermes hardline protections. Upstream hardline remains authoritative.
-
-### Real unattended verification
-
-Writing config is not enough for seal evidence. The authenticated endpoint:
-
-`POST /api/plugins/hermes-worker-studio/hermes/unattended/probe`
-
-requires an explicit confirmation token and then starts a real Hermes native Run. Hermes is instructed to execute one harmless random temp-marker command; Studio polls the official run status and verifies the marker. Studio itself does not substitute a subprocess for Hermes. The marker is removed afterward.
-
-A successful target seal retains both:
-
-- sanitized config read-back proving the intended approval keys;
-- probe result `UNATTENDED_READY` proving the API-server execution path actually completed without a human approval wait.
-
-## Event/run memory limits
-
-Studio's projection cache:
-
-- is behind the normal authenticated Dashboard plugin route;
-- forwards only to configured Hermes/Worker upstreams;
-- caps event count and event payload size;
-- expires stale projection records;
-- does not own the authoritative Hermes transcript;
-- does not convert incomplete legacy SSE into success.
-
-## What to rotate after suspected compromise
-
-Rotate at least:
-
-1. `API_SERVER_KEY` / `HERMES_WORKER_STUDIO_API_KEY`;
-2. Worker control token/password if enabled;
-3. New API keys;
-4. any credential readable by the autonomous Hermes/Worker workspace.
-
-Restart relevant services after rotation so old process-memory credentials and active transports are discarded.
+A target machine is not SEALED until the authenticated checklist in `SEAL_CHECKLIST.md` is completed.

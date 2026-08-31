@@ -1,13 +1,17 @@
 # Changelog
 
-## 1.0.0 — 2026-08-31
+## 2.0.0 — Hermes-native archive candidate
 
-- Initial archive-grade Hermes Worker Studio.
-- Official Hermes Dashboard `/sessions` override.
-- Recent-10 fast chat, paged full history, FTS search and archived sessions.
-- Official Hermes Session SSE work-process timeline with live/final duration.
-- `codex-worker-delegation` New API, live model registry, connectivity and unified routing.
-- Capability-driven reasoning slider with Auto-only fallback.
-- Official Hermes Custom Endpoint synchronization.
-- Hermes native Worker delegation tools.
-- Official unattended approval configuration with hardline safety boundary preserved.
+- Removed the independent Worker execution/control plane from the Studio runtime.
+- Worker/Verifier delegation now uses Hermes public `PluginContext.subagent_lifecycle`.
+- Added Hermes `pre_tool_call` enforcement for OFFICIAL/MAIN policy semantics.
+- Standardized conversation execution on Hermes native `/v1/runs` with status/events/stop/approval/steer.
+- Unified Main/Worker/Review model selection on Hermes `/api/model/options` and official Custom Endpoints.
+- Reasoning UI is fail-closed to `Auto` unless upstream exposes explicit effort metadata.
+- Promoted Unattended to first-level UX and added delegation auto-approval plus real Run marker verification.
+- Consolidated sidebar/navigation, full-history pagination/search/archive and observable work timeline.
+- Replaced archive gates, upstream lock and CI with Hermes-only contracts and Hermes-owned regression tests.
+
+## 1.x
+
+Legacy dual-runtime implementation is retained in Git history only.
