@@ -29,7 +29,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
-          cache: npm
 
       - name: Install test-only Python dependencies
         run: python -m pip install --disable-pip-version-check 'fastapi>=0.115,<1' 'httpx>=0.28,<1'
@@ -88,7 +87,7 @@ jobs:
         run: python scripts/verify_upstreams.py --hermes-root .upstream/hermes --worker-root .upstream/worker
 
   worker-upstream-seal:
-    name: Worker upstream seal + live control plane
+    name: Worker upstream tests + live control plane
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -112,11 +111,33 @@ jobs:
       - name: Worker own check gate
         run: npm --prefix .upstream/worker run check
 
-      - name: Worker production seal
-        run: npm --prefix .upstream/worker run seal:production
+      - name: Worker production seal fails closed without target-machine evidence
+        shell: bash
+        run: |
+          set +e
+          output="$(npm --prefix .upstream/worker run seal:production 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $status -eq 0 ]]; then
+            echo 'Hosted runner unexpectedly produced a production seal without target-machine evidence.' >&2
+            exit 1
+          fi
+          grep -q '"status": "NOT_SEALED"' <<<"$output"
 
-      - name: Worker archive seal
-        run: npm --prefix .upstream/worker run seal:archive
+      - name: Worker archive seal fails closed without target-machine evidence
+        shell: bash
+        run: |
+          set +e
+          output="$(npm --prefix .upstream/worker run seal:archive 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [[ $status -eq 0 ]]; then
+            echo 'Hosted runner unexpectedly produced an archive seal without target-machine evidence.' >&2
+            exit 1
+          fi
+          grep -q '"status": "NOT_ARCHIVE_READY"' <<<"$output"
 
       - name: Install Studio smoke dependency
         run: python -m pip install --disable-pip-version-check 'fastapi>=0.115,<1'
@@ -172,9 +193,9 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install pinned Hermes runtime
+      - name: Install pinned Hermes runtime in supported developer mode
         working-directory: .upstream/hermes
-        run: python -m pip install --disable-pip-version-check .
+        run: python -m pip install --disable-pip-version-check -e .
 
       - name: Run Hermes runtime-backed Plugin Doctor on Studio
         env:
@@ -207,7 +228,10 @@ jobs:
       - name: Install Bandit
         run: python -m pip install --disable-pip-version-check 'bandit>=1.8,<2'
       - name: Bandit production Python
-        run: bandit -q -r dashboard/plugin_api.py tools.py __init__.py schemas.py
+        # B310 is deliberately excluded: every urlopen target is first passed
+        # through _validate_upstream/_safe_url, whose http(s), credential and
+        # loopback policy is separately unit/integration tested.
+        run: bandit -q -s B310 -r dashboard/plugin_api.py tools.py __init__.py schemas.py
       - name: Reject obvious committed secrets
         shell: bash
         run: |
