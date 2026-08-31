@@ -4,8 +4,8 @@ WORKER_DELEGATE = {
     "name": "worker_delegate",
     "description": (
         "Launch a fresh Hermes child agent through the documented public subagent "
-        "lifecycle API. This tool never starts Codex, a sidecar Worker server, or a "
-        "private AIAgent implementation."
+        "lifecycle API. This tool never starts a parallel execution service or uses "
+        "a private AIAgent implementation."
     ),
     "parameters": {
         "type": "object",
