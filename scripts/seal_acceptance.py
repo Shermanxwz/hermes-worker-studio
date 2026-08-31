@@ -2,13 +2,12 @@
 """Real-target seal acceptance for Hermes Worker Studio Product 3.
 
 This script talks only to the running Hermes Dashboard / public Studio plugin
-HTTP surface.  The default pass is deliberately low-risk: it verifies health,
-public integration ownership, model catalog access, and a complete ephemeral
-session CRUD lifecycle (create -> rename -> archive -> unarchive -> delete).
+HTTP surface. The default pass is deliberately low-risk: it verifies health,
+public integration ownership, Product 3 capabilities, model catalog access,
+and a complete ephemeral session CRUD lifecycle.
 
-Optional real model execution is enabled with ``--run``.  Nothing changes
-approval policy unless a future explicit acceptance step is added; the normal
-script never enables Full Access on its own.
+Optional real model execution is enabled with ``--run``. Nothing changes
+approval policy; the harness never enables Full Access on its own.
 """
 from __future__ import annotations
 
@@ -143,6 +142,14 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
     require(hermes.get("worker_plane") == "PluginContext.subagent_lifecycle", f"Unexpected Worker plane: {hermes}")
     require(hermes.get("model_catalog") == "/api/model/options", f"Unexpected model catalog: {hermes}")
     evidence["checks"]["integration"] = integration
+
+    _, product_caps = client.request(f"{PLUGIN}/product-capabilities")
+    require(isinstance(product_caps, dict) and product_caps.get("version") == 3, f"Unexpected Product capabilities: {product_caps}")
+    require(product_caps.get("execution") == "Hermes official /v1/runs", f"Product execution drifted: {product_caps}")
+    plan_caps = product_caps.get("official_plan") if isinstance(product_caps.get("official_plan"), dict) else {}
+    require(plan_caps.get("source") == "Hermes canonical todo", f"Official plan is not Hermes-owned: {plan_caps}")
+    require("/api/sessions" in str(plan_caps.get("fallback") or ""), f"Canonical todo fallback missing: {plan_caps}")
+    evidence["checks"]["product_capabilities"] = product_caps
 
     _, model_options = client.request("/api/model/options")
     require(isinstance(model_options, dict), "Hermes model catalog is not an object")
