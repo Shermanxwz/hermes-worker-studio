@@ -54,7 +54,7 @@ const modelOptions = {
   providers: [{
     slug: 'official', name: 'Official', authenticated: true, is_current: true,
     models: ['main-model', 'worker-model'],
-    capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'] }, 'worker-model': {} },
+    capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], context_window: 128000 }, 'worker-model': {} },
   }],
 };
 
@@ -98,6 +98,7 @@ function responseFor(url, init = {}) {
     if (!sessions.some((s) => s.id === created.id)) sessions = [created, ...sessions];
     return created;
   }
+  if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-new/context' || url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/context') return { available: false, source: 'unavailable' };
   if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-new/model' || url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/model') return { ok: true };
   if (url === '/api/plugins/hermes-worker-studio/hermes/runs-v3') {
     runSerial += 1;
@@ -194,8 +195,11 @@ assert.ok(createdTitle.startsWith('Build a seal test · '));
 assert.notEqual(createdTitle, 'New conversation');
 assert.equal(latestRunBody.input, 'Build a seal test');
 await waitFor(() => byText('.hws3-plan-card', '官方计划'), 'official plan render');
-assert.ok(byText('.hws3-plan-card', 'Inspect'));
-assert.ok(byText('.hws3-plan-card', 'Finish'));
+assert.match(window.document.querySelector('.hws3-plan-summary').textContent, /已完成 1 \/ 2/);
+assert.equal(window.document.querySelector('.hws3-plan-list'), null, 'official plan starts collapsed');
+await click(window.document.querySelector('.hws3-plan-summary'));
+assert.ok(byText('.hws3-plan-list', 'Inspect'));
+assert.ok(byText('.hws3-plan-list', 'Finish'));
 await waitFor(() => polls.get('run-1') >= 2, 'run completion');
 
 // Clipboard image path reaches the v3 structured input transport.
