@@ -17,6 +17,18 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   await expect(page.getByText('Hermes Worker Studio', { exact: true }).first()).toBeVisible();
   await expect(page.locator('.hws3-composer textarea')).toBeVisible();
 
+  const gatewayContract = await page.evaluate(() => window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE__ || null);
+  expect(gatewayContract).not.toBeNull();
+  expect(gatewayContract.protocol).toBe('tui_gateway_jsonrpc_websocket');
+  expect(gatewayContract.chat).toBe('prompt.submit');
+  expect(gatewayContract.context).toEqual(['session.usage', 'session.context_breakdown']);
+  expect(gatewayContract.compact).toEqual(['status.update:compacting', 'status.update:compacted']);
+  expect(gatewayContract.plan).toBe('todo.updated');
+  expect(gatewayContract.stop).toBe('session.interrupt');
+  expect(gatewayContract.steer).toBe('session.steer');
+  expect(gatewayContract.approval).toBe('approval.respond');
+  expect(gatewayContract.attachments).toBe('image.attach_bytes');
+
   const mobile = testInfo.project.name.startsWith('mobile-');
   if (mobile) {
     const menu = page.locator('.hws3-mobile-bar button[title="菜单"]');
