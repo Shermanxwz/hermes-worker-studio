@@ -10,7 +10,7 @@
     "position": "before:sessions",
     "hidden": false
   },
-  "slots": ["header-left"],
+  "slots": ["header-left", "sidebar"],
   "entry": "dist/gateway-native.js",
   "css": "dist/product-sealed.css",
   "api": "plugin_api_v3.py"
