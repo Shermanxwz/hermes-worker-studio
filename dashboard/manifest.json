@@ -1,16 +1,17 @@
 {
   "name": "hermes-worker-studio",
   "label": "Worker Studio",
-  "description": "Hermes-native conversation, delegation, models and unattended control surface built only on official Hermes dashboard/API/plugin contracts.",
+  "description": "Product-grade Hermes-native conversation, Worker, models, session lifecycle and full-access control surface built only on official Hermes contracts.",
   "icon": "MessageSquare",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "tab": {
     "path": "/worker-studio",
-    "override": "/sessions",
+    "override": "/",
     "position": "before:sessions",
     "hidden": false
   },
-  "entry": "dist/index.js",
-  "css": "dist/style.css",
-  "api": "plugin_api.py"
+  "slots": ["header-left", "sidebar"],
+  "entry": "dist/gateway-native.js",
+  "css": "dist/product-sealed.css",
+  "api": "plugin_api_v3.py"
 }

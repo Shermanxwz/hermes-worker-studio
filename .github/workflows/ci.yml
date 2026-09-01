@@ -41,12 +41,21 @@ jobs:
       - name: JavaScript syntax gate
         run: |
           node --check dashboard/dist/index.js
+          node --check dashboard/dist/gateway-native.js
+          node --check dashboard/dist/index-v3.js
           node --check tests/frontend_runtime.mjs
+          node --check tests/frontend_runtime_v3.mjs
+          node --check tests/frontend_gateway_native.mjs
+          node --check tests/frontend_product_v3.mjs
+          node --check tests/frontend_settings_v3.mjs
+          node --check tests/frontend_context_plan_v3.mjs
+          node --check playwright.seal.config.mjs
+          node --check tests/target_ui.spec.mjs
 
       - name: Shell syntax gate
         run: bash -n scripts/install.sh
 
-      - name: Archive architecture contract
+      - name: Archive + product architecture contract
         run: python scripts/verify_contract.py
 
       - name: Python unit + HTTP integration + installer tests
@@ -55,6 +64,14 @@ jobs:
       - name: Dashboard product-flow runtime integration
         run: npm run test:frontend
 
+      - name: Seal command CLI gates
+        run: |
+          python scripts/seal_acceptance.py --help >/dev/null
+          python scripts/verify_seal_evidence.py --help >/dev/null
+          python scripts/seal_upstream_gate.py --help >/dev/null
+          python scripts/seal_close.py --help >/dev/null
+          python scripts/github_finalize_seal.py --help >/dev/null
+
       - name: Dashboard manifest JSON gate
         run: python -m json.tool dashboard/manifest.json >/dev/null
 
@@ -62,7 +79,7 @@ jobs:
         run: npm audit --audit-level=high
 
   hermes-upstream-contract:
-    name: Pinned Hermes public contracts
+    name: Pinned Hermes archive public contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -77,11 +94,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Verify exact revision and documented public semantics
+      - name: Verify exact revision and documented archive semantics
         run: python scripts/verify_upstreams.py --hermes-root .upstream/hermes
+      - name: Verify official Hermes Web branding asset
+        run: test -s .upstream/hermes/web/public/favicon.ico
 
   hermes-native-contract:
-    name: Hermes lifecycle + Runs + approvals + Plugin Doctor
+    name: Hermes lifecycle + Gateway attachments + Runs + approvals + Plugin Doctor
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -105,7 +124,7 @@ jobs:
             'pytest-asyncio==1.3.0' \
             'aiohttp==3.14.3'
 
-      - name: Run Hermes own lifecycle, Runs and approval tests
+      - name: Run Hermes own lifecycle, Gateway, attachment and approval tests
         working-directory: .upstream/hermes
         env:
           HERMES_HOME: ${{ runner.temp }}/hermes-upstream-test-home
@@ -113,7 +132,10 @@ jobs:
           python -m pytest -q \
             tests/agent/test_subagent_lifecycle.py \
             tests/gateway/test_api_server_runs.py \
-            tests/tools/test_approval.py
+            tests/tools/test_approval.py \
+            tests/tui_gateway/test_todo_state_events.py \
+            tests/tui_gateway/test_attach_does_not_wait_for_agent.py \
+            tests/agent/test_context_breakdown.py
 
       - name: Run Hermes Plugin Doctor on Studio
         env:
@@ -146,20 +168,18 @@ jobs:
       - name: Install Bandit
         run: python -m pip install --disable-pip-version-check 'bandit>=1.8,<2'
       - name: Bandit production Python
-        # B310 is intentionally excluded: every URL is validated for scheme,
-        # credentials and loopback policy before urlopen; that boundary is unit-tested.
-        run: bandit -q -s B310 -r dashboard/plugin_api.py tools.py __init__.py schemas.py
+        run: bandit -q -s B310 -r dashboard/plugin_api.py dashboard/plugin_api_v3.py tools.py __init__.py schemas.py scripts/stage_product_bundle.py
       - name: Reject committed bearer secrets
         shell: bash
         run: |
-          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
+          ! grep -RInE --exclude='*.md' --exclude='*.example' --exclude='frontend_runtime.mjs' --exclude='frontend_runtime_v3.mjs' --exclude='frontend_gateway_native.mjs' --exclude='frontend_product_v3.mjs' --exclude='frontend_settings_v3.mjs' '(sk-[A-Za-z0-9_-]{20,}|API_SERVER_KEY=[^<[:space:]]{12,})' .
       - name: Reject a second execution runtime in production files
         shell: bash
         run: |
           legacy_repo='codex-worker-delegation'
           legacy_port=':8788'
           legacy_env='CWD_'
-          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/dist/index.js scripts/install.sh deploy/worker-studio.env.example)
+          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py dashboard/dist/gateway-native.js dashboard/dist/index-v3.js scripts/install.sh scripts/stage_product_bundle.py deploy/worker-studio.env.example)
           for token in "$legacy_repo" "$legacy_port" "$legacy_env"; do
             if grep -FIn -- "$token" "${files[@]}"; then
               echo "forbidden parallel-runtime token found: $token" >&2
