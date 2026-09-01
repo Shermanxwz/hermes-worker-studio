@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const [manifestRaw, gateway, js, css, sealedCss, bridge, installer] = await Promise.all([
+const [manifestRaw, gateway, js, css, sealedCss, bridge, installer, stageBundle] = await Promise.all([
   fs.readFile(path.join(root, 'dashboard/manifest.json'), 'utf8'),
   fs.readFile(path.join(root, 'dashboard/dist/gateway-native.js'), 'utf8'),
   fs.readFile(path.join(root, 'dashboard/dist/index-v3.js'), 'utf8'),
@@ -12,6 +12,7 @@ const [manifestRaw, gateway, js, css, sealedCss, bridge, installer] = await Prom
   fs.readFile(path.join(root, 'dashboard/dist/product-sealed.css'), 'utf8'),
   fs.readFile(path.join(root, 'dashboard/plugin_api_v3.py'), 'utf8'),
   fs.readFile(path.join(root, 'scripts/install.sh'), 'utf8'),
+  fs.readFile(path.join(root, 'scripts/stage_product_bundle.py'), 'utf8'),
 ]);
 const manifest = JSON.parse(manifestRaw);
 
@@ -20,7 +21,7 @@ assert.equal(manifest.tab.override, '/', 'Studio must own product home, leaving 
 assert.equal(manifest.entry, 'dist/gateway-native.js');
 assert.equal(manifest.css, 'dist/product-sealed.css');
 assert.equal(manifest.api, 'plugin_api_v3.py');
-assert.deepEqual(manifest.slots, ['header-left']);
+assert.deepEqual(manifest.slots, ['header-left', 'sidebar']);
 assert.ok(sealedCss.includes('@import url("./product.css");'), 'sealed polish must layer on the stable Product 3 base stylesheet');
 
 for (const token of [
@@ -28,7 +29,7 @@ for (const token of [
   "new StudioGatewayClient(() => SDK.buildWsUrl('/api/ws'))",
   "this.urlFactory()",
   "'session.resume'",
-  "close_on_disconnect: true",
+  'close_on_disconnect: false',
   "'prompt.submit'",
   "'session.usage'",
   "'session.context_breakdown'",
@@ -37,21 +38,38 @@ for (const token of [
   "kind === 'compacting'",
   "kind === 'compacted'",
   "'image.attach_bytes'",
+  "'pdf.attach'",
+  "'file.attach'",
+  'result?.ref_text',
   "'session.steer'",
   "'session.interrupt'",
   "'approval.respond'",
+  "'clarify.respond'",
+  "'mcp.setup.respond'",
+  "'sudo.respond'",
+  "'secret.respond'",
+  "'terminal.read.respond'",
+  'transport.reconnecting',
+  'transport.reconnected',
   "source: 'hermes_gateway_jsonrpc'",
   "transport: 'official_gateway_websocket'",
-  "source: 'hermes.gateway.close_on_disconnect'",
-  "reason: 'gateway_websocket_closed'",
   "protocol: 'tui_gateway_jsonrpc_websocket'",
+  "reconnect: 'session.resume(close_on_disconnect=false)'",
+  "attachments: ['image.attach_bytes', 'pdf.attach', 'file.attach']",
+  "registerSlot('hermes-worker-studio', 'header-left'",
+  "registerSlot('hermes-worker-studio', 'sidebar'",
   "new URL('index-v3.js', current.src)",
 ]) assert.ok(gateway.includes(token), `missing Gateway-native product contract token: ${token}`);
 
 assert.ok(!gateway.includes('API_SERVER_KEY'), 'Gateway browser entry must never see Hermes bearer secrets');
 assert.ok(!gateway.includes('estimateTokens'), 'Gateway browser entry must not invent context token estimates');
 assert.ok(!gateway.includes('tokenizer'), 'Gateway browser entry must not ship a second tokenizer');
+assert.ok(!gateway.includes('close_on_disconnect: true'), 'browser disconnect must not own Hermes Session lifetime');
+assert.ok(!gateway.includes("source: 'hermes.gateway.close_on_disconnect'"), 'disconnect must not be projected as a terminal Hermes Run');
 
+// Source Product 3 remains reviewable; the supported installer applies a
+// fail-closed release transform for arbitrary files, native navigation and
+// Full Access disclosure. Both source and release transform are contract-pinned.
 for (const token of [
   "registerSlot('hermes-worker-studio', 'header-left'",
   "['/sessions', '原生 Dashboard · 会话']",
@@ -85,7 +103,19 @@ for (const token of [
   '正在压缩上下文',
   '上下文已压缩',
   '不会把累计 billing/input token 当成当前上下文',
-]) assert.ok(js.includes(token), `missing v3 product UI contract token: ${token}`);
+]) assert.ok(js.includes(token), `missing v3 product UI source contract token: ${token}`);
+
+for (const token of [
+  'MAX_ATTACHMENT_BYTES',
+  "title: '添加文件'",
+  'Ctrl/Cmd+V 粘贴文件',
+  "type: 'file_url'",
+  "kind: item.kind || 'file'",
+  "['/sessions', 'Hermes 会话', '☷']",
+  "['/cron', '自动化', '◷']",
+  'Clarify 等交互请求自动 Skip/Decline，不再等待人工',
+  '缺少密码、MFA 或外部授权时会自动失败/继续可行路径',
+]) assert.ok(stageBundle.includes(token), `missing installed Product 3 release transform token: ${token}`);
 
 assert.ok(!js.includes("title: 'New conversation'"), 'fixed duplicate session title must never return');
 assert.ok(!js.includes('API_SERVER_KEY'), 'browser UI bundle must never see Hermes bearer secrets');
@@ -95,8 +125,8 @@ assert.ok(js.includes('25 * 1024 * 1024'));
 for (const token of ['@media(max-width:820px)', 'env(safe-area-inset-bottom)', '.hws3-mobile-scrim', '.hws3-composer', '.hws3-plan-card', '.hws3-return-slot']) {
   assert.ok(css.includes(token), `missing responsive/product base CSS token: ${token}`);
 }
-for (const token of ['.hws3-context-meter', '.hws3-context-popover', '.hws3-plan-summary', '@keyframes hws3-context-spin', '@media(max-width:540px)', '@media(prefers-reduced-motion:reduce)']) {
-  assert.ok(sealedCss.includes(token), `missing sealed context/plan CSS token: ${token}`);
+for (const token of ['.hws3-context-meter', '.hws3-context-popover', '.hws3-plan-summary', '.hws3-file-icon', '@keyframes hws3-context-spin', '@media(max-width:540px)', '@media(prefers-reduced-motion:reduce)']) {
+  assert.ok(sealedCss.includes(token), `missing sealed context/plan/attachment CSS token: ${token}`);
 }
 
 for (const token of [
@@ -121,6 +151,9 @@ assert.ok(installer.includes('dashboard/dist/gateway-native.js'));
 assert.ok(installer.includes("const href = baseHref('/favicon.ico');"));
 assert.ok(installer.includes('official Hermes Dashboard /favicon.ico'));
 assert.ok(installer.includes('Hermes official TUI Gateway JSON-RPC'));
+assert.ok(installer.includes('scripts/stage_product_bundle.py'));
+assert.ok(installer.includes('arbitrary attachments'));
+assert.ok(installer.includes('WebSocket reconnects resume durable Hermes Sessions'));
 assert.ok(installer.includes('HWS_CANDIDATE_SHA'));
 assert.ok(installer.includes('product-sealed.css'));
 assert.ok(installer.includes('could not locate the unique Product 3 candidate marker'));
