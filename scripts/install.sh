@@ -25,7 +25,8 @@ for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
   dashboard/dist/gateway-native.js dashboard/dist/index-v3.js \
-  dashboard/dist/product.css dashboard/dist/product-sealed.css; do
+  dashboard/dist/product.css dashboard/dist/product-sealed.css \
+  scripts/stage_product_bundle.py; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
     exit 1
@@ -72,6 +73,11 @@ if source.count(old_candidate) != 1:
 bridge.write_text(source.replace(old_candidate, new_candidate), encoding="utf-8")
 PY
 
+# Widen the release Composer to the pinned Hermes Gateway's official attachment
+# family (image.attach_bytes / pdf.attach / file.attach). The transform itself
+# is exact-count checked and fails closed if Product 3 source drifts.
+python "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"
+
 if command -v hermes >/dev/null 2>&1; then
   echo "[1/4] Hermes plugin doctor (staged tree)"
   hermes plugins doctor "$TMP" --ci
@@ -117,9 +123,12 @@ Runtime contract:
                 HERMES_WORKER_STUDIO_API_KEY=<same value as API_SERVER_KEY>
 
 Chat/session runtime state, Context usage, Auto Compact lifecycle, canonical todo,
-approvals, steer/interrupt and image attachment are consumed from official Hermes
-Gateway methods/events. /v1/runs remains a probe/CI/unattended surface rather than
-the product chat transport.
+steer/interrupt, no-wait Full Access input handling, and arbitrary attachments are
+consumed from official Hermes Gateway methods/events. Attachments use
+image.attach_bytes / pdf.attach / file.attach; ordinary files use Hermes-returned
+@file: references. WebSocket reconnects resume durable Hermes Sessions instead of
+terminating work. /v1/runs remains a probe/CI/unattended surface rather than the
+product chat transport.
 
 Worker/Verifier execution stays inside Hermes through the public
 PluginContext.subagent_lifecycle contract. No external worker service or second
@@ -127,7 +136,7 @@ execution runtime is required.
 
 Refresh/restart the official Hermes dashboard. Worker Studio owns the product
 home route through official Dashboard tab.override="/". Native /sessions and
-other Hermes pages remain reachable from Studio > 高级, with an official
-header-left slot providing a return path to Worker Studio. Hermes core files are
-never patched.
+other Hermes pages remain reachable from Studio > 高级, with official
+header-left/sidebar slots providing return paths to Worker Studio. Hermes core
+files are never patched.
 EOF
