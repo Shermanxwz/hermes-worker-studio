@@ -25,7 +25,10 @@ assert.ok(sealedCss.includes('@import url("./product.css");'), 'sealed polish mu
 
 for (const token of [
   "SDK.buildWsUrl('/api/ws')",
+  "new StudioGatewayClient(() => SDK.buildWsUrl('/api/ws'))",
+  "this.urlFactory()",
   "'session.resume'",
+  "close_on_disconnect: true",
   "'prompt.submit'",
   "'session.usage'",
   "'session.context_breakdown'",
@@ -39,6 +42,8 @@ for (const token of [
   "'approval.respond'",
   "source: 'hermes_gateway_jsonrpc'",
   "transport: 'official_gateway_websocket'",
+  "source: 'hermes.gateway.close_on_disconnect'",
+  "reason: 'gateway_websocket_closed'",
   "protocol: 'tui_gateway_jsonrpc_websocket'",
   "new URL('index-v3.js', current.src)",
 ]) assert.ok(gateway.includes(token), `missing Gateway-native product contract token: ${token}`);
