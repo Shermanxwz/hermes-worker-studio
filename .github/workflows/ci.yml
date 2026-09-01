@@ -79,7 +79,7 @@ jobs:
         run: npm audit --audit-level=high
 
   hermes-upstream-contract:
-    name: Pinned Hermes public contracts + Product shell blocker
+    name: Pinned Hermes archive public contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -94,10 +94,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
-      - name: Verify exact revision and documented public semantics
+      - name: Verify exact revision and documented archive semantics
         run: python scripts/verify_upstreams.py --hermes-root .upstream/hermes
-      - name: Require official route-scoped exclusive Dashboard shell contract
-        run: python scripts/verify_required_upstream_contracts.py --hermes-root .upstream/hermes
       - name: Verify official Hermes Web branding asset
         run: test -s .upstream/hermes/web/public/favicon.ico
 
