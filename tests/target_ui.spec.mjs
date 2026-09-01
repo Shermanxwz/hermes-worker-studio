@@ -30,6 +30,32 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   expect(gatewayContract.attachments).toBe('image.attach_bytes');
 
   const mobile = testInfo.project.name.startsWith('mobile-');
+  if (!mobile) {
+    const gatewayProbe = await page.evaluate(async () => {
+      const sdk = window.__HERMES_PLUGIN_SDK__;
+      const title = `HWS browser gateway probe ${Date.now()}`;
+      const created = await sdk.fetchJSON('/api/plugins/hermes-worker-studio/hermes/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, source: 'hermes_worker_studio_seal' }),
+      });
+      const sessionId = created?.session?.id || created?.session_id || created?.id;
+      if (!sessionId) throw new Error(`Hermes Session create returned no id: ${JSON.stringify(created)}`);
+      try {
+        const context = await sdk.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/sessions/${encodeURIComponent(sessionId)}/context`);
+        return { sessionId, context };
+      } finally {
+        await sdk.fetchJSON(`/api/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+      }
+    });
+    expect(gatewayProbe.sessionId).toBeTruthy();
+    expect(gatewayProbe.context.available).toBe(true);
+    expect(gatewayProbe.context.source).toBe('hermes.gateway.session.usage');
+    expect(gatewayProbe.context.measurement).toBe('Hermes Gateway');
+    expect(gatewayProbe.context.context_used == null || Number.isFinite(Number(gatewayProbe.context.context_used))).toBe(true);
+    expect(gatewayProbe.context.context_max == null || Number.isFinite(Number(gatewayProbe.context.context_max))).toBe(true);
+  }
+
   if (mobile) {
     const menu = page.locator('.hws3-mobile-bar button[title="菜单"]');
     await expect(menu).toBeVisible();
