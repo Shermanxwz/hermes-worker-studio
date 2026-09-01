@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the exact Hermes public contracts Worker Studio 2.0 is sealed to.
+"""Verify the exact Hermes public contracts Worker Studio Product 3 is sealed to.
 
 The verifier pins semantics, not incidental source-file placement. Contracts
 that have a documented canonical file are checked there; cross-surface config
@@ -120,6 +120,79 @@ def verify_hermes(hermes: pathlib.Path) -> None:
         ),
         "Hermes PluginContext/policy surface",
     )
+
+    require_tokens(
+        hermes / "website" / "docs" / "developer-guide" / "programmatic-integration.md",
+        (
+            "TUI Gateway JSON-RPC",
+            "JSON-RPC over stdio (or WebSocket)",
+            "Custom hosts that want fine-grained control of sessions",
+            "prompt.submit",
+            "session.steer",
+            "session.interrupt",
+            "session.usage",
+            "approval.respond",
+            "image.attach",
+            "custom desktop / web / TUI host and want every Hermes feature",
+        ),
+        "Hermes official custom-host Gateway docs",
+    )
+    require_tokens(
+        hermes / "web" / "src" / "plugins" / "registry.ts",
+        (
+            "buildWsUrl",
+            "buildWsAuthParam",
+            "window.__HERMES_PLUGIN_SDK__",
+            "Use this for any",
+            "plugin WebSocket",
+        ),
+        "Hermes Dashboard Plugin WebSocket SDK",
+    )
+    require_tokens(
+        hermes / "tui_gateway" / "methods_session.py",
+        (
+            '@method("session.usage")',
+            '@method("session.context_breakdown")',
+            "context_max",
+            "context_percent",
+            "context_used",
+            "compute_session_context_breakdown",
+        ),
+        "Hermes Gateway Context RPCs",
+    )
+    require_tokens(
+        hermes / "tui_gateway" / "methods_prompt.py",
+        (
+            '@method("prompt.submit")',
+            '@method("image.attach_bytes")',
+            '@method("approval.respond")',
+            "content_base64",
+        ),
+        "Hermes Gateway prompt/image/approval RPCs",
+    )
+    require_tokens(
+        hermes / "apps" / "shared" / "src" / "json-rpc-gateway.ts",
+        (
+            "JsonRpcGatewayClient",
+            "'todo.updated'",
+            "'status.update'",
+            "'approval.request'",
+            "'message.delta'",
+            "'message.complete'",
+        ),
+        "Hermes shared Gateway event contract",
+    )
+    require_tokens(
+        hermes / "apps" / "desktop" / "src" / "app" / "session" / "hooks" / "use-message-stream" / "gateway-event" / "status.ts",
+        (
+            "event.type === 'status.update'",
+            "payload?.kind === 'compacting'",
+            "payload?.kind === 'compacted'",
+            "setSessionCompacting",
+        ),
+        "Hermes official Desktop compaction event projection",
+    )
+
     require_tokens(
         hermes / "website" / "docs" / "user-guide" / "features" / "api-server.md",
         (
@@ -143,10 +216,6 @@ def verify_hermes(hermes: pathlib.Path) -> None:
         "Hermes Runs steer",
     )
 
-    # Delegation/review is a public product/config contract, but individual
-    # config keys may be documented in config schema/defaults rather than one
-    # feature page. Require the user-facing concepts in the feature docs and
-    # the exact keys anywhere in official Hermes config/docs/tests.
     require_tokens(
         hermes / "website" / "docs" / "user-guide" / "features" / "delegation.md",
         (
@@ -170,9 +239,6 @@ def verify_hermes(hermes: pathlib.Path) -> None:
     require_any(hermes, "subagent_auto_approve", public_config_globs, "Hermes subagent approval config")
     require_any(hermes, "auxiliary", public_config_globs, "Hermes auxiliary review config")
 
-    # Dashboard/product APIs can move between the web, desktop and backend
-    # clients. Verify the routes across the official product source instead of
-    # treating web/src/lib/api.ts as a stable ABI file.
     product_globs = (
         "web/src/**/*.ts",
         "web/src/**/*.tsx",
@@ -196,12 +262,12 @@ def verify_hermes(hermes: pathlib.Path) -> None:
     require_any(hermes, "unattended_mode", ("website/docs/**/*.md", "tests/**/*.py", "hermes_cli/**/*.py"), "Hermes unattended approval contract")
     require_any(hermes, "mcp_reload_confirm", public_config_globs, "Hermes MCP approval contract")
 
-    # Upstream's own behavior tests are part of the archive seam. CI executes
-    # these exact files against the pin.
     for required_test in (
         "tests/agent/test_subagent_lifecycle.py",
         "tests/gateway/test_api_server_runs.py",
         "tests/tools/test_approval.py",
+        "tests/tui_gateway/test_todo_state_events.py",
+        "tests/agent/test_context_breakdown.py",
     ):
         if not (hermes / required_test).is_file():
             fail(f"Hermes upstream behavior test disappeared: {required_test}")
