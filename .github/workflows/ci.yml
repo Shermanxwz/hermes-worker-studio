@@ -66,6 +66,7 @@ jobs:
           python scripts/seal_acceptance.py --help >/dev/null
           python scripts/verify_seal_evidence.py --help >/dev/null
           python scripts/seal_close.py --help >/dev/null
+          python scripts/github_finalize_seal.py --help >/dev/null
 
       - name: Dashboard manifest JSON gate
         run: python -m json.tool dashboard/manifest.json >/dev/null
