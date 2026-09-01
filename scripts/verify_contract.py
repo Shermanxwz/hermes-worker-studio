@@ -2,9 +2,9 @@
 """Archive/product contract checks for Hermes Worker Studio 3.x.
 
 Studio is a product shell over documented Hermes contracts. The seal fails if a
-second runtime/model registry appears, the native Dashboard becomes unreachable,
-structured Run input is flattened, product lifecycle controls disappear, or the
-Context/Plan UI starts inventing state outside Hermes.
+second runtime/model/context/planner appears, the native Dashboard becomes
+unreachable, structured probe input is flattened, product lifecycle controls
+disappear, or the chat surface stops using the official Hermes Gateway.
 """
 from __future__ import annotations
 
@@ -46,10 +46,10 @@ if manifest.get("tab", {}).get("override") != "/":
     fail("Worker Studio 3 must own only product home '/' so native /sessions remains reachable")
 if manifest.get("tab", {}).get("path") != "/worker-studio":
     fail("dashboard product route must remain /worker-studio")
-if manifest.get("entry") != "dist/index-v3.js" or manifest.get("css") != "dist/product-sealed.css":
-    fail("dashboard manifest must point at sealed product v3 UI assets")
+if manifest.get("entry") != "dist/gateway-native.js" or manifest.get("css") != "dist/product-sealed.css":
+    fail("dashboard manifest must point at the Gateway-native sealed Product 3 assets")
 if manifest.get("api") != "plugin_api_v3.py":
-    fail("dashboard manifest must point at the structured-input preserving v3 bridge")
+    fail("dashboard manifest must retain the v3 probe/compat bridge")
 if manifest.get("slots") != ["header-left"]:
     fail("dashboard must declare the official header-left return slot")
 if str(manifest.get("version")) != "3.0.0":
@@ -94,7 +94,7 @@ for token in (
     "/api/model/options", "/hermes/model-probe", "/hermes/unattended/probe",
     "official_runs", "no legacy execution fallback", "127.0.0.1:8642",
 ):
-    require(backend, token, "sealed v2 Hermes bridge")
+    require(backend, token, "sealed v2 Hermes probe bridge")
 for forbidden in ("/chat/stream", "_worker(", "worker_proxy", "WORKER_TOKEN"):
     if forbidden in backend:
         fail(f"dashboard backend reintroduced obsolete execution surface: {forbidden}")
@@ -108,12 +108,44 @@ for token in (
     'context_window_tokens', 'compression_threshold_tokens', 'tokens_until_compression',
     'cumulative accounting buckets', '"run_projection": "context.snapshot"',
 ):
-    require(bridge3, token, "v3 Runs/context bridge")
+    require(bridge3, token, "v3 probe/compat bridge")
 if 'str(body.get("message") or body.get("input")' in bridge3:
-    fail("v3 Runs bridge flattens structured input")
+    fail("v3 Runs probe bridge flattens structured input")
 for forbidden_context_fallback in ('payload.get("input_tokens")', 'payload.get("prompt_tokens")', 'payload.get("total_tokens")'):
     if forbidden_context_fallback in bridge3:
         fail(f"context bridge reintroduced billing-token fallback: {forbidden_context_fallback}")
+
+gateway = read("dashboard/dist/gateway-native.js")
+for token in (
+    "SDK.buildWsUrl('/api/ws')",
+    "'session.resume'",
+    "'prompt.submit'",
+    "'session.usage'",
+    "'session.context_breakdown'",
+    "type === 'todo.updated'",
+    "type === 'status.update'",
+    "kind === 'compacting'",
+    "kind === 'compacted'",
+    "'image.attach_bytes'",
+    "'session.steer'",
+    "'session.interrupt'",
+    "'approval.respond'",
+    "source: 'hermes_gateway_jsonrpc'",
+    "transport: 'official_gateway_websocket'",
+    "protocol: 'tui_gateway_jsonrpc_websocket'",
+    "new URL('index-v3.js', current.src)",
+):
+    require(gateway, token, "Gateway-native chat transport")
+for forbidden in (
+    "API_SERVER_KEY",
+    "HERMES_WORKER_STUDIO_API_KEY",
+    "estimateTokens",
+    "tokenizer",
+    "new AIAgent",
+    "todoPlanner",
+):
+    if forbidden in gateway:
+        fail(f"Gateway-native browser entry reintroduced non-Hermes runtime/context/planner logic: {forbidden}")
 
 frontend = read("dashboard/dist/index-v3.js")
 for token in (
@@ -133,7 +165,7 @@ for token in (
     "context.compaction", "context.snapshot", "正在压缩上下文", "上下文已压缩",
     "不会把累计 billing/input token 当成当前上下文",
 ):
-    require(frontend, token, "product frontend")
+    require(frontend, token, "product UI")
 
 if "title: 'New conversation'" in frontend:
     fail("fixed duplicate session title returned")
@@ -167,15 +199,12 @@ for token in (
 ):
     require(sealed_css, token, "sealed context/plan CSS")
 
-# Branding is sealed by reuse of the official same-origin Hermes Web favicon,
-# not by maintaining a second Studio-owned mark. The source bundle stays
-# mountable in isolated tests, while the supported installer rewrites only the
-# staged release bundle to /favicon.ico. CI separately proves that exact asset
-# exists in the pinned upstream Hermes checkout.
 installer = read("scripts/install.sh")
 for token in (
+    "dashboard/dist/gateway-native.js",
     "const href = baseHref('/favicon.ico');",
     "official Hermes Dashboard /favicon.ico",
+    "Hermes official TUI Gateway JSON-RPC",
     "could not locate the unique Product 3 favicon assignment",
     "dashboard/dist/product-sealed.css",
 ):
@@ -191,8 +220,9 @@ legacy_env = "CWD" + "_"
 legacy_app_server = "Codex" + " App Server"
 runtime_paths = [
     "plugin.yaml", "__init__.py", "schemas.py", "tools.py", "dashboard/manifest.json",
-    "dashboard/plugin_api.py", "dashboard/plugin_api_v3.py", "dashboard/dist/index-v3.js",
-    "dashboard/dist/product-sealed.css", "deploy/worker-studio.env.example", "scripts/install.sh",
+    "dashboard/plugin_api.py", "dashboard/plugin_api_v3.py", "dashboard/dist/gateway-native.js",
+    "dashboard/dist/index-v3.js", "dashboard/dist/product-sealed.css",
+    "deploy/worker-studio.env.example", "scripts/install.sh",
 ]
 for path in runtime_paths:
     text = read(path)
@@ -226,4 +256,4 @@ if errors:
         print(f"  - {item}", file=sys.stderr)
     raise SystemExit(1)
 
-print("Archive/product contract passed: Hermes remains the sole execution/model/context/policy upstream and the v3 product shell is closed.")
+print("Archive/product contract passed: Hermes remains the sole execution/model/context/plan/policy upstream; Studio chat is official Gateway JSON-RPC and Product 3 is a presentation layer.")
