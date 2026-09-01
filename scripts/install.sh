@@ -24,7 +24,7 @@ trap cleanup EXIT
 for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
-  dashboard/dist/index-v3.js dashboard/dist/product.css; do
+  dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/dist/product-sealed.css; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
     exit 1
@@ -36,7 +36,7 @@ rm -rf "$TMP" "$BACKUP"
 mkdir -p "$TMP/dashboard/dist"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
 cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
-cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$TMP/dashboard/dist/"
+cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$TMP/dashboard/dist/"
 
 # Product 3 must visually remain inside the Hermes family. The official Hermes
 # Web Dashboard already ships its canonical favicon at /favicon.ico. Rewrite
