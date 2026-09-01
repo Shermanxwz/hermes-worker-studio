@@ -202,7 +202,7 @@ def _finite_nonnegative(value: Any) -> float | int | None:
         return None
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if number < 0 or number != number or number in {float("inf"), float("-inf")}:
         return None
@@ -222,29 +222,68 @@ def _first_number(payload: dict[str, Any], *names: str) -> float | int | None:
 def _normalize_context_snapshot(payload: Any) -> dict[str, Any] | None:
     """Normalize only explicit Hermes context telemetry fields.
 
-    Never falls back to ``input_tokens``, ``prompt_tokens`` or ``total_tokens``:
-    those are cumulative accounting buckets in existing Hermes APIs and are
-    not current context occupancy.
+    Accepts both a direct context object and the official session envelope
+    ``{"object": "hermes.session.context", "context": {...}}``. It never
+    falls back to ``input_tokens``, ``prompt_tokens`` or ``total_tokens``:
+    those are cumulative accounting buckets, not current context occupancy.
     """
     if not isinstance(payload, dict):
         return None
-    used = _first_number(payload, "context_tokens", "context_used", "used_tokens", "last_prompt_tokens")
-    maximum = _first_number(payload, "context_length", "context_max", "context_window", "max_tokens")
-    threshold = _first_number(payload, "threshold_tokens", "compression_threshold", "compact_at_tokens")
-    remaining = _first_number(payload, "remaining_tokens", "context_remaining")
+    outer = payload
+    if isinstance(payload.get("context"), dict):
+        payload = payload["context"]
+    used = _first_number(
+        payload,
+        "context_tokens",
+        "context_used",
+        "used_tokens",
+        "last_prompt_tokens",
+    )
+    maximum = _first_number(
+        payload,
+        "context_length",
+        "context_max",
+        "context_window",
+        "context_window_tokens",
+        "max_tokens",
+    )
+    threshold = _first_number(
+        payload,
+        "threshold_tokens",
+        "compression_threshold",
+        "compression_threshold_tokens",
+        "compact_at_tokens",
+    )
+    remaining = _first_number(
+        payload,
+        "tokens_until_compression",
+        "remaining_tokens",
+        "context_remaining",
+    )
     compression_count = _first_number(payload, "compression_count", "compaction_count")
-    percent = _first_number(payload, "context_percent", "percent", "fill_percent")
+    percent = _first_number(payload, "context_percent", "usage_percent", "percent", "fill_percent")
+    threshold_percent = _first_number(payload, "compression_threshold_percent", "threshold_percent")
+    progress_percent = _first_number(payload, "compression_progress_percent", "compact_progress_percent")
     if percent is None and used is not None and maximum:
         percent = round((float(used) / float(maximum)) * 100, 2)
-    if remaining is None and used is not None and maximum is not None:
-        remaining = max(0, float(maximum) - float(used))
+    if threshold_percent is None and threshold is not None and maximum:
+        threshold_percent = round((float(threshold) / float(maximum)) * 100, 2)
+    if progress_percent is None and used is not None and threshold:
+        progress_percent = round((float(used) / float(threshold)) * 100, 2)
+    if remaining is None and used is not None and threshold is not None:
+        remaining = max(0, float(threshold) - float(used))
     if maximum is None and used is None and threshold is None and compression_count is None:
         return None
     raw_state = payload.get("compaction_state")
     if raw_state is None:
         raw_state = payload.get("compression_state")
     compaction_state = str(raw_state or "").strip().lower()
-    source = str(payload.get("context_source") or payload.get("source") or "hermes_session_context_api").strip()
+    source = str(
+        payload.get("context_source")
+        or payload.get("source")
+        or outer.get("source")
+        or "hermes_session_context_api"
+    ).strip()
     return {
         "available": True,
         "context_used": used,
@@ -252,8 +291,11 @@ def _normalize_context_snapshot(payload: Any) -> dict[str, Any] | None:
         "context_percent": percent,
         "remaining_tokens": remaining,
         "threshold_tokens": threshold,
+        "compression_threshold_percent": threshold_percent,
+        "compression_progress_percent": progress_percent,
         "compression_count": compression_count,
         "compression_enabled": payload.get("compression_enabled", payload.get("auto_compact")),
+        "compacted": payload.get("compacted") is True,
         "compaction_state": compaction_state,
         "updated_at": payload.get("updated_at"),
         "source": source or "hermes_session_context_api",
