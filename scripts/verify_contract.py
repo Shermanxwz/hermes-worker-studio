@@ -50,8 +50,8 @@ if manifest.get("entry") != "dist/gateway-native.js" or manifest.get("css") != "
     fail("dashboard manifest must point at the Gateway-native sealed Product 3 assets")
 if manifest.get("api") != "plugin_api_v3.py":
     fail("dashboard manifest must retain the v3 probe/compat bridge")
-if manifest.get("slots") != ["header-left"]:
-    fail("dashboard must declare the official header-left return slot")
+if set(manifest.get("slots") or []) != {"header-left", "sidebar"}:
+    fail("dashboard must declare official header-left + sidebar return slots")
 if str(manifest.get("version")) != "3.0.0":
     fail("dashboard manifest must be 3.0.0")
 
@@ -119,6 +119,7 @@ gateway = read("dashboard/dist/gateway-native.js")
 for token in (
     "SDK.buildWsUrl('/api/ws')",
     "'session.resume'",
+    "close_on_disconnect: false",
     "'prompt.submit'",
     "'session.usage'",
     "'session.context_breakdown'",
@@ -127,12 +128,26 @@ for token in (
     "kind === 'compacting'",
     "kind === 'compacted'",
     "'image.attach_bytes'",
+    "'pdf.attach'",
+    "'file.attach'",
+    "result?.ref_text",
     "'session.steer'",
     "'session.interrupt'",
     "'approval.respond'",
+    "'clarify.respond'",
+    "'mcp.setup.respond'",
+    "'sudo.respond'",
+    "'secret.respond'",
+    "'terminal.read.respond'",
+    "transport.reconnecting",
+    "transport.reconnected",
     "source: 'hermes_gateway_jsonrpc'",
     "transport: 'official_gateway_websocket'",
     "protocol: 'tui_gateway_jsonrpc_websocket'",
+    "reconnect: 'session.resume(close_on_disconnect=false)'",
+    "attachments: ['image.attach_bytes', 'pdf.attach', 'file.attach']",
+    "registerSlot('hermes-worker-studio', 'header-left'",
+    "registerSlot('hermes-worker-studio', 'sidebar'",
     "new URL('index-v3.js', current.src)",
 ):
     require(gateway, token, "Gateway-native chat transport")
@@ -143,9 +158,11 @@ for forbidden in (
     "tokenizer",
     "new AIAgent",
     "todoPlanner",
+    "close_on_disconnect: true",
+    "reason: 'gateway_websocket_closed',\n              });\n            }\n            for (const pending",
 ):
     if forbidden in gateway:
-        fail(f"Gateway-native browser entry reintroduced non-Hermes runtime/context/planner logic: {forbidden}")
+        fail(f"Gateway-native browser entry reintroduced non-Hermes runtime/context/planner or disconnect-finalization logic: {forbidden}")
 
 frontend = read("dashboard/dist/index-v3.js")
 for token in (
@@ -165,7 +182,7 @@ for token in (
     "context.compaction", "context.snapshot", "正在压缩上下文", "上下文已压缩",
     "不会把累计 billing/input token 当成当前上下文",
 ):
-    require(frontend, token, "product UI")
+    require(frontend, token, "product UI source")
 
 if "title: 'New conversation'" in frontend:
     fail("fixed duplicate session title returned")
@@ -188,16 +205,33 @@ if not primary_nav_match:
 elif "Keys" in primary_nav_match.group(1) or "Providers" in primary_nav_match.group(1):
     fail("Keys/Providers reappeared as duplicate first-level navigation")
 
+stage_bundle = read("scripts/stage_product_bundle.py")
+for token in (
+    "MAX_ATTACHMENT_BYTES",
+    "title: '添加文件'",
+    "Ctrl/Cmd+V 粘贴文件",
+    "type: 'file_url'",
+    "kind: item.kind || 'file'",
+    "application/pdf",
+    "attachment chip",
+    "file picker",
+    "mixed attachment Run payload",
+):
+    require(stage_bundle, token, "fail-closed Product 3 release transform")
+for forbidden in ("subprocess", "urllib", "requests", "socket"):
+    if forbidden in stage_bundle:
+        fail(f"release UI transform unexpectedly gained external/process capability: {forbidden}")
+
 css = read("dashboard/dist/product.css")
 for token in ("@media(max-width:820px)", "env(safe-area-inset-bottom)", ".hws3-mobile-scrim", ".hws3-composer", ".hws3-plan-card", ".hws3-return-slot"):
     require(css, token, "product base CSS")
 sealed_css = read("dashboard/dist/product-sealed.css")
 for token in (
     '@import url("./product.css");', '.hws3-context-meter', '.hws3-context-popover',
-    '.hws3-plan-summary', '@keyframes hws3-context-spin', '@media(max-width:540px)',
+    '.hws3-plan-summary', '.hws3-file-icon', '@keyframes hws3-context-spin', '@media(max-width:540px)',
     '@media(prefers-reduced-motion:reduce)', 'env(safe-area-inset-bottom)',
 ):
-    require(sealed_css, token, "sealed context/plan CSS")
+    require(sealed_css, token, "sealed context/plan/attachment CSS")
 
 installer = read("scripts/install.sh")
 for token in (
@@ -206,6 +240,10 @@ for token in (
     "official Hermes Dashboard /favicon.ico",
     "Hermes official TUI Gateway JSON-RPC",
     "could not locate the unique Product 3 favicon assignment",
+    "scripts/stage_product_bundle.py",
+    'python "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"',
+    "arbitrary attachments",
+    "WebSocket reconnects resume durable Hermes Sessions",
     "dashboard/dist/product-sealed.css",
 ):
     require(installer, token, "official Hermes branding/product installer")
@@ -222,7 +260,7 @@ runtime_paths = [
     "plugin.yaml", "__init__.py", "schemas.py", "tools.py", "dashboard/manifest.json",
     "dashboard/plugin_api.py", "dashboard/plugin_api_v3.py", "dashboard/dist/gateway-native.js",
     "dashboard/dist/index-v3.js", "dashboard/dist/product-sealed.css",
-    "deploy/worker-studio.env.example", "scripts/install.sh",
+    "deploy/worker-studio.env.example", "scripts/install.sh", "scripts/stage_product_bundle.py",
 ]
 for path in runtime_paths:
     text = read(path)
@@ -256,4 +294,4 @@ if errors:
         print(f"  - {item}", file=sys.stderr)
     raise SystemExit(1)
 
-print("Archive/product contract passed: Hermes remains the sole execution/model/context/plan/policy upstream; Studio chat is official Gateway JSON-RPC and Product 3 is a presentation layer.")
+print("Archive/product contract passed: Hermes remains the sole execution/model/context/plan/policy upstream; Studio chat uses official Gateway JSON-RPC, arbitrary attachment RPCs, durable session resume, and no-wait Full Access input handling.")
