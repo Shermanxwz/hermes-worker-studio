@@ -19,13 +19,21 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def stage_bundle(text: str) -> str:
-    # Promote the most useful native Hermes destinations into the visible
-    # product rail. Less-frequent operational pages stay under Advanced.
+    # Final information architecture: Worker Studio owns the normal product
+    # rail. Every native Hermes Dashboard destination is intentionally behind
+    # Advanced; the outer Hermes shell itself is separately gated on the
+    # official route-scoped exclusive-shell SDK contract.
     text = replace_once(
         text,
-        "  const HERMES_PRIMARY = [\n    ['/skills', '技能', '◇'],\n    ['/plugins', '插件', '⬡'],\n    ['/mcp', 'MCP', '⌘'],\n  ];\n  const HERMES_ADVANCED = [\n    ['/sessions', '原生 Dashboard · 会话'],\n    ['/cron', '自动化 / Cron'],",
-        "  const HERMES_PRIMARY = [\n    ['/sessions', 'Hermes 会话', '☷'],\n    ['/skills', '技能', '◇'],\n    ['/plugins', '插件', '⬡'],\n    ['/mcp', 'MCP', '⌘'],\n    ['/cron', '自动化', '◷'],\n  ];\n  const HERMES_ADVANCED = [",
-        "native Hermes navigation",
+        "  const HERMES_PRIMARY = [\n    ['/skills', '技能', '◇'],\n    ['/plugins', '插件', '⬡'],\n    ['/mcp', 'MCP', '⌘'],\n  ];\n  const HERMES_ADVANCED = [\n    ['/sessions', '原生 Dashboard · 会话'],\n    ['/cron', '自动化 / Cron'],\n    ['/profiles', 'Profiles'],\n    ['/analytics', 'Analytics'],\n    ['/logs', 'Logs'],\n    ['/config', 'Config'],\n    ['https://github.com/NousResearch/hermes-agent/tree/main/website/docs', '官方文档'],\n  ];",
+        "  const HERMES_PRIMARY = [];\n  const HERMES_ADVANCED = [\n    ['/sessions', '会话 / Sessions'],\n    ['/cron', '自动化 / Cron'],\n    ['/skills', 'Skills'],\n    ['/plugins', 'Plugins'],\n    ['/mcp', 'MCP'],\n    ['/profiles', 'Profiles'],\n    ['/analytics', 'Analytics'],\n    ['/logs', 'Logs'],\n    ['/config', 'Config'],\n    ['https://github.com/NousResearch/hermes-agent/tree/main/website/docs', 'Hermes 官方文档'],\n  ];",
+        "Advanced-only native Hermes navigation",
+    )
+    text = replace_once(
+        text,
+        "        h('details', { className: 'hws3-advanced' }, h('summary', null, h('span', null, '⋯'), '高级'), h('div', null, HERMES_ADVANCED.map(([path, label]) => h('a', { href: baseHref(path), key: path, target: /^https?:\\/\\//.test(path) ? '_blank' : undefined, rel: /^https?:\\/\\//.test(path) ? 'noreferrer' : undefined }, label)))),",
+        "        h('details', { className: 'hws3-advanced' }, h('summary', null, h('span', null, '⋯'), '高级 · Hermes Dashboard'), h('div', null, HERMES_ADVANCED.map(([path, label]) => h('a', { href: baseHref(path), key: path, target: /^https?:\\/\\//.test(path) ? '_blank' : undefined, rel: /^https?:\\/\\//.test(path) ? 'noreferrer' : undefined }, label)))),",
+        "Advanced native Dashboard label",
     )
 
     # Any-file composer. The Gateway wrapper owns the corresponding official
