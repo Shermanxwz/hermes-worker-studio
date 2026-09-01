@@ -1,0 +1,123 @@
+name: Seal Trusted Request
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/seal-request.json
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: hws-trusted-real-target-seal
+  cancel-in-progress: false
+
+jobs:
+  seal:
+    name: Trusted request → real Hermes target → finalize
+    runs-on: [self-hosted, hermes-seal]
+    timeout-minutes: 60
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      API_SERVER_KEY: ${{ secrets.HERMES_SEAL_API_SERVER_KEY }}
+
+    steps:
+      - name: Checkout trusted request
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Parse trusted seal request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          request = json.loads(Path('.github/seal-request.json').read_text(encoding='utf-8'))
+          if request.get('schema') != 'hermes-worker-studio.seal-request.v1':
+              raise SystemExit(f"invalid seal request schema: {request.get('schema')!r}")
+          candidate = str(request.get('candidate_sha') or '').lower()
+          if len(candidate) != 40 or any(ch not in '0123456789abcdef' for ch in candidate):
+              raise SystemExit(f'invalid candidate_sha: {candidate!r}')
+          pr = int(request.get('pr_number') or 0)
+          if pr < 1:
+              raise SystemExit(f'invalid pr_number: {pr!r}')
+          merge_method = str(request.get('merge_method') or 'merge')
+          if merge_method not in {'merge', 'squash', 'rebase'}:
+              raise SystemExit(f'invalid merge_method: {merge_method!r}')
+          values = {
+              'candidate_sha': candidate,
+              'pr_number': str(pr),
+              'dashboard_url': str(request.get('dashboard_url') or 'http://127.0.0.1:19119'),
+              'provider': str(request.get('provider') or ''),
+              'model': str(request.get('model') or ''),
+              'merge_method': merge_method,
+              'finalize': 'true' if request.get('finalize', True) is True else 'false',
+          }
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as handle:
+              for key, value in values.items():
+                  if '\n' in value or '\r' in value:
+                      raise SystemExit(f'newline not allowed in {key}')
+                  handle.write(f'{key}={value}\n')
+          print(json.dumps(values, indent=2, sort_keys=True))
+          PY
+
+      - name: Checkout exact candidate
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.request.outputs.candidate_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Reject wrong checkout or dirty candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.request.outputs.candidate_sha }}"
+          test -z "$(git status --porcelain --untracked-files=no)"
+
+      - name: Close real target seal
+        shell: bash
+        env:
+          HWS_DASHBOARD_URL: ${{ steps.request.outputs.dashboard_url }}
+          HWS_SEAL_PROVIDER: ${{ steps.request.outputs.provider }}
+          HWS_SEAL_MODEL: ${{ steps.request.outputs.model }}
+        run: |
+          set -euo pipefail
+          args=(--url "$HWS_DASHBOARD_URL")
+          if [[ -n "${HWS_SEAL_PROVIDER:-}" ]]; then
+            args+=(--provider "$HWS_SEAL_PROVIDER")
+          fi
+          if [[ -n "${HWS_SEAL_MODEL:-}" ]]; then
+            args+=(--model "$HWS_SEAL_MODEL")
+          fi
+          python scripts/seal_close.py "${args[@]}"
+
+      - name: Upload seal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-worker-studio-seal-${{ steps.request.outputs.candidate_sha }}
+          path: .seal/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Final exact-head GitHub gate
+        if: ${{ steps.request.outputs.finalize == 'true' }}
+        run: python scripts/github_finalize_seal.py --repo "$GITHUB_REPOSITORY" --pr "${{ steps.request.outputs.pr_number }}" --candidate "${{ steps.request.outputs.candidate_sha }}" --merge-method "${{ steps.request.outputs.merge_method }}"
