@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -81,6 +82,7 @@ class InstallScriptTests(unittest.TestCase):
             "dashboard/plugin_api_v3.py",
             "dashboard/dist/index-v3.js",
             "dashboard/dist/product.css",
+            "dashboard/dist/product-sealed.css",
         }
         actual = {
             str(path.relative_to(dest))
@@ -90,6 +92,12 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertNotIn("dashboard/dist/index.js", actual)
         self.assertNotIn("dashboard/dist/style.css", actual)
+        manifest = json.loads((dest / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["css"], "dist/product-sealed.css")
+        sealed_css = (dest / "dashboard" / "dist" / "product-sealed.css").read_text(encoding="utf-8")
+        self.assertIn('@import url("./product.css");', sealed_css)
+        self.assertIn("hws3-context-meter", sealed_css)
+        self.assertIn("prefers-reduced-motion", sealed_css)
         installed_js = (dest / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
         self.assertIn("const href = baseHref('/favicon.ico');", installed_js)
         self.assertNotIn("const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;", installed_js)
@@ -133,6 +141,7 @@ class InstallScriptTests(unittest.TestCase):
         result = self._run()
         self.assertTrue(self._dest().is_dir())
         self.assertTrue((self._dest() / "dashboard" / "plugin_api_v3.py").is_file())
+        self.assertTrue((self._dest() / "dashboard" / "dist" / "product-sealed.css").is_file())
         installed_js = (self._dest() / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
         self.assertIn("baseHref('/favicon.ico')", installed_js)
         installed_bridge = (self._dest() / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
