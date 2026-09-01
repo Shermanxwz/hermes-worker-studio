@@ -8,6 +8,7 @@
 - [ ] `git rev-parse HEAD` is the intended PR head.
 - [ ] PR CI is green for that exact SHA.
 - [ ] `tests/upstream-lock.json` contains only the pinned Hermes runtime upstream.
+- [ ] pinned-upstream verification still proves Session resume, arbitrary attachment, no-wait input-response and Dashboard return-slot contracts.
 
 ## 2. One-command target closure
 
@@ -46,15 +47,33 @@ The command must exit 0 and produce:
 
 - [ ] desktop Chromium Product 3 shell passes;
 - [ ] Pixel 7 mobile-emulation Product 3 shell passes;
-- [ ] composer stays inside viewport;
-- [ ] no horizontal overflow;
+- [ ] composer stays inside viewport and has no horizontal overflow;
+- [ ] installed picker is arbitrary-file (`添加文件`) rather than image-only;
+- [ ] browser capability surface reports `image.attach_bytes`, `pdf.attach`, `file.attach`;
+- [ ] browser capability surface reports `session.resume(close_on_disconnect=false)`;
+- [ ] browser capability surface includes official no-wait responders such as `clarify.respond` and `mcp.setup.respond`;
+- [ ] Hermes 会话 / 技能 / 插件 / MCP / 自动化 are visible native destinations;
+- [ ] Full Access explains automatic Skip/Decline and Hardline remains visible;
 - [ ] mobile drawer/touch shell is usable;
-- [ ] native `/sessions` exposes `← Worker Studio` and returns to `/`;
+- [ ] native `/sessions` exposes at least one `← Worker Studio` return path and returns to `/`;
 - [ ] no failed, timed-out or interrupted Playwright result exists.
 
-Mounted JSDOM CI separately proves behavior-heavy flows: lazy session creation, Session CRUD, image paste/multimodal transport, Stop/Steer/approval wiring, official plan rendering, Full Access enable/restore and real-probe wiring, Custom Endpoint CRUD and model probes.
+Mounted Node/JSDOM CI separately proves behavior-heavy flows: lazy session creation, Session CRUD, mixed image/PDF/file staging, returned `@file:` propagation, durable WebSocket reconnect/runtime rebinding, Stop/Steer/approval wiring, official plan rendering, Full Access no-wait input handling and enable/restore, Custom Endpoint CRUD and model probes.
 
-## 5. Architecture/security invariants
+## 5. Runtime closure
+
+- [ ] browser WebSocket is transport only; durable Hermes Session is authoritative;
+- [ ] `session.resume` uses `close_on_disconnect=false`;
+- [ ] socket loss becomes `reconnecting`, never immediate `interrupted`;
+- [ ] reconnect obtains a fresh authenticated WS URL and rebinds the live runtime;
+- [ ] image → `image.attach_bytes`;
+- [ ] PDF → `pdf.attach`;
+- [ ] generic file → `file.attach` and returned `@file:` is passed to the prompt;
+- [ ] picker / paste / drag-drop share the arbitrary-file path;
+- [ ] Full Access approval/clarify/MCP/sudo/secret/terminal waits resolve through official Hermes response contracts;
+- [ ] unavailable credentials/MFA may fail the task but must not leave Studio indefinitely parked waiting for its own UI.
+
+## 6. Architecture/security invariants
 
 - [ ] no second execution service is required;
 - [ ] no private Hermes `AIAgent`/delegate implementation is imported;
@@ -66,7 +85,7 @@ Mounted JSDOM CI separately proves behavior-heavy flows: lazy session creation, 
 - [ ] installed favicon reuses official Hermes Web `/favicon.ico`;
 - [ ] installer does not patch Hermes core files.
 
-## 6. Four modes
+## 7. Four modes
 
 - `OFFICIAL`: Studio-managed worker delegation sleeps; Hermes native defaults remain authoritative.
 - `AUTO`: Main may use Hermes child agents through public lifecycle.
@@ -75,7 +94,7 @@ Mounted JSDOM CI separately proves behavior-heavy flows: lazy session creation, 
 
 Unknown mode must fail closed.
 
-## 7. Final decision
+## 8. Final decision
 
 Re-run the independent verifier if needed:
 
