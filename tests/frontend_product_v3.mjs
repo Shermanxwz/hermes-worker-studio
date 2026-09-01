@@ -68,8 +68,8 @@ assert.ok(!gateway.includes('close_on_disconnect: true'), 'browser disconnect mu
 assert.ok(!gateway.includes("source: 'hermes.gateway.close_on_disconnect'"), 'disconnect must not be projected as a terminal Hermes Run');
 
 // Source Product 3 remains reviewable; the supported installer applies a
-// fail-closed release transform for arbitrary files, native navigation and
-// Full Access disclosure. Both source and release transform are contract-pinned.
+// fail-closed release transform for arbitrary files, Advanced-only native
+// Dashboard navigation and Full Access disclosure.
 for (const token of [
   "registerSlot('hermes-worker-studio', 'header-left'",
   "['/sessions', '原生 Dashboard · 会话']",
@@ -111,11 +111,18 @@ for (const token of [
   'Ctrl/Cmd+V 粘贴文件',
   "type: 'file_url'",
   "kind: item.kind || 'file'",
-  "['/sessions', 'Hermes 会话', '☷']",
-  "['/cron', '自动化', '◷']",
+  'const HERMES_PRIMARY = [];',
+  "['/sessions', '会话 / Sessions']",
+  "['/cron', '自动化 / Cron']",
+  "['/skills', 'Skills']",
+  "['/plugins', 'Plugins']",
+  "['/mcp', 'MCP']",
+  '高级 · Hermes Dashboard',
   'Clarify 等交互请求自动 Skip/Decline，不再等待人工',
   '缺少密码、MFA 或外部授权时会自动失败/继续可行路径',
 ]) assert.ok(stageBundle.includes(token), `missing installed Product 3 release transform token: ${token}`);
+assert.ok(!stageBundle.includes("['/sessions', 'Hermes 会话', '☷']"), 'native Sessions must not return to the visible Studio product rail');
+assert.ok(!stageBundle.includes("['/cron', '自动化', '◷']"), 'native Automation must not return to the visible Studio product rail');
 
 assert.ok(!js.includes("title: 'New conversation'"), 'fixed duplicate session title must never return');
 assert.ok(!js.includes('API_SERVER_KEY'), 'browser UI bundle must never see Hermes bearer secrets');
