@@ -204,6 +204,8 @@
     if (name === 'tool.completed') return `工具完成 · ${toolName(data)}`;
     if (name === 'tool.failed') return `工具失败 · ${toolName(data)}`;
     if (name.includes('todo')) return '官方计划更新';
+    if (name === 'context.compaction') return `上下文 · ${String(data?.kind || 'compact')}`;
+    if (name === 'context.snapshot') return '上下文遥测更新';
     if (name.includes('approval')) return '需要确认';
     if (name.includes('subagent') || name.includes('delegat')) return `子代理 · ${name}`;
     return name;
@@ -213,6 +215,7 @@
     const name = String(event?.event || '');
     if (name === 'tool.started') return shortText(data.arguments || data.args || data.preview || data.input || '', 320);
     if (name === 'tool.completed' || name === 'tool.failed') return shortText(data.result || data.output || data.error || data.preview || '', 320);
+    if (name === 'context.compaction') return shortText(data.message || data.detail || '', 320);
     if (name.includes('subagent')) return shortText(data.summary || data.goal || data.preview || '', 320);
     if (name.includes('error') || name.includes('failed')) return shortText(data.error || data.message || data, 360);
     return '';
@@ -232,7 +235,7 @@
     }
     if (!Array.isArray(rows)) return [];
     return rows.map((item, index) => {
-      if (typeof item === 'string') return { id: String(index), text: item, status: 'pending' };
+      if (typeof item === 'string') return { id: String(index), text: item, detail: '', status: 'pending' };
       const statusRaw = String(item?.status || item?.state || '').toLowerCase();
       const status = ['done', 'completed', 'complete', 'success'].includes(statusRaw)
         ? 'completed'
@@ -242,6 +245,7 @@
       return {
         id: String(item?.id || item?.key || index),
         text: String(item?.content || item?.title || item?.text || item?.task || item?.description || `步骤 ${index + 1}`),
+        detail: shortText(item?.detail || item?.notes || item?.summary || item?.result || '', 360),
         status,
       };
     }).filter((x) => x.text.trim());
@@ -253,6 +257,95 @@
       if (items.length) return items;
     }
     return [];
+  }
+
+  function finiteNumber(...values) {
+    for (const value of values) {
+      if (value === null || value === undefined || value === '' || typeof value === 'boolean') continue;
+      const n = Number(value);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return null;
+  }
+  function fmtTokens(value) {
+    const n = finiteNumber(value);
+    if (n === null) return '—';
+    if (n >= 1000000) return `${(n / 1000000).toFixed(n >= 10000000 ? 0 : 1).replace(/\.0$/, '')}M`;
+    if (n >= 1000) return `${(n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '')}K`;
+    return String(Math.round(n));
+  }
+  function normalizeContextPayload(raw) {
+    let data = raw && typeof raw === 'object' ? raw : null;
+    if (data?.context && typeof data.context === 'object') data = data.context;
+    if (!data) return null;
+    const used = finiteNumber(data.context_used, data.context_tokens, data.used_tokens, data.last_prompt_tokens);
+    const maximum = finiteNumber(data.context_max, data.context_length, data.context_window, data.context_window_tokens, data.max_tokens);
+    const threshold = finiteNumber(data.threshold_tokens, data.compression_threshold, data.compression_threshold_tokens, data.compact_at_tokens);
+    const explicitPercent = finiteNumber(data.context_percent, data.usage_percent, data.percent, data.fill_percent);
+    const percent = explicitPercent !== null ? Math.max(0, Math.min(100, explicitPercent)) : used !== null && maximum ? Math.max(0, Math.min(100, (used / maximum) * 100)) : null;
+    const thresholdPercent = finiteNumber(data.compression_threshold_percent) ?? (threshold !== null && maximum ? (threshold / maximum) * 100 : null);
+    const progressPercent = finiteNumber(data.compression_progress_percent) ?? (used !== null && threshold ? (used / threshold) * 100 : null);
+    const remaining = finiteNumber(data.remaining_tokens, data.context_remaining, data.tokens_until_compression) ?? (used !== null && threshold !== null ? Math.max(0, threshold - used) : null);
+    const compressionCount = finiteNumber(data.compression_count, data.compaction_count);
+    if (used === null && maximum === null && threshold === null && compressionCount === null) return null;
+    return {
+      available: data.available !== false,
+      used,
+      maximum,
+      percent,
+      threshold,
+      thresholdPercent,
+      progressPercent,
+      remaining,
+      compressionCount,
+      compressionEnabled: data.compression_enabled ?? data.auto_compact,
+      compacted: data.compacted === true,
+      source: String(data.source || data.context_source || data.measurement || 'Hermes official telemetry'),
+      measurement: String(data.measurement || data.context_source || ''),
+      updatedAt: data.updated_at || null,
+    };
+  }
+  function mergeContext(base, next) {
+    if (!next) return base;
+    if (!base) return { ...next };
+    const merged = { ...base };
+    for (const [key, value] of Object.entries(next)) if (value !== null && value !== undefined && value !== '') merged[key] = value;
+    return merged;
+  }
+  function officialContextTelemetry(run, idleSnapshot, options, route) {
+    let telemetry = normalizeContextPayload(idleSnapshot);
+    telemetry = mergeContext(telemetry, normalizeContextPayload(run?.context));
+    telemetry = mergeContext(telemetry, normalizeContextPayload(run?.usage?.context));
+    let compacting = false;
+    let compactMessage = '';
+    let compactionMarker = '';
+    for (const event of run?.events || []) {
+      const name = String(event?.event || '').toLowerCase();
+      const data = event?.data || {};
+      if (name === 'context.snapshot') {
+        const normalized = normalizeContextPayload(data);
+        telemetry = mergeContext(telemetry, normalized);
+        if (normalized?.compacted) compactionMarker = `snapshot:${event.seq || event.at || data.updated_at || ''}`;
+      }
+      if (name === 'run.completed') telemetry = mergeContext(telemetry, normalizeContextPayload(data?.usage?.context || data?.context));
+      if (name === 'context.compaction') {
+        const kind = String(data?.kind || data?.status || data?.phase || '').toLowerCase();
+        compactMessage = String(data?.message || data?.detail || 'Hermes Auto Compact');
+        if (['compacting', 'started', 'start', 'running', 'compressing'].includes(kind)) compacting = true;
+        if (['compacted', 'completed', 'complete', 'done', 'finished', 'failed'].includes(kind)) {
+          compacting = false;
+          compactionMarker = `event:${event.seq || event.at || kind}`;
+        }
+        telemetry = mergeContext(telemetry, normalizeContextPayload(data?.context || data));
+      }
+    }
+    const normalizedRoute = normalizeRoute(options, route);
+    const cap = modelCapability(options, normalizedRoute.provider, normalizedRoute.model);
+    const officialMax = finiteNumber(cap?.context_window, cap?.context_length, cap?.contextWindow, cap?.max_context_tokens);
+    telemetry = telemetry || {};
+    if (telemetry.maximum == null && officialMax !== null) telemetry.maximum = officialMax;
+    if (telemetry.percent == null && telemetry.used != null && telemetry.maximum) telemetry.percent = Math.max(0, Math.min(100, (telemetry.used / telemetry.maximum) * 100));
+    return { ...telemetry, compacting, compactMessage, compactionMarker };
   }
 
   function normalizeEndpointUrl(value) {
@@ -356,13 +449,68 @@
   }
 
   function PlanCard({ run }) {
+    const [expanded, setExpanded] = useState(false);
     const items = officialPlan(run);
     if (!items.length) return null;
     const completed = items.filter((x) => x.status === 'completed').length;
-    const current = Math.min(items.length, completed + (items.some((x) => x.status === 'in_progress') ? 1 : 0));
-    return h('section', { className: 'hws3-plan-card' },
-      h('header', null, h('div', null, h('strong', null, '官方计划'), h('span', null, `${current}/${items.length}`)), h('small', null, 'Hermes todo lifecycle')),
-      h('div', { className: 'hws3-plan-list' }, items.map((item) => h('div', { className: `hws3-plan-step ${item.status}`, key: item.id }, h('span', null, item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '●' : '○'), h('p', null, item.text)))),
+    const active = items.find((x) => x.status === 'in_progress');
+    const pct = Math.round((completed / items.length) * 100);
+    return h('section', { className: `hws3-plan-card ${expanded ? 'expanded' : ''}` },
+      h('button', { className: 'hws3-plan-summary', onClick: () => setExpanded(!expanded), 'aria-expanded': expanded },
+        h('span', { className: 'hws3-plan-orbit' }, active ? '●' : completed === items.length ? '✓' : '○'),
+        h('span', { className: 'hws3-plan-copy' },
+          h('span', { className: 'hws3-plan-title-row' }, h('strong', null, '官方计划'), h('b', null, `已完成 ${completed} / ${items.length}`)),
+          h('span', { className: 'hws3-plan-current' }, active ? `正在进行 · ${active.text}` : completed === items.length ? 'Hermes 计划已全部完成' : 'Hermes canonical todo'),
+          h('span', { className: 'hws3-plan-progress' }, h('i', { style: { width: `${pct}%` } })),
+        ),
+        h('span', { className: 'hws3-plan-chevron' }, expanded ? '⌃' : '⌄'),
+      ),
+      expanded ? h('div', { className: 'hws3-plan-list' }, items.map((item, index) => h('div', { className: `hws3-plan-step ${item.status}`, key: item.id },
+        h('span', { className: 'hws3-plan-step-state' }, item.status === 'completed' ? '✓' : item.status === 'in_progress' ? '●' : '○'),
+        h('div', null, h('p', null, h('em', null, `${index + 1}`), item.text), item.detail ? h('small', null, item.detail) : null),
+      ))) : null,
+    );
+  }
+
+  function ContextMeter({ run, snapshot, options, route }) {
+    const [open, setOpen] = useState(false);
+    const [flash, setFlash] = useState(false);
+    const telemetry = officialContextTelemetry(run, snapshot, options, route);
+    const marker = telemetry.compactionMarker;
+    useEffect(() => {
+      if (!marker) return undefined;
+      setFlash(true);
+      const timer = setTimeout(() => setFlash(false), 1500);
+      return () => clearTimeout(timer);
+    }, [marker]);
+    const maximum = telemetry.maximum;
+    const used = telemetry.used;
+    const percent = telemetry.percent != null ? Math.round(telemetry.percent) : null;
+    const hasAny = used != null || maximum != null || telemetry.compacting || flash;
+    if (!hasAny) return null;
+    const compacting = telemetry.compacting;
+    const summary = used != null && maximum != null
+      ? `${fmtTokens(used)} / ${fmtTokens(maximum)} · ${percent ?? '—'}%`
+      : maximum != null ? `— / ${fmtTokens(maximum)}` : 'Context';
+    const label = compacting ? '正在压缩上下文' : flash ? '上下文已压缩' : summary;
+    const stateClass = compacting ? 'compacting' : flash ? 'compacted' : '';
+    return h('div', { className: 'hws3-context-wrap' },
+      h('button', { className: `hws3-context-meter ${stateClass}`, onClick: () => setOpen(!open), 'aria-expanded': open, title: 'Hermes 官方上下文' },
+        h('span', { className: 'hws3-context-ring', style: { '--hws-context-pct': `${percent ?? 0}%` } }, h('i')),
+        h('span', { className: 'hws3-context-label' }, label),
+      ),
+      open ? h('section', { className: 'hws3-context-popover' },
+        h('header', null, h('div', null, h('strong', null, '上下文'), h('small', null, 'Hermes 官方遥测')), h(Pill, { tone: used != null ? 'good' : 'neutral' }, used != null ? '实测' : '等待实测')),
+        h('div', { className: `hws3-context-hero ${stateClass}` },
+          h('span', { className: 'hws3-context-hero-ring' }, h('i', { style: { '--hws-context-pct': `${percent ?? 0}%` } })),
+          h('div', null, h('b', null, used != null && maximum != null ? `${fmtTokens(used)} / ${fmtTokens(maximum)}` : maximum != null ? `— / ${fmtTokens(maximum)}` : '等待 Hermes'), h('span', null, compacting ? 'Auto Compact 进行中' : flash ? 'Compact 完成，正在恢复实时上下文' : percent != null ? `${percent}% 已使用` : '当前版本尚未暴露占用量')),
+        ),
+        telemetry.threshold != null ? h('div', { className: 'hws3-context-row' }, h('span', null, '自动压缩阈值'), h('strong', null, `${fmtTokens(telemetry.threshold)}${telemetry.thresholdPercent != null ? ` · ${Math.round(telemetry.thresholdPercent)}%` : ''}`)) : null,
+        telemetry.remaining != null ? h('div', { className: 'hws3-context-row' }, h('span', null, '距 Compact'), h('strong', null, fmtTokens(telemetry.remaining))) : null,
+        telemetry.compressionCount != null ? h('div', { className: 'hws3-context-row' }, h('span', null, '已 Compact'), h('strong', null, `${Math.round(telemetry.compressionCount)} 次`)) : null,
+        h('div', { className: 'hws3-context-row' }, h('span', null, '执行'), h('strong', null, telemetry.compressionEnabled === false ? 'Hermes Auto Compact 已关闭' : 'Hermes Auto Compact')),
+        h('footer', null, '只显示 Hermes 官方 Context 数据；不会把累计 billing/input token 当成当前上下文。'),
+      ) : null,
     );
   }
 
@@ -372,7 +520,7 @@
     const started = Number(run.started_at || 0) * 1000;
     const ended = run.ended_at ? Number(run.ended_at) * 1000 : null;
     const duration = run.elapsed_ms != null ? run.elapsed_ms : Math.max(0, (ended || now) - started);
-    const events = (run.events || []).filter((e) => !['assistant.delta', 'message.delta'].includes(e.event) && !String(e.event || '').includes('todo'));
+    const events = (run.events || []).filter((e) => !['assistant.delta', 'message.delta'].includes(e.event) && !String(e.event || '').includes('todo') && !String(e.event || '').startsWith('context.'));
     return h('section', { className: `hws3-work ${done ? 'done' : 'running'}` },
       h('button', { className: 'hws3-work-head', onClick: () => setExpanded(!expanded) },
         h('span', { className: 'hws3-work-state' }, done ? (run.status === 'completed' ? '✓' : '!') : h(Spinner)),
@@ -400,7 +548,7 @@
   function Conversation(props) {
     const {
       session, messages, loading, run, streamText, draft, setDraft, onSend, sending,
-      modelOptions, chatRoute, setChatRoute, now, onStop, onSteer, onApprove, skillDiff,
+      modelOptions, chatRoute, setChatRoute, contextSnapshot, now, onStop, onSteer, onApprove, skillDiff,
       timelineExpanded, setTimelineExpanded, attachments, setAttachments, onRename, onArchive, onDelete,
     } = props;
     const transcriptRef = useRef(null);
@@ -457,6 +605,7 @@
       h('header', { className: 'hws3-chat-head' },
         h('div', { className: 'hws3-chat-title' }, h('h2', null, session ? sessionTitle(session) : '新对话'), session ? h('small', null, session.id) : h('small', null, '发送第一条消息时创建 Hermes Session')),
         modelOptions ? h(CompactRouteSelector, { options: modelOptions, route: chatRoute, onChange: setChatRoute, disabled: sending }) : null,
+        modelOptions ? h(ContextMeter, { run, snapshot: contextSnapshot, options: modelOptions, route: chatRoute }) : null,
         h('div', { className: 'hws3-chat-actions' },
           session ? h('button', { title: '重命名', onClick: onRename }, '✎') : null,
           session ? h('button', { title: session.archived ? '取消归档' : '归档', onClick: onArchive }, session.archived ? '↥' : '⌑') : null,
@@ -718,6 +867,7 @@
     const [draft, setDraft] = useState('');
     const [attachments, setAttachments] = useState([]);
     const [run, setRun] = useState(null);
+    const [contextSnapshot, setContextSnapshot] = useState(null);
     const [streamText, setStreamText] = useState('');
     const [timelineExpanded, setTimelineExpanded] = useState(true);
     const [skillDiff, setSkillDiff] = useState(null);
@@ -750,7 +900,18 @@
       try { const data = await api(`/api/sessions/${encodeURIComponent(session.id)}/messages?limit=${CHAT_MESSAGE_LIMIT}&order=latest`); setMessages(data.messages || data.data || []); }
       catch (err) { setGlobalError(errorText(err)); } finally { setMessagesLoading(false); }
     }, []);
-    const openSession = useCallback((row) => { const id = row?.id || row?.session_id; if (!id) return; const s = { ...row, id }; setCurrent(s); setView('chat'); setRun(null); setStreamText(''); setSkillDiff(null); setTimelineExpanded(false); setAttachments([]); loadMessages(s); }, [loadMessages]);
+    const loadContext = useCallback(async (session) => {
+      if (!session?.id) { setContextSnapshot(null); return null; }
+      try {
+        const data = await plugin(`/hermes/sessions/${encodeURIComponent(session.id)}/context`);
+        setContextSnapshot(data?.available === false ? null : data);
+        return data;
+      } catch (_) {
+        setContextSnapshot(null);
+        return null;
+      }
+    }, []);
+    const openSession = useCallback((row) => { const id = row?.id || row?.session_id; if (!id) return; const s = { ...row, id }; setCurrent(s); setView('chat'); setRun(null); setContextSnapshot(null); setStreamText(''); setSkillDiff(null); setTimelineExpanded(false); setAttachments([]); loadMessages(s); loadContext(s); }, [loadMessages, loadContext]);
     useEffect(() => { Promise.all([refreshRecent(), refreshConfig(), refreshOptions(false), plugin('/health').then(setHealth)]).catch((err) => setGlobalError(errorText(err))); }, []);
     useEffect(() => { if (!sending) return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [sending]);
     useEffect(() => () => { if (runPollRef.current?.timer) clearTimeout(runPollRef.current.timer); }, []);
@@ -763,16 +924,17 @@
     const pollRun = useCallback((runId, initial) => {
       runPollRef.current = { runId, seq: 0, timer: null };
       setRun({ ...initial, events: [], elapsed_ms: 0, last_seq: 0 });
+      if (initial?.context) setContextSnapshot(initial.context);
       const tick = async () => {
         const ref = runPollRef.current; if (!ref || ref.runId !== runId) return;
         try {
           const data = await plugin(`/hermes/runs/${encodeURIComponent(runId)}?after=${ref.seq}`);
           const incoming = data.events || [];
-          if (incoming.length) { ref.seq = Math.max(ref.seq, ...incoming.map((e) => Number(e.seq || 0))); const delta = incoming.filter((e) => ['assistant.delta', 'message.delta'].includes(e.event)).map((e) => deltaText(e.data)).join(''); if (delta) setStreamText((x) => x + delta); }
+          if (incoming.length) { ref.seq = Math.max(ref.seq, ...incoming.map((e) => Number(e.seq || 0))); const delta = incoming.filter((e) => ['assistant.delta', 'message.delta'].includes(e.event)).map((e) => deltaText(e.data)).join(''); if (delta) setStreamText((x) => x + delta); const contextEvent = [...incoming].reverse().find((e) => String(e.event || '').startsWith('context.')); if (contextEvent) { const normalized = normalizeContextPayload(contextEvent.data); if (normalized) setContextSnapshot((old) => mergeContext(normalizeContextPayload(old), normalized)); } }
           setRun((prev) => ({ ...(prev || initial), ...data, events: [...(prev?.events || []), ...incoming].slice(-10000) }));
           if (TERMINAL_RUN_STATES.has(String(data.status || '').toLowerCase())) {
             setTimelineExpanded(false); runPollRef.current = null;
-            if (data.session_id) await loadMessages({ id: data.session_id });
+            if (data.session_id) { await loadMessages({ id: data.session_id }); await loadContext({ id: data.session_id }); }
             const sessions = await refreshRecent(); setCurrent((cur) => sessions.find((s) => s.id === cur?.id) || cur);
             try { const afterSkills = await api('/api/skills'); setSkillDiff(diffSkills(skillBeforeRef.current, afterSkills)); } catch (_) { setSkillDiff(null); }
             return;
@@ -781,13 +943,13 @@
         } catch (err) { setRun((prev) => ({ ...(prev || initial), status: 'failed', ended_at: Date.now() / 1000, events: [...(prev?.events || []), { seq: Date.now(), event: 'studio.error', data: { error: errorText(err) }, at: Date.now() / 1000 }] })); setTimelineExpanded(false); runPollRef.current = null; }
       };
       tick();
-    }, [loadMessages, refreshRecent]);
+    }, [loadMessages, loadContext, refreshRecent]);
 
     const createSession = useCallback(async (text) => {
       const title = titleFromPrompt(text);
       const out = await plugin('/hermes/sessions', jinit('POST', { title, source: 'hermes_browser' }));
       const id = getSessionId(out); if (!id) throw new Error('Hermes did not return a session id');
-      const session = out.session || { id, title, source: 'hermes_browser' }; setCurrent(session); setMessages([]); await refreshRecent(); return session;
+      const session = out.session || { id, title, source: 'hermes_browser' }; setCurrent(session); setMessages([]); setContextSnapshot(null); await refreshRecent(); return session;
     }, [refreshRecent]);
     const lockRuntime = useCallback(async (session, route) => { const normalized = normalizeRoute(modelOptions, route); if (!session?.id || !normalized.model || !normalized.provider) return normalized; await plugin(`/hermes/sessions/${encodeURIComponent(session.id)}/model`, jinit('POST', { provider: normalized.provider, model: normalized.model, require_model_lock: true })); return normalized; }, [modelOptions]);
 
@@ -820,7 +982,7 @@
 
     const stopRun = useCallback(async () => { if (!run?.id) return; try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/stop`, jinit('POST', {})); } catch (err) { setGlobalError(`停止 Run 失败：${errorText(err)}`); } }, [run?.id]);
     const approveRun = useCallback(async (choice) => { if (!run?.id) return; try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/approval`, jinit('POST', { choice })); } catch (err) { setGlobalError(`审批提交失败：${errorText(err)}`); } }, [run?.id]);
-    const newConversation = useCallback(() => { setCurrent(null); setMessages([]); setRun(null); setStreamText(''); setDraft(''); setAttachments([]); setSkillDiff(null); setView('chat'); }, []);
+    const newConversation = useCallback(() => { setCurrent(null); setMessages([]); setRun(null); setContextSnapshot(null); setStreamText(''); setDraft(''); setAttachments([]); setSkillDiff(null); setView('chat'); }, []);
 
     function askRename(session = current) { if (!session?.id) return; setModalInput(sessionTitle(session)); setModal({ type: 'rename', session }); }
     function askDelete(session = current) { if (!session?.id) return; setModal({ type: 'delete', session }); }
@@ -844,7 +1006,7 @@
       : view === 'models' ? h(ModelsPage, { modelOptions, refreshOptions })
       : view === 'unattended' ? h(UnattendedPage, { config, refreshConfig })
       : view === 'history' ? h(HistoryPage, { onOpenSession: openSession, onSessionMutation: refreshRecent })
-      : h(Conversation, { session: current, messages, loading: messagesLoading, run, streamText, draft, setDraft, onSend: send, sending, modelOptions, chatRoute, setChatRoute: (route) => setChatRoute(normalizeRoute(modelOptions, route)), now, onStop: stopRun, onApprove: approveRun, skillDiff, timelineExpanded, setTimelineExpanded, attachments, setAttachments, onRename: () => askRename(current), onArchive: () => toggleArchive(current), onDelete: () => askDelete(current) });
+      : h(Conversation, { session: current, messages, loading: messagesLoading, run, contextSnapshot, streamText, draft, setDraft, onSend: send, sending, modelOptions, chatRoute, setChatRoute: (route) => setChatRoute(normalizeRoute(modelOptions, route)), now, onStop: stopRun, onApprove: approveRun, skillDiff, timelineExpanded, setTimelineExpanded, attachments, setAttachments, onRename: () => askRename(current), onArchive: () => toggleArchive(current), onDelete: () => askDelete(current) });
 
     return h('div', { className: 'hws3-root' },
       h(Sidebar, { view, setView, recent, current, openSession, newConversation, refreshRecent, ready, mode, mobileOpen, setMobileOpen, onRename: askRename, onArchive: toggleArchive, onDelete: askDelete, search, setSearch, searchResults }),
