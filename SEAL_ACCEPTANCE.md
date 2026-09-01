@@ -1,28 +1,31 @@
 # Hermes Worker Studio 3 — Seal Acceptance
 
-`SEALED` is a release state, not a design claim. Product 3 may be merged only when **three independent evidence planes** close on the exact candidate and exact official Hermes pin:
+`SEALED` is a release state, not a design claim. The canonical repository state lives on **`main`**. Product 3 may be called sealed only when **three independent evidence planes** close on the exact `main` candidate and exact official Hermes pin:
 
 1. pinned Hermes public-contract evidence;
 2. real Hermes target/runtime evidence;
 3. real desktop/mobile browser evidence.
 
-## 1. Repository gate
+Temporary development branches may exist while work is in progress, but a repository entering archive/seal state must converge back to `main` only.
 
-The exact pull-request head must be green for all CI jobs:
+## 1. Repository health gate
+
+The exact `main` candidate must be green for ordinary CI:
 
 - Studio static + unit + Product 3 mounted UI runtime;
 - Gateway-native durable reconnect, no-wait input and arbitrary-file attachment tests;
-- Hermes pinned public-contract verification;
-- **official route-scoped exclusive Dashboard shell verification**;
+- Hermes pinned **archive-baseline** public-contract verification;
 - Hermes upstream subagent lifecycle / Runs / approvals / attachment regression tests;
 - Hermes Plugin Doctor;
 - production security / secret / second-runtime rejection;
 - official Hermes Web branding provenance;
 - final seal verifier/unit contracts.
 
+Ordinary CI answers **“is the checked-in main candidate healthy?”**. It must not stay permanently red because a known future seal-required upstream contract has not landed yet.
+
 Hermes remains the only execution, session, model, approval, input-request, Skills/MCP and Worker source of truth.
 
-### Current hard upstream blocker
+### Current hard upstream seal blocker
 
 Worker Studio's final UX is:
 
@@ -41,11 +44,11 @@ This requires a route-scoped **exclusive plugin shell** public contract. `tab.ov
 
 The contract is tracked upstream at `NousResearch/hermes-agent#100149` and specified in `docs/HERMES_DASHBOARD_EXCLUSIVE_SHELL.md`.
 
-`tests/upstream-lock.json` marks `dashboard_route_scoped_exclusive_shell` as `required_for_seal`. `scripts/verify_required_upstream_contracts.py` must prove the pinned official Hermes revision contains a typed API, runtime enforcement, public documentation and upstream behavior tests. Until that passes, Product 3 is **ARCHIVE CANDIDATE**, never `SEALED`.
+`tests/upstream-lock.json` marks `dashboard_route_scoped_exclusive_shell` as `required_for_seal`. `scripts/verify_required_upstream_contracts.py` must prove the pinned official Hermes revision contains a typed API, runtime enforcement, public documentation and upstream behavior tests. Until that passes, the healthy `main` state is **ARCHIVE CANDIDATE**, never `SEALED`.
 
 ## 2. One-command real-target closure
 
-Run from the exact candidate checkout on the Hermes target machine:
+Run from the exact `main` candidate checkout on the Hermes target machine:
 
 ```bash
 python scripts/seal_close.py --url http://127.0.0.1:19119
@@ -185,10 +188,11 @@ and writes:
 
 ## 9. Release rule
 
-Do **not** mark PR #4 Ready, merge, tag, or call Product 3 sealed until:
+Do **not** tag or call Product 3 sealed until:
 
-1. exact-head CI is fully green, including the Product shell upstream blocker;
+1. the exact `main` candidate's ordinary CI is fully green;
 2. `seal_close.py` exits 0 on the real target;
-3. `.seal/SEALED.json` says `eligible: true` for that exact candidate and records the exact verified Hermes upstream commit.
+3. `.seal/SEALED.json` says `eligible: true` for that exact `main` candidate and records the exact verified Hermes upstream commit;
+4. no temporary development branch remains in the repository.
 
-Until Hermes upstream lands the exclusive-shell public contract and Worker Studio updates its pin to that official revision, the correct state is **ARCHIVE CANDIDATE / DRAFT**.
+Until Hermes upstream lands the exclusive-shell public contract and Worker Studio updates its pin to that official revision, the correct state is **main-only ARCHIVE CANDIDATE**.
