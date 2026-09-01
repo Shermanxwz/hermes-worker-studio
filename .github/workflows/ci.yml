@@ -68,6 +68,7 @@ jobs:
         run: |
           python scripts/seal_acceptance.py --help >/dev/null
           python scripts/verify_seal_evidence.py --help >/dev/null
+          python scripts/seal_upstream_gate.py --help >/dev/null
           python scripts/seal_close.py --help >/dev/null
           python scripts/github_finalize_seal.py --help >/dev/null
 
@@ -78,7 +79,7 @@ jobs:
         run: npm audit --audit-level=high
 
   hermes-upstream-contract:
-    name: Pinned Hermes public contracts
+    name: Pinned Hermes public contracts + Product shell blocker
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -95,6 +96,8 @@ jobs:
           python-version: '3.12'
       - name: Verify exact revision and documented public semantics
         run: python scripts/verify_upstreams.py --hermes-root .upstream/hermes
+      - name: Require official route-scoped exclusive Dashboard shell contract
+        run: python scripts/verify_required_upstream_contracts.py --hermes-root .upstream/hermes
       - name: Verify official Hermes Web branding asset
         run: test -s .upstream/hermes/web/public/favicon.ico
 
