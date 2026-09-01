@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Deterministically stage the Product 3 browser bundle for the pinned Hermes contract.
+"""Deterministically widen the Product 3 composer for pinned Hermes attachments.
 
-The source bundle intentionally stays reviewable as the original Product 3 UI.
-The supported installer runs this release transform on its temporary copy only.
-Every substitution is exact-count checked so source drift fails closed instead
-of silently shipping an image-only or partially branded build.
+The supported installer runs this transform on its temporary copy only. Every
+substitution is exact-count checked so source drift fails closed instead of
+silently shipping an image-only or partially transformed browser bundle.
 """
 from __future__ import annotations
 
@@ -20,12 +19,6 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def stage_bundle(text: str) -> str:
-    text = replace_once(
-        text,
-        "    const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;",
-        "    const href = baseHref('/favicon.ico');",
-        "favicon assignment",
-    )
     text = replace_once(
         text,
         "  const MAX_IMAGE_BYTES = 25 * 1024 * 1024;",
