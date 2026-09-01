@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Validate the two real-target evidence files required to seal Product 3.
+"""Validate all evidence planes required to seal Product 3.
 
-This is deliberately independent of the acceptance generators. A candidate is
-eligible only when target execution evidence and real-browser evidence both
-name the exact current git commit and satisfy every release invariant.
+A candidate is eligible only when target execution evidence, real-browser
+evidence, and the exact pinned Hermes public-contract evidence all pass. The
+third plane prevents a locally polished product from being called official-grade
+while its required Dashboard SDK contract is still absent upstream.
 """
 from __future__ import annotations
 
@@ -13,6 +14,9 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+LOCK = json.loads((ROOT / "tests" / "upstream-lock.json").read_text(encoding="utf-8"))
 
 
 class SealEvidenceError(RuntimeError):
@@ -43,6 +47,20 @@ def current_git_sha(root: Path) -> str:
 def _require(condition: Any, message: str, errors: list[str]) -> None:
     if not condition:
         errors.append(message)
+
+
+def validate_upstream(upstream: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    hermes_lock = LOCK.get("hermes") if isinstance(LOCK, dict) else {}
+    contracts = upstream.get("contracts") if isinstance(upstream.get("contracts"), dict) else {}
+    shell = contracts.get("dashboard_route_scoped_exclusive_shell") if isinstance(contracts.get("dashboard_route_scoped_exclusive_shell"), dict) else {}
+
+    _require(upstream.get("schema") == "hermes-worker-studio.upstream-gate.v1", "upstream evidence schema mismatch", errors)
+    _require(upstream.get("ok") is True, "pinned Hermes upstream contract gate is not green", errors)
+    _require(upstream.get("repository") == hermes_lock.get("repository"), "upstream evidence repository does not match Hermes lock", errors)
+    _require(upstream.get("commit") == hermes_lock.get("commit"), "upstream evidence commit does not match pinned Hermes revision", errors)
+    _require(shell.get("verified") is True, "official route-scoped exclusive Dashboard shell contract is not verified", errors)
+    return errors
 
 
 def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
@@ -136,13 +154,14 @@ def _terminal_statuses(value: Any) -> set[str]:
     return statuses
 
 
-def validate(target: dict[str, Any], ui: dict[str, Any], candidate: str) -> dict[str, Any]:
-    errors = [*validate_target(target, candidate), *validate_ui(ui, candidate)]
+def validate(target: dict[str, Any], ui: dict[str, Any], upstream: dict[str, Any], candidate: str) -> dict[str, Any]:
+    errors = [*validate_upstream(upstream), *validate_target(target, candidate), *validate_ui(ui, candidate)]
     return {
-        "schema": "hermes-worker-studio.seal-verdict.v1",
+        "schema": "hermes-worker-studio.seal-verdict.v2",
         "candidate_sha": candidate,
         "eligible": not errors,
         "errors": errors,
+        "upstream_commit": upstream.get("commit"),
         "target_started_at": target.get("started_at"),
         "target_finished_at": target.get("finished_at"),
         "ui_start_time": (ui.get("stats") or {}).get("startTime") if isinstance(ui.get("stats"), dict) else None,
@@ -153,6 +172,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify Hermes Worker Studio Product 3 seal evidence")
     parser.add_argument("--target", type=Path, default=Path(".seal/target.json"))
     parser.add_argument("--ui", type=Path, default=Path(".seal/ui-report.json"))
+    parser.add_argument("--upstream", type=Path, default=Path(".seal/upstream.json"))
     parser.add_argument("--candidate", default="")
     parser.add_argument("--write", type=Path, default=Path(".seal/SEALED.json"))
     return parser.parse_args(argv)
@@ -160,12 +180,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(sys.argv[1:] if argv is None else argv))
-    root = Path(__file__).resolve().parents[1]
     try:
-        candidate = args.candidate.strip() or current_git_sha(root)
+        candidate = args.candidate.strip() or current_git_sha(ROOT)
         target = _load(args.target)
         ui = _load(args.ui)
-        verdict = validate(target, ui, candidate)
+        upstream = _load(args.upstream)
+        verdict = validate(target, ui, upstream, candidate)
     except SealEvidenceError as exc:
         print(f"SEAL EVIDENCE INVALID: {exc}", file=sys.stderr)
         return 1
