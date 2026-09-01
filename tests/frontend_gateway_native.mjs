@@ -54,6 +54,7 @@ class FakeWebSocket {
 
 globalThis.WebSocket = FakeWebSocket;
 const originalCalls = [];
+let wsUrlCalls = 0;
 const SDK = {
   fetchJSON: async (path, init) => {
     originalCalls.push({ path, init });
@@ -61,10 +62,11 @@ const SDK = {
   },
   buildWsUrl: async (path) => {
     assert.equal(path, '/api/ws');
-    return 'ws://hermes.local/api/ws?ticket=official';
+    wsUrlCalls += 1;
+    return `ws://hermes.local/api/ws?ticket=official-${wsUrlCalls}`;
   },
 };
-const currentScript = { src: 'https://hermes.local/api/plugins/hermes-worker-studio/dist/gateway-native.js' };
+const currentScript = { src: 'https://hermes.local/dashboard-plugins/hermes-worker-studio/dist/gateway-native.js' };
 globalThis.window = { __HERMES_PLUGIN_SDK__: SDK };
 globalThis.document = {
   currentScript,
@@ -75,7 +77,7 @@ globalThis.document = {
 
 vm.runInThisContext(source, { filename: 'gateway-native.js' });
 assert.equal(appendedScripts.length, 1);
-assert.match(appendedScripts[0].src, /\/dist\/index-v3\.js$/);
+assert.equal(appendedScripts[0].src, 'https://hermes.local/dashboard-plugins/hermes-worker-studio/dist/index-v3.js');
 assert.equal(window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE__.protocol, 'tui_gateway_jsonrpc_websocket');
 
 const run = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', {
@@ -93,10 +95,14 @@ assert.equal(run.status, 'running');
 assert.equal(run.session_id, 'stored-1');
 assert.equal(run.source, 'hermes_gateway_jsonrpc');
 assert.deepEqual(sent.slice(0, 4).map((x) => x.method), ['session.resume', 'image.attach_bytes', 'session.usage', 'prompt.submit']);
+const firstResume = sent.find((x) => x.method === 'session.resume');
+assert.equal(firstResume.params.close_on_disconnect, true);
+assert.equal(firstResume.params.omit_messages, true);
 assert.equal(sent.find((x) => x.method === 'prompt.submit').params.text, '完成三步任务');
 assert.equal(sent.find((x) => x.method === 'image.attach_bytes').params.session_id, 'runtime-1');
 
 const ws = FakeWebSocket.instances[0];
+assert.equal(ws.url, 'ws://hermes.local/api/ws?ticket=official-1');
 ws.gatewayEvent('todo.updated', { revision: 1, todos: [
   { id: 'a', content: '第一步', status: 'completed' },
   { id: 'b', content: '第二步', status: 'in_progress' },
@@ -138,6 +144,25 @@ await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run2.id}/st
 assert.equal(sent.at(-1).method, 'session.steer');
 await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run2.id}/stop`, { method: 'POST', body: '{}' });
 assert.equal(sent.at(-1).method, 'session.interrupt');
+
+const run3 = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', {
+  method: 'POST',
+  body: JSON.stringify({ session_id: 'stored-1', input: '断线测试' }),
+});
+assert.equal(run3.status, 'running');
+ws.close();
+const interrupted = await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run3.id}?after=0`);
+assert.equal(interrupted.status, 'interrupted');
+assert.ok(interrupted.events.some((e) => e.event === 'run.interrupted' && e.data.reason === 'gateway_websocket_closed'));
+
+const afterReconnect = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/sessions/stored-1/context');
+assert.equal(afterReconnect.available, true);
+assert.equal(FakeWebSocket.instances.length, 2);
+assert.equal(FakeWebSocket.instances[1].url, 'ws://hermes.local/api/ws?ticket=official-2');
+assert.equal(wsUrlCalls, 2, 'each reconnect must mint a fresh Hermes Dashboard WebSocket auth URL');
+const resumes = sent.filter((x) => x.method === 'session.resume');
+assert.equal(resumes.length, 2);
+assert.ok(resumes.every((x) => x.params.close_on_disconnect === true));
 
 const passthrough = await SDK.fetchJSON('/api/config');
 assert.deepEqual(passthrough, { passthrough: true });
