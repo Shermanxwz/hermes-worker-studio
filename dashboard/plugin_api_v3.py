@@ -2,9 +2,14 @@
 
 Extends the sealed 2.x bridge without replacing its execution ownership:
 all sessions, models, config, Runs, approvals, and subagents remain Hermes-owned.
-This shim adds a multimodal-preserving Runs submission route and projects the
+This shim adds a multimodal-preserving Runs submission route, projects the
 canonical Hermes todo state from public Session API rows when the pinned public
-Runs stream has not emitted a todo snapshot yet.
+Runs stream has not emitted a todo snapshot yet, and feature-detects Hermes'
+public per-session context telemetry when an upstream build exposes it.
+
+Context is deliberately fail-closed: Worker Studio never derives current
+context occupancy from cumulative billing/input-token counters. If Hermes does
+not expose an official context snapshot, the UI receives ``available: false``.
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ router = _legacy.router
 _base_run_snapshot = _legacy._run_snapshot
 _TODO_POLL_INTERVAL = 0.5
 _TODO_MESSAGE_LIMIT = 100
+_CONTEXT_POLL_INTERVAL = 0.65
 # The supported installer rewrites this exact source-tree marker in the staged
 # release artifact to the git commit being installed. A running target can then
 # prove that its loaded Product 3 bridge is the same candidate whose CI and
@@ -151,10 +157,10 @@ def _project_session_todo_if_changed(run_id: str) -> bool:
         run["todo_polled_at"] = now
         session_id = str(run.get("session_id") or "")
         previous_revision = int(run.get("todo_revision", -1))
-        # If official Runs starts emitting its canonical todo.updated event
-        # (upstream NousResearch/hermes-agent#99686), prefer that transport and
-        # stop adding Session-API projection events. Our own todo.snapshot must
-        # NOT trigger this guard because later revisions still need to project.
+        # If official Runs starts emitting its canonical todo.updated event,
+        # prefer that transport and stop adding Session-API projection events.
+        # Our own todo.snapshot must NOT trigger this guard because later
+        # revisions still need to project.
         if any(
             str(event.get("event") or "").lower() == "todo.updated"
             for event in run.get("events", [])
@@ -191,9 +197,144 @@ def _project_session_todo_if_changed(run_id: str) -> bool:
     return True
 
 
+def _finite_nonnegative(value: Any) -> float | int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0 or number != number or number in {float("inf"), float("-inf")}:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _first_number(payload: dict[str, Any], *names: str) -> float | int | None:
+    for name in names:
+        if name not in payload:
+            continue
+        number = _finite_nonnegative(payload.get(name))
+        if number is not None:
+            return number
+    return None
+
+
+def _normalize_context_snapshot(payload: Any) -> dict[str, Any] | None:
+    """Normalize only explicit Hermes context telemetry fields.
+
+    Never falls back to ``input_tokens``, ``prompt_tokens`` or ``total_tokens``:
+    those are cumulative accounting buckets in existing Hermes APIs and are
+    not current context occupancy.
+    """
+    if not isinstance(payload, dict):
+        return None
+    used = _first_number(payload, "context_tokens", "context_used", "used_tokens", "last_prompt_tokens")
+    maximum = _first_number(payload, "context_length", "context_max", "context_window", "max_tokens")
+    threshold = _first_number(payload, "threshold_tokens", "compression_threshold", "compact_at_tokens")
+    remaining = _first_number(payload, "remaining_tokens", "context_remaining")
+    compression_count = _first_number(payload, "compression_count", "compaction_count")
+    percent = _first_number(payload, "context_percent", "percent", "fill_percent")
+    if percent is None and used is not None and maximum:
+        percent = round((float(used) / float(maximum)) * 100, 2)
+    if remaining is None and used is not None and maximum is not None:
+        remaining = max(0, float(maximum) - float(used))
+    if maximum is None and used is None and threshold is None and compression_count is None:
+        return None
+    raw_state = payload.get("compaction_state")
+    if raw_state is None:
+        raw_state = payload.get("compression_state")
+    compaction_state = str(raw_state or "").strip().lower()
+    source = str(payload.get("context_source") or payload.get("source") or "hermes_session_context_api").strip()
+    return {
+        "available": True,
+        "context_used": used,
+        "context_max": maximum,
+        "context_percent": percent,
+        "remaining_tokens": remaining,
+        "threshold_tokens": threshold,
+        "compression_count": compression_count,
+        "compression_enabled": payload.get("compression_enabled", payload.get("auto_compact")),
+        "compaction_state": compaction_state,
+        "updated_at": payload.get("updated_at"),
+        "source": source or "hermes_session_context_api",
+        "measurement": payload.get("measurement") or payload.get("context_source"),
+    }
+
+
+def _session_context_snapshot(session_id: str | None) -> dict[str, Any] | None:
+    """Read the official public session-context route when Hermes exposes it."""
+    if not session_id:
+        return None
+    path = f"/api/sessions/{urllib.parse.quote(session_id, safe='')}/context"
+    try:
+        payload = _legacy._hermes_proxy(path)
+    except HTTPException as exc:
+        # Pinned Hermes 0.20.6 does not yet expose this public HTTP contract.
+        # Treat absence as a capability miss, never as permission to estimate.
+        if int(exc.status_code or 0) in {404, 405, 501}:
+            return None
+        raise
+    return _normalize_context_snapshot(payload)
+
+
+def _context_fingerprint(snapshot: dict[str, Any] | None) -> str:
+    if not snapshot:
+        return ""
+    return json.dumps(snapshot, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _seed_context_baseline(run_id: str, snapshot: dict[str, Any] | None) -> None:
+    with _legacy._RUNS_LOCK:
+        run = _legacy._RUNS.get(run_id)
+        if run is None:
+            return
+        run["context_fingerprint"] = _context_fingerprint(snapshot)
+        run["context_polled_at"] = 0.0
+
+
+def _project_session_context_if_changed(run_id: str) -> bool:
+    """Project an official Hermes session-context snapshot into the Studio run.
+
+    The event is named ``context.snapshot`` to make transport provenance
+    explicit. Native ``context.compaction`` or future native Runs context events
+    continue to flow untouched through the Runs SSE bridge.
+    """
+    now = time.monotonic()
+    with _legacy._RUNS_LOCK:
+        run = _legacy._RUNS.get(run_id)
+        if run is None:
+            return False
+        last_poll = float(run.get("context_polled_at") or 0.0)
+        if now - last_poll < _CONTEXT_POLL_INTERVAL:
+            return False
+        run["context_polled_at"] = now
+        session_id = str(run.get("session_id") or "")
+        previous = str(run.get("context_fingerprint") or "")
+    try:
+        snapshot = _session_context_snapshot(session_id)
+    except HTTPException:
+        return False
+    if snapshot is None:
+        return False
+    fingerprint = _context_fingerprint(snapshot)
+    if not fingerprint or fingerprint == previous:
+        return False
+    with _legacy._RUNS_LOCK:
+        run = _legacy._RUNS.get(run_id)
+        if run is None:
+            return False
+        if fingerprint == str(run.get("context_fingerprint") or ""):
+            return False
+        run["context_fingerprint"] = fingerprint
+    _legacy._append_run_event(run_id, "context.snapshot", snapshot)
+    return True
+
+
 def _run_snapshot_v3(run_id: str, after: int = 0) -> dict[str, Any]:
     snapshot = _base_run_snapshot(run_id, after)
-    if _project_session_todo_if_changed(run_id):
+    changed = _project_session_todo_if_changed(run_id)
+    changed = _project_session_context_if_changed(run_id) or changed
+    if changed:
         snapshot = _base_run_snapshot(run_id, after)
     return snapshot
 
@@ -209,12 +350,16 @@ def _start_native_run_v3(body: dict[str, Any]) -> dict[str, Any]:
     if not _has_input(raw_input):
         raise HTTPException(400, "message/input is required")
 
-    # Capture the pre-run canonical revision so an old plan is not re-announced
-    # as if the new turn created it.
+    # Capture pre-run canonical state so old plan/context snapshots are not
+    # re-announced as if the new turn created them.
     try:
         todo_baseline = _latest_session_todo_snapshot(session_id)
     except HTTPException:
         todo_baseline = None
+    try:
+        context_baseline = _session_context_snapshot(session_id)
+    except HTTPException:
+        context_baseline = None
 
     support = _legacy._require_runs()
     upstream = _legacy._hermes_proxy(
@@ -230,8 +375,11 @@ def _start_native_run_v3(body: dict[str, Any]) -> dict[str, Any]:
     status = str(upstream.get("status") or "running").lower()
     initial = _legacy._new_run_record(run_id, session_id, status)
     _seed_todo_baseline(run_id, todo_baseline)
+    _seed_context_baseline(run_id, context_baseline)
     initial["capabilities"] = support
     initial["input_mode"] = "multimodal" if not isinstance(raw_input, str) else "text"
+    if context_baseline:
+        initial["context"] = context_baseline
     if support["events"]:
         threading.Thread(
             target=_legacy._consume_official_run_events,
@@ -244,7 +392,7 @@ def _start_native_run_v3(body: dict[str, Any]) -> dict[str, Any]:
 
 # The legacy route functions resolve this module global at call time. Replacing
 # only the snapshot projector keeps all public status/control endpoints intact
-# while adding the Product 3 canonical-todo projection.
+# while adding Product 3 canonical todo and official-context projections.
 _legacy._run_snapshot = _run_snapshot_v3
 
 
@@ -255,6 +403,23 @@ async def start_hermes_run_v3(request: Request) -> dict[str, Any]:
         raise HTTPException(400, "body must be an object")
     _legacy._prune_runs()
     return await _legacy.asyncio.to_thread(_start_native_run_v3, body)
+
+
+@router.get("/hermes/sessions/{session_id}/context")
+def get_hermes_session_context(session_id: str) -> dict[str, Any]:
+    """Feature-detect and proxy Hermes' official per-session context telemetry."""
+    try:
+        snapshot = _session_context_snapshot(session_id)
+    except HTTPException as exc:
+        if int(exc.status_code or 0) in {404, 405, 501}:
+            snapshot = None
+        else:
+            raise
+    return snapshot or {
+        "available": False,
+        "source": "unavailable",
+        "reason": "Hermes public session context telemetry is not exposed by this build",
+    }
 
 
 @router.get("/product-capabilities")
@@ -272,5 +437,11 @@ def product_capabilities() -> dict[str, Any]:
             "runs_event": "todo.updated when upstream exposes it",
             "fallback": "public /api/sessions todo tool result -> todo.snapshot",
             "upstream_issue": "NousResearch/hermes-agent#99686",
+        },
+        "context_telemetry": {
+            "source": "Hermes public /api/sessions/{session_id}/context when available",
+            "run_projection": "context.snapshot",
+            "compaction": "native context.compaction / official compaction_state only",
+            "fallback": "none; cumulative billing tokens are never presented as current context",
         },
     }
