@@ -10,7 +10,7 @@ SOURCE = ROOT / "dashboard" / "dist" / "index-v3.js"
 
 
 class ProductBundleStageTests(unittest.TestCase):
-    def test_release_transform_produces_any_file_native_nav_and_no_wait_copy(self) -> None:
+    def test_release_transform_produces_any_file_advanced_native_nav_and_no_wait_copy(self) -> None:
         staged = stage_bundle(SOURCE.read_text(encoding="utf-8"))
 
         self.assertIn("const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;", staged)
@@ -20,10 +20,15 @@ class ProductBundleStageTests(unittest.TestCase):
         self.assertIn("kind: item.kind || 'file'", staged)
         self.assertNotIn("accept: 'image/png,image/jpeg,image/webp,image/gif,image/bmp'", staged)
 
-        self.assertIn("['/sessions', 'Hermes 会话', '☷']", staged)
-        self.assertIn("['/cron', '自动化', '◷']", staged)
-        self.assertNotIn("['/sessions', '原生 Dashboard · 会话']", staged)
-        self.assertNotIn("['/cron', '自动化 / Cron']", staged)
+        self.assertIn("const HERMES_PRIMARY = [];", staged)
+        self.assertIn("['/sessions', '会话 / Sessions']", staged)
+        self.assertIn("['/cron', '自动化 / Cron']", staged)
+        self.assertIn("['/skills', 'Skills']", staged)
+        self.assertIn("['/plugins', 'Plugins']", staged)
+        self.assertIn("['/mcp', 'MCP']", staged)
+        self.assertIn("高级 · Hermes Dashboard", staged)
+        self.assertNotIn("['/sessions', 'Hermes 会话', '☷']", staged)
+        self.assertNotIn("['/cron', '自动化', '◷']", staged)
 
         self.assertIn("Clarify 等交互请求自动 Skip/Decline，不再等待人工", staged)
         self.assertIn("缺少密码、MFA 或外部授权时会自动失败/继续可行路径", staged)
