@@ -5,6 +5,16 @@
     "version": "0.20.6",
     "channel": "main-snapshot",
     "snapshot_date": "2026-08-31",
-    "snapshot_reason": "Archive baseline containing the documented PluginContext.subagent_lifecycle API, native Runs control plane, dashboard model/custom-endpoint/session/config surfaces, delegation configuration, review routing, approvals, Skills, Plugins and MCP product surfaces required by Worker Studio 2.0."
+    "snapshot_reason": "Archive baseline containing the documented PluginContext.subagent_lifecycle API, native Runs control plane, Gateway attachment/session/input-response contracts, Dashboard model/custom-endpoint/session/config surfaces, delegation/review routing, approvals, Skills, Plugins and MCP surfaces required by Worker Studio 3.0. Final Product seal additionally requires the route-scoped exclusive Dashboard shell contract tracked below; this pin intentionally remains non-sealable until an official Hermes revision contains that contract.",
+    "required_contracts": {
+      "dashboard_route_scoped_exclusive_shell": {
+        "required_for_seal": true,
+        "upstream_issue": "https://github.com/NousResearch/hermes-agent/issues/100149",
+        "semantics": "A dashboard plugin overriding a route can officially suppress the built-in Hermes shell only while that route is active; native shell/navigation automatically returns on native routes.",
+        "proposed_manifest": {
+          "tab.shell": "exclusive"
+        }
+      }
+    }
   }
 }
