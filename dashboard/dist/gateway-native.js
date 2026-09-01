@@ -64,8 +64,8 @@
   }
 
   class StudioGatewayClient {
-    constructor(url) {
-      this.url = url;
+    constructor(urlFactory) {
+      this.urlFactory = urlFactory;
       this.ws = null;
       this.pending = new Map();
       this.listeners = new Set();
@@ -75,34 +75,52 @@
       if (this.ws?.readyState === WebSocket.OPEN) return;
       if (this.openPromise) return this.openPromise;
       this.openPromise = new Promise((resolve, reject) => {
-        const ws = new WebSocket(this.url);
-        this.ws = ws;
         let settled = false;
+        let ws = null;
         const timer = setTimeout(() => {
           if (settled) return;
           settled = true;
-          try { ws.close(); } catch (_) {}
+          try { ws?.close(); } catch (_) {}
           reject(new Error('Hermes Gateway WebSocket connection timed out'));
         }, 15000);
-        ws.addEventListener('open', () => {
+        Promise.resolve(this.urlFactory()).then((url) => {
+          if (settled) return;
+          ws = new WebSocket(url);
+          this.ws = ws;
+          ws.addEventListener('open', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve();
+          }, { once: true });
+          ws.addEventListener('error', () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            reject(new Error('Hermes Gateway WebSocket connection failed'));
+          }, { once: true });
+          ws.addEventListener('message', (message) => this.onMessage(message.data));
+          ws.addEventListener('close', () => {
+            if (this.ws === ws) this.ws = null;
+            runtimeByStored.clear();
+            storedByRuntime.clear();
+            for (const run of runs.values()) {
+              if (TERMINAL.has(run.status)) continue;
+              run.status = 'interrupted';
+              run.ended_at = nowSec();
+              addRunEvent(run, 'run.interrupted', {
+                source: 'hermes.gateway.close_on_disconnect',
+                reason: 'gateway_websocket_closed',
+              });
+            }
+            for (const pending of this.pending.values()) pending.reject(new Error('Hermes Gateway WebSocket closed'));
+            this.pending.clear();
+          });
+        }).catch((error) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          resolve();
-        }, { once: true });
-        ws.addEventListener('error', () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          reject(new Error('Hermes Gateway WebSocket connection failed'));
-        }, { once: true });
-        ws.addEventListener('message', (message) => this.onMessage(message.data));
-        ws.addEventListener('close', () => {
-          this.ws = null;
-          runtimeByStored.clear();
-          storedByRuntime.clear();
-          for (const pending of this.pending.values()) pending.reject(new Error('Hermes Gateway WebSocket closed'));
-          this.pending.clear();
+          reject(error);
         });
       }).finally(() => { this.openPromise = null; });
       return this.openPromise;
@@ -154,8 +172,7 @@
     }
     if (!gatewayPromise) {
       gatewayPromise = (async () => {
-        const url = await SDK.buildWsUrl('/api/ws');
-        const client = new StudioGatewayClient(url);
+        const client = new StudioGatewayClient(() => SDK.buildWsUrl('/api/ws'));
         client.onEvent(onGatewayEvent);
         await client.connect();
         gateway = client;
@@ -171,7 +188,7 @@
     const existing = runtimeByStored.get(stored);
     if (existing) return existing;
     const gw = await getGateway();
-    const resumed = await gw.request('session.resume', { session_id: stored, source: 'hermes_browser', omit_messages: true });
+    const resumed = await gw.request('session.resume', { session_id: stored, source: 'hermes_browser', omit_messages: true, close_on_disconnect: true });
     const runtime = String(resumed?.session_id || '').trim();
     if (!runtime) throw new Error('Hermes Gateway did not return a runtime session id');
     runtimeByStored.set(stored, runtime);
