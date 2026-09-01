@@ -5,6 +5,8 @@
   grid-template-columns:minmax(180px,1fr) minmax(0,auto) auto auto;
   gap:10px;
 }
+.hws3-file-icon{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--hws-border);border-radius:7px;background:rgba(58,168,151,.08);color:var(--hws-muted);font-size:9px;font-weight:800;letter-spacing:.04em}
+.hws3-file-icon.pdf{color:var(--hws-accent);background:rgba(232,213,172,.08)}
 
 /* Official plan — collapsed product summary, canonical Hermes todo underneath. */
 .hws3-plan-card{padding:0;overflow:hidden;background:linear-gradient(180deg,rgba(18,48,43,.88),rgba(10,31,28,.94));box-shadow:0 14px 38px rgba(0,0,0,.14)}
