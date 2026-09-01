@@ -1,0 +1,10 @@
+{
+  "schema": "hermes-worker-studio.seal-request.v1",
+  "pr_number": 4,
+  "candidate_sha": "e5c1cf090c618912134b47ccf54a08f57ec659d3",
+  "dashboard_url": "http://127.0.0.1:19119",
+  "provider": "",
+  "model": "",
+  "merge_method": "merge",
+  "finalize": true
+}
