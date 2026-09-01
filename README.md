@@ -6,6 +6,12 @@
 
 唯一运行时上游是 `NousResearch/hermes-agent`，精确版本与封存级必需合同记录在 `tests/upstream-lock.json`。
 
+## 仓库封存形态
+
+长期仓库只保留 **`main`** 作为 canonical branch。工作分支只允许在开发过程中临时存在，进入归档/封存态前必须归并并删除；`main` 可以处于 `ARCHIVE CANDIDATE`，但只有三证据面全部闭合后才允许称为 `SEALED`。
+
+普通 `CI` 的职责是证明当前 `main` 代码、依赖边界、Pinned Hermes 归档基线和产品运行测试健康，因此应保持绿色。尚未进入 pinned Hermes 的未来 seal-required upstream contract 不通过普通 CI 制造永久红灯；它由 `seal_close.py` 的 Gate 0 与最终 evidence verifier 单独硬阻断。
+
 ## 最终产品形态
 
 ```text
@@ -44,11 +50,11 @@ Supported installer 的最终 release bundle 将 `HERMES_PRIMARY` 置空；所�
 
 - `tests/upstream-lock.json` 标记 `dashboard_route_scoped_exclusive_shell.required_for_seal=true`；
 - `scripts/verify_required_upstream_contracts.py` 要求 pinned Hermes 同时具备 typed API、runtime enforcement、公开文档和 upstream behavior test；
-- CI 会在该合同不存在时故意失败；
+- 普通 CI 只验证当前可归档的 pinned Hermes 公共基线，不把已知 upstream 缺口伪装成仓库故障；
 - `seal_close.py` 会先跑 upstream gate，合同不存在时连安装/真实模型/browser seal 都不会继续；
 - 最终 verifier 必须同时验证 `.seal/upstream.json`、`.seal/target.json`、`.seal/ui-report.json`。
 
-因此，在 Hermes 官方合同真正落地并更新 pin 前，正确状态是 **ARCHIVE CANDIDATE / DRAFT**，绝不宣称 `SEALED`。
+因此，在 Hermes 官方合同真正落地并更新 pin 前，正确状态是 **main 上的 ARCHIVE CANDIDATE**，绝不宣称 `SEALED`。
 
 ## Product chat：Hermes 官方 Gateway
 
@@ -167,7 +173,7 @@ Product 3 保留 ChatGPT 式交互逻辑并使用 Hermes 风格视觉：
 真正的封存不是“代码看起来完成”，而是三面证据闭环：
 
 ```text
-exact Worker Studio candidate
+exact Worker Studio main candidate
           │
           ├─ ① pinned official Hermes upstream contracts
           │      .seal/upstream.json
@@ -198,12 +204,12 @@ python scripts/seal_close.py --hermes-root /path/to/hermes-agent --url http://12
 
 `SEALED.json` 只有在以下全部成立时才可能 `eligible=true`：
 
-1. exact PR-head CI 全绿；
-2. exact Hermes pin 的 required public contracts 全部通过；
+1. exact `main` candidate 的普通 CI 全绿；
+2. exact Hermes pin 的 seal-required public contracts 全部通过；
 3. 真实 Hermes Run / Session CRUD / canonical todo 通过；
 4. desktop Chromium + Pixel 7 真浏览器通过；
 5. `/` DOM 中不存在 Worker Studio Advanced 之外的第二份 Hermes 原生导航；
 6. `/sessions` 等 native route 恢复 Hermes 原生 shell 并可返回 Studio；
 7. 三份证据与 exact candidate/pin 完全一致。
 
-完整规则见 `SEAL_ACCEPTANCE.md`。在 upstream #100149 尚未被官方实现并进入 pinned Hermes revision 前，PR #4 必须保持 Draft/Archive Candidate。
+完整规则见 `SEAL_ACCEPTANCE.md`。在 upstream #100149 尚未被官方实现并进入 pinned Hermes revision 前，`main` 必须保持 `ARCHIVE CANDIDATE` 状态；一旦三证据面闭环，仓库仍只保留 `main`，再以 exact main SHA 作为封存身份。
