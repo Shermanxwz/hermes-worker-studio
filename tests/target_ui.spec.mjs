@@ -10,12 +10,27 @@ async function assertNoHorizontalOverflow(page) {
   expect(metrics.body).toBeLessThanOrEqual(metrics.viewport + 2);
 }
 
+async function assertExclusiveProductHome(page) {
+  await expect(page.locator('.hws3-hermes-nav a')).toHaveCount(0);
+  const advanced = page.locator('.hws3-advanced');
+  await expect(advanced.locator('summary')).toContainText('高级 · Hermes Dashboard');
+  for (const suffix of ['/sessions', '/cron', '/skills', '/plugins', '/mcp', '/profiles', '/analytics', '/logs', '/config']) {
+    await expect(advanced.locator(`a[href$="${suffix}"]`)).toHaveCount(1);
+  }
+  for (const suffix of ['/sessions', '/skills', '/plugins', '/mcp', '/config']) {
+    const allNativeLinks = page.locator(`a[href$="${suffix}"]`);
+    const advancedLinks = advanced.locator(`a[href$="${suffix}"]`);
+    expect(await allNativeLinks.count(), `native Hermes shell leaked ${suffix} onto product home`).toBe(await advancedLinks.count());
+  }
+}
+
 test('Worker Studio product shell is usable at the real target', async ({ page }, testInfo) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveTitle('Hermes Worker Studio');
   await expect(page.locator('.hws3-root')).toBeVisible();
   await expect(page.getByText('Hermes Worker Studio', { exact: true }).first()).toBeVisible();
   await expect(page.locator('.hws3-composer textarea')).toBeVisible();
+  await assertExclusiveProductHome(page);
 
   const gatewayContract = await page.evaluate(() => window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE__ || null);
   expect(gatewayContract).not.toBeNull();
@@ -32,8 +47,6 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   expect(gatewayContract.unattended_input).toContain('clarify.respond');
   expect(gatewayContract.unattended_input).toContain('mcp.setup.respond');
 
-  // This is the installed release bundle, after the fail-closed staging step.
-  // Prove the actual browser product is no longer image-only.
   const picker = page.locator('.hws3-composer input[type="file"]');
   await expect(picker).toHaveCount(1);
   await expect(picker).not.toHaveAttribute('accept', /image/i);
@@ -72,7 +85,7 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
     await menu.click();
     await expect(page.locator('.hws3-mobile-scrim')).toBeVisible();
     await expect(page.locator('.hws3-nav').getByText('Worker', { exact: true })).toBeVisible();
-    await expect(page.locator('.hws3-hermes-nav').getByText('Hermes 会话', { exact: true })).toBeVisible();
+    await expect(page.locator('.hws3-advanced summary')).toContainText('高级 · Hermes Dashboard');
     await page.locator('.hws3-mobile-scrim').click();
     await expect(page.locator('.hws3-mobile-scrim')).toHaveCount(0);
   } else {
@@ -80,10 +93,6 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
     for (const label of ['对话', 'Worker', '模型', '完全访问', '完整历史']) {
       await expect(page.locator('.hws3-nav').getByText(label, { exact: true })).toBeVisible();
     }
-    for (const label of ['Hermes 会话', '技能', '插件', 'MCP', '自动化']) {
-      await expect(page.locator('.hws3-hermes-nav').getByText(label, { exact: true })).toBeVisible();
-    }
-
     await page.locator('.hws3-nav').getByText('完全访问', { exact: true }).click();
     await expect(page.getByText(/Clarify 等交互请求自动 Skip\/Decline/)).toBeVisible();
     await expect(page.getByText(/Hardline Blocklist/)).toBeVisible();
@@ -94,7 +103,6 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   expect(composerBox).not.toBeNull();
   expect(composerBox.y + composerBox.height).toBeLessThanOrEqual((await page.evaluate(() => window.innerHeight)) + 2);
   await assertNoHorizontalOverflow(page);
-
   await page.screenshot({ path: testInfo.outputPath('worker-studio.png'), fullPage: true });
 });
 
@@ -106,8 +114,11 @@ test('native Hermes Dashboard keeps the Worker Studio return path', async ({ pag
   expect(await backs.count()).toBeGreaterThanOrEqual(1);
   const back = backs.first();
   await expect(back).toBeVisible();
+  expect(await page.locator('a[href$="/skills"]').count()).toBeGreaterThanOrEqual(1);
+  expect(await page.locator('a[href$="/config"]').count()).toBeGreaterThanOrEqual(1);
   await back.click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.hws3-root')).toBeVisible();
+  await assertExclusiveProductHome(page);
   await page.screenshot({ path: testInfo.outputPath('native-return.png'), fullPage: true });
 });
