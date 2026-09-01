@@ -153,12 +153,7 @@ def verify_hermes(hermes: pathlib.Path) -> None:
     )
     require_tokens(
         hermes / "web" / "src" / "plugins" / "slots.ts",
-        (
-            '"header-left"',
-            '"sidebar"',
-            "registerSlot",
-            "PluginSlot",
-        ),
+        ('"header-left"', '"sidebar"', "registerSlot", "PluginSlot"),
         "Hermes Dashboard public slot registry",
     )
     require_tokens(
@@ -213,7 +208,7 @@ def verify_hermes(hermes: pathlib.Path) -> None:
         hermes / "apps" / "desktop" / "src" / "plugins" / "hermes-bots" / "group-attachments.ts",
         (
             "kind === 'image'",
-            "kind === 'pdf'",
+            "return 'pdf'",
             "return 'file'",
             "picker button",
             "composer paste handler",
@@ -223,21 +218,23 @@ def verify_hermes(hermes: pathlib.Path) -> None:
     )
     require_tokens(
         hermes / "apps" / "desktop" / "src" / "store" / "clarify.ts",
-        (
-            "skipClarifyRequest",
-            "clarify.respond",
-            "answer: ''",
-        ),
+        ("skipClarifyRequest", "clarify.respond", "answer: ''"),
         "Hermes official clarify skip contract",
     )
     require_tokens(
         hermes / "apps" / "desktop" / "src" / "store" / "mcp-setup.ts",
-        (
-            "skipMcpSetupRequest",
-            "mcp.setup.respond",
-            "status: 'declined'",
-        ),
+        ("skipMcpSetupRequest", "mcp.setup.respond", "status: 'declined'"),
         "Hermes official MCP setup skip contract",
+    )
+    require_tokens(
+        hermes / "ui-tui" / "src" / "app" / "useInputHandlers.ts",
+        (
+            "sudo.respond",
+            "password: ''",
+            "secret.respond",
+            "value: ''",
+        ),
+        "Hermes official sudo/secret cancellation contract",
     )
     require_tokens(
         hermes / "apps" / "desktop" / "src" / "app" / "session" / "hooks" / "use-message-stream" / "gateway-event" / "status.ts",
@@ -275,13 +272,7 @@ def verify_hermes(hermes: pathlib.Path) -> None:
 
     require_tokens(
         hermes / "website" / "docs" / "user-guide" / "features" / "delegation.md",
-        (
-            "delegation.model",
-            "delegation.provider",
-            "The `/review` Command",
-            "auxiliary:",
-            "review:",
-        ),
+        ("delegation.model", "delegation.provider", "The `/review` Command", "auxiliary:", "review:"),
         "Hermes delegation/review docs",
     )
     public_config_globs = (
