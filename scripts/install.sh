@@ -24,7 +24,8 @@ trap cleanup EXIT
 for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
-  dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/dist/product-sealed.css; do
+  dashboard/dist/gateway-native.js dashboard/dist/index-v3.js \
+  dashboard/dist/product.css dashboard/dist/product-sealed.css; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
     exit 1
@@ -36,7 +37,7 @@ rm -rf "$TMP" "$BACKUP"
 mkdir -p "$TMP/dashboard/dist"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
 cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
-cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$TMP/dashboard/dist/"
+cp "$ROOT/dashboard/dist/gateway-native.js" "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$TMP/dashboard/dist/"
 
 # Product 3 must visually remain inside the Hermes family. The official Hermes
 # Web Dashboard already ships its canonical favicon at /favicon.ico. Rewrite
@@ -111,8 +112,14 @@ Theme:     $THEME_DIR/hermes-worker-studio.yaml
 Branding:  reuses the official Hermes Dashboard /favicon.ico
 
 Runtime contract:
-  HERMES_WORKER_STUDIO_API_URL=http://127.0.0.1:8642
-  HERMES_WORKER_STUDIO_API_KEY=<same value as API_SERVER_KEY>
+  Product chat: Hermes official TUI Gateway JSON-RPC over Dashboard WebSocket (/api/ws)
+  Probe/CI:     HERMES_WORKER_STUDIO_API_URL=http://127.0.0.1:8642
+                HERMES_WORKER_STUDIO_API_KEY=<same value as API_SERVER_KEY>
+
+Chat/session runtime state, Context usage, Auto Compact lifecycle, canonical todo,
+approvals, steer/interrupt and image attachment are consumed from official Hermes
+Gateway methods/events. /v1/runs remains a probe/CI/unattended surface rather than
+the product chat transport.
 
 Worker/Verifier execution stays inside Hermes through the public
 PluginContext.subagent_lifecycle contract. No external worker service or second
