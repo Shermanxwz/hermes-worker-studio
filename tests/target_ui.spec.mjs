@@ -21,13 +21,23 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   expect(gatewayContract).not.toBeNull();
   expect(gatewayContract.protocol).toBe('tui_gateway_jsonrpc_websocket');
   expect(gatewayContract.chat).toBe('prompt.submit');
+  expect(gatewayContract.reconnect).toBe('session.resume(close_on_disconnect=false)');
   expect(gatewayContract.context).toEqual(['session.usage', 'session.context_breakdown']);
   expect(gatewayContract.compact).toEqual(['status.update:compacting', 'status.update:compacted']);
   expect(gatewayContract.plan).toBe('todo.updated');
   expect(gatewayContract.stop).toBe('session.interrupt');
   expect(gatewayContract.steer).toBe('session.steer');
   expect(gatewayContract.approval).toBe('approval.respond');
-  expect(gatewayContract.attachments).toBe('image.attach_bytes');
+  expect(gatewayContract.attachments).toEqual(['image.attach_bytes', 'pdf.attach', 'file.attach']);
+  expect(gatewayContract.unattended_input).toContain('clarify.respond');
+  expect(gatewayContract.unattended_input).toContain('mcp.setup.respond');
+
+  // This is the installed release bundle, after the fail-closed staging step.
+  // Prove the actual browser product is no longer image-only.
+  const picker = page.locator('.hws3-composer input[type="file"]');
+  await expect(picker).toHaveCount(1);
+  await expect(picker).not.toHaveAttribute('accept', /image/i);
+  await expect(page.locator('.hws3-plus')).toHaveAttribute('title', '添加文件');
 
   const mobile = testInfo.project.name.startsWith('mobile-');
   if (!mobile) {
@@ -62,6 +72,7 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
     await menu.click();
     await expect(page.locator('.hws3-mobile-scrim')).toBeVisible();
     await expect(page.locator('.hws3-nav').getByText('Worker', { exact: true })).toBeVisible();
+    await expect(page.locator('.hws3-hermes-nav').getByText('Hermes 会话', { exact: true })).toBeVisible();
     await page.locator('.hws3-mobile-scrim').click();
     await expect(page.locator('.hws3-mobile-scrim')).toHaveCount(0);
   } else {
@@ -69,6 +80,14 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
     for (const label of ['对话', 'Worker', '模型', '完全访问', '完整历史']) {
       await expect(page.locator('.hws3-nav').getByText(label, { exact: true })).toBeVisible();
     }
+    for (const label of ['Hermes 会话', '技能', '插件', 'MCP', '自动化']) {
+      await expect(page.locator('.hws3-hermes-nav').getByText(label, { exact: true })).toBeVisible();
+    }
+
+    await page.locator('.hws3-nav').getByText('完全访问', { exact: true }).click();
+    await expect(page.getByText(/Clarify 等交互请求自动 Skip\/Decline/)).toBeVisible();
+    await expect(page.getByText(/Hardline Blocklist/)).toBeVisible();
+    await page.locator('.hws3-nav').getByText('对话', { exact: true }).click();
   }
 
   const composerBox = await page.locator('.hws3-composer').boundingBox();
@@ -83,7 +102,9 @@ test('native Hermes Dashboard keeps the Worker Studio return path', async ({ pag
   test.skip(testInfo.project.name.startsWith('mobile-'), 'desktop navigation contract is sufficient; mobile shell is covered separately');
 
   await page.goto('/sessions', { waitUntil: 'domcontentloaded' });
-  const back = page.getByText('← Worker Studio', { exact: true });
+  const backs = page.getByText('← Worker Studio', { exact: true });
+  expect(await backs.count()).toBeGreaterThanOrEqual(1);
+  const back = backs.first();
   await expect(back).toBeVisible();
   await back.click();
   await expect(page).toHaveURL(/\/$/);
