@@ -2,10 +2,11 @@
 """One-command Product 3 real-target seal closure.
 
 Run this from the exact candidate checkout on the Hermes target machine. It
-atomically installs that commit (unless explicitly skipped), runs the real
-Hermes execution/todo acceptance, runs desktop + mobile Playwright acceptance,
-stamps both evidence planes with the exact candidate commit, and invokes the
-independent evidence verifier. It never changes PR state or merges code.
+verifies the exact pinned official Hermes public contracts, atomically installs
+that commit (unless explicitly skipped), runs the real Hermes execution/todo
+acceptance, runs desktop + mobile Playwright acceptance, stamps the exact
+candidate commit, and invokes the independent three-plane evidence verifier. It
+never changes PR state or merges code.
 """
 from __future__ import annotations
 
@@ -75,6 +76,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--http-timeout", type=float, default=30.0)
     parser.add_argument("--run-timeout", type=float, default=180.0)
     parser.add_argument("--evidence-dir", type=Path, default=Path(".seal"))
+    parser.add_argument("--hermes-root", type=Path, default=None, help="Reuse an exact pinned Hermes source checkout for the upstream contract gate")
     parser.add_argument("--skip-install", action="store_true", help="Do not run scripts/install.sh; loaded target candidate must still match")
     parser.add_argument("--skip-node-install", action="store_true", help="Assume npm dependencies are already installed")
     parser.add_argument("--skip-browser-install", action="store_true", help="Assume Playwright Chromium is already installed")
@@ -85,6 +87,7 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     candidate = require_clean_candidate(root)
     evidence_dir = args.evidence_dir if args.evidence_dir.is_absolute() else root / args.evidence_dir
+    upstream_path = evidence_dir / "upstream.json"
     target_path = evidence_dir / "target.json"
     ui_path = evidence_dir / "ui-report.json"
     verdict_path = evidence_dir / "SEALED.json"
@@ -99,6 +102,24 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
         env["HWS_SEAL_PROVIDER"] = args.provider
     if args.model:
         env["HWS_SEAL_MODEL"] = args.model
+
+    # Gate 0: official upstream semantics. No install/browser/model work should
+    # happen if the pinned Hermes revision still lacks a release-blocking SDK
+    # contract such as route-scoped exclusive Dashboard shell takeover.
+    upstream_gate = [
+        sys.executable,
+        "scripts/seal_upstream_gate.py",
+        "--evidence",
+        str(upstream_path),
+        "--cache-dir",
+        str(evidence_dir / "upstream" / "hermes"),
+    ]
+    if args.hermes_root:
+        upstream_gate.extend(["--hermes-root", str(args.hermes_root)])
+    run(upstream_gate, cwd=root, env=env)
+    upstream = load_json(upstream_path)
+    if upstream.get("ok") is not True:
+        raise SealCloseError("official Hermes upstream contract evidence is not green")
 
     if not args.skip_install:
         run(["bash", "scripts/install.sh"], cwd=root, env=env)
@@ -155,6 +176,8 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
             str(target_path),
             "--ui",
             str(ui_path),
+            "--upstream",
+            str(upstream_path),
             "--candidate",
             candidate,
             "--write",
