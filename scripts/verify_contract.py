@@ -3,7 +3,8 @@
 
 Studio is a product shell over documented Hermes contracts. The seal fails if a
 second runtime/model registry appears, the native Dashboard becomes unreachable,
-structured Run input is flattened, or product lifecycle controls disappear.
+structured Run input is flattened, product lifecycle controls disappear, or the
+Context/Plan UI starts inventing state outside Hermes.
 """
 from __future__ import annotations
 
@@ -45,8 +46,8 @@ if manifest.get("tab", {}).get("override") != "/":
     fail("Worker Studio 3 must own only product home '/' so native /sessions remains reachable")
 if manifest.get("tab", {}).get("path") != "/worker-studio":
     fail("dashboard product route must remain /worker-studio")
-if manifest.get("entry") != "dist/index-v3.js" or manifest.get("css") != "dist/product.css":
-    fail("dashboard manifest must point at product v3 UI assets")
+if manifest.get("entry") != "dist/index-v3.js" or manifest.get("css") != "dist/product-sealed.css":
+    fail("dashboard manifest must point at sealed product v3 UI assets")
 if manifest.get("api") != "plugin_api_v3.py":
     fail("dashboard manifest must point at the structured-input preserving v3 bridge")
 if manifest.get("slots") != ["header-left"]:
@@ -103,10 +104,16 @@ for token in (
     'raw_input: Any = body.get("input")', '"input": raw_input',
     '@router.post("/hermes/runs-v3")', '_legacy._hermes_proxy',
     '"/v1/runs"', '"multimodal_runs": True',
+    '@router.get("/hermes/sessions/{session_id}/context")',
+    'context_window_tokens', 'compression_threshold_tokens', 'tokens_until_compression',
+    'cumulative accounting buckets', '"run_projection": "context.snapshot"',
 ):
-    require(bridge3, token, "v3 Runs bridge")
+    require(bridge3, token, "v3 Runs/context bridge")
 if 'str(body.get("message") or body.get("input")' in bridge3:
     fail("v3 Runs bridge flattens structured input")
+for forbidden_context_fallback in ('payload.get("input_tokens")', 'payload.get("prompt_tokens")', 'payload.get("total_tokens")'):
+    if forbidden_context_fallback in bridge3:
+        fail(f"context bridge reintroduced billing-token fallback: {forbidden_context_fallback}")
 
 frontend = read("dashboard/dist/index-v3.js")
 for token in (
@@ -119,9 +126,12 @@ for token in (
     "jinit('PATCH', { archived:", "jinit('DELETE')", "titleFromPrompt",
     "Date.now().toString(36)", "/api/model/options", "/api/providers/custom-endpoints",
     "/activate", "/hermes/model-probe", "/hermes/runs-v3", "/steer", "/stop",
-    "/approval", "官方计划", "todo", "Hermes Skills 变化", "unattended_restore",
-    "subagent_auto_approve", "Hardline Blocklist", "auxiliary.review",
-    "delegation.reasoning_effort", "onPaste", "onDrop", "Ctrl/Cmd+V 粘贴图片",
+    "/approval", "官方计划", "已完成 ${completed} / ${items.length}", "hws3-plan-summary",
+    "todo", "Hermes Skills 变化", "unattended_restore", "subagent_auto_approve",
+    "Hardline Blocklist", "auxiliary.review", "delegation.reasoning_effort", "onPaste",
+    "onDrop", "Ctrl/Cmd+V 粘贴图片", "ContextMeter", "officialContextTelemetry",
+    "context.compaction", "context.snapshot", "正在压缩上下文", "上下文已压缩",
+    "不会把累计 billing/input token 当成当前上下文",
 ):
     require(frontend, token, "product frontend")
 
@@ -148,7 +158,14 @@ elif "Keys" in primary_nav_match.group(1) or "Providers" in primary_nav_match.gr
 
 css = read("dashboard/dist/product.css")
 for token in ("@media(max-width:820px)", "env(safe-area-inset-bottom)", ".hws3-mobile-scrim", ".hws3-composer", ".hws3-plan-card", ".hws3-return-slot"):
-    require(css, token, "product CSS")
+    require(css, token, "product base CSS")
+sealed_css = read("dashboard/dist/product-sealed.css")
+for token in (
+    '@import url("./product.css");', '.hws3-context-meter', '.hws3-context-popover',
+    '.hws3-plan-summary', '@keyframes hws3-context-spin', '@media(max-width:540px)',
+    '@media(prefers-reduced-motion:reduce)', 'env(safe-area-inset-bottom)',
+):
+    require(sealed_css, token, "sealed context/plan CSS")
 
 # Branding is sealed by reuse of the official same-origin Hermes Web favicon,
 # not by maintaining a second Studio-owned mark. The source bundle stays
@@ -160,8 +177,9 @@ for token in (
     "const href = baseHref('/favicon.ico');",
     "official Hermes Dashboard /favicon.ico",
     "could not locate the unique Product 3 favicon assignment",
+    "dashboard/dist/product-sealed.css",
 ):
-    require(installer, token, "official Hermes branding installer")
+    require(installer, token, "official Hermes branding/product installer")
 if 'cp "$ROOT/dashboard/assets/favicon.svg"' in installer:
     fail("installer still ships an independent Worker Studio favicon")
 if (ROOT / "dashboard" / "assets" / "favicon.svg").exists():
@@ -174,7 +192,7 @@ legacy_app_server = "Codex" + " App Server"
 runtime_paths = [
     "plugin.yaml", "__init__.py", "schemas.py", "tools.py", "dashboard/manifest.json",
     "dashboard/plugin_api.py", "dashboard/plugin_api_v3.py", "dashboard/dist/index-v3.js",
-    "deploy/worker-studio.env.example", "scripts/install.sh",
+    "dashboard/dist/product-sealed.css", "deploy/worker-studio.env.example", "scripts/install.sh",
 ]
 for path in runtime_paths:
     text = read(path)
@@ -208,4 +226,4 @@ if errors:
         print(f"  - {item}", file=sys.stderr)
     raise SystemExit(1)
 
-print("Archive/product contract passed: Hermes remains the sole execution/model/policy upstream and the v3 product shell is closed.")
+print("Archive/product contract passed: Hermes remains the sole execution/model/context/policy upstream and the v3 product shell is closed.")
