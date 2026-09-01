@@ -1,107 +1,99 @@
 # Final Seal Checklist — Product 3
 
-`SEAL_ACCEPTANCE.md` is the canonical release contract. This file is a diagnostic checklist for operators; it must not introduce extra unrecorded release gates.
+`SEAL_ACCEPTANCE.md` is canonical. This checklist is diagnostic only.
 
-## 1. Exact candidate
+## 1. Exact candidate + official upstream
 
-- [ ] `git status --porcelain --untracked-files=no` is empty.
-- [ ] `git rev-parse HEAD` is the intended PR head.
-- [ ] PR CI is green for that exact SHA.
-- [ ] `tests/upstream-lock.json` contains only the pinned Hermes runtime upstream.
-- [ ] pinned-upstream verification still proves Session resume, arbitrary attachment, no-wait input-response and Dashboard return-slot contracts.
+- [ ] tracked working tree is clean;
+- [ ] current SHA is the intended PR head;
+- [ ] exact-head CI is green;
+- [ ] `tests/upstream-lock.json` contains only Hermes as runtime upstream;
+- [ ] baseline pinned-upstream verification passes;
+- [ ] `dashboard_route_scoped_exclusive_shell.required_for_seal=true` remains pinned;
+- [ ] `scripts/verify_required_upstream_contracts.py` passes against that exact official Hermes commit;
+- [ ] upstream issue `NousResearch/hermes-agent#100149` is resolved by the pinned official contract (or superseded by an equivalent documented contract reviewed with the pin bump).
 
-## 2. One-command target closure
+If the exclusive-shell verifier is red, status is **ARCHIVE CANDIDATE**, never SEALED.
 
-On the real Hermes target run:
+## 2. One-command closure
 
 ```bash
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
 
-If protected, export `API_SERVER_KEY`. Optional `--provider` / `--model` can pin the real model route.
+The command must produce:
 
-The command must exit 0 and produce:
-
+- `.seal/upstream.json`
 - `.seal/target.json`
 - `.seal/ui-report.json`
 - `.seal/playwright-artifacts/`
 - `.seal/SEALED.json`
 
-`SEALED.json` must contain the exact current `candidate_sha` and `eligible: true`.
+There is no upstream-contract skip flag.
 
-## 3. What target.json proves
+## 3. upstream.json
 
-- [ ] running Product 3 `/product-capabilities` reports the exact installed candidate SHA;
+- [ ] schema is `hermes-worker-studio.upstream-gate.v1`;
+- [ ] `ok=true`;
+- [ ] repository is `NousResearch/hermes-agent`;
+- [ ] commit equals `tests/upstream-lock.json`;
+- [ ] `dashboard_route_scoped_exclusive_shell.verified=true`.
+
+## 4. target.json
+
+- [ ] running Product 3 reports exact candidate SHA;
 - [ ] execution plane is Hermes `official_runs`;
 - [ ] Worker plane is `PluginContext.subagent_lifecycle`;
-- [ ] model catalog is Hermes `/api/model/options`;
-- [ ] temporary Session create → rename → archive → unarchive → delete completes;
-- [ ] real Hermes model Run reaches `completed`;
-- [ ] final marker is verified;
-- [ ] Hermes canonical todo has at least 3 monotonic persisted revisions;
-- [ ] an `in_progress` state occurred;
-- [ ] final todo has at least 3 items and all are `completed`;
-- [ ] Studio Run projection contains real `todo.updated` or `todo.snapshot` evidence.
+- [ ] model catalog is `/api/model/options`;
+- [ ] Session create -> rename -> archive -> unarchive -> delete completes;
+- [ ] real model Run completes and marker verifies;
+- [ ] canonical todo has >=3 monotonic persisted revisions, an in-progress phase and all-final-completed state;
+- [ ] Studio projection contains canonical todo evidence.
 
-## 4. What ui-report.json proves
+## 5. ui-report.json — product takeover
 
-- [ ] desktop Chromium Product 3 shell passes;
-- [ ] Pixel 7 mobile-emulation Product 3 shell passes;
-- [ ] composer stays inside viewport and has no horizontal overflow;
-- [ ] installed picker is arbitrary-file (`添加文件`) rather than image-only;
-- [ ] browser capability surface reports `image.attach_bytes`, `pdf.attach`, `file.attach`;
-- [ ] browser capability surface reports `session.resume(close_on_disconnect=false)`;
-- [ ] browser capability surface includes official no-wait responders such as `clarify.respond` and `mcp.setup.respond`;
-- [ ] Hermes 会话 / 技能 / 插件 / MCP / 自动化 are visible native destinations;
-- [ ] Full Access explains automatic Skip/Decline and Hardline remains visible;
-- [ ] mobile drawer/touch shell is usable;
-- [ ] native `/sessions` exposes at least one `← Worker Studio` return path and returns to `/`;
-- [ ] no failed, timed-out or interrupted Playwright result exists.
+On `/`:
 
-Mounted Node/JSDOM CI separately proves behavior-heavy flows: lazy session creation, Session CRUD, mixed image/PDF/file staging, returned `@file:` propagation, durable WebSocket reconnect/runtime rebinding, Stop/Steer/approval wiring, official plan rendering, Full Access no-wait input handling and enable/restore, Custom Endpoint CRUD and model probes.
+- [ ] only Worker Studio product navigation is visible normally;
+- [ ] `HERMES_PRIMARY` release navigation is empty;
+- [ ] Sessions / Cron / Skills / Plugins / MCP / Profiles / Analytics / Logs / Config are only under `高级 · Hermes Dashboard`;
+- [ ] total native-route link counts equal the counts inside Advanced — no second Hermes shell navigation exists anywhere else in the DOM;
+- [ ] composer is usable, arbitrary-file picker is installed and there is no horizontal overflow;
+- [ ] Gateway marker reports arbitrary attachments, durable resume and no-wait input responders;
+- [ ] desktop Chromium and Pixel 7 projects pass.
 
-## 5. Runtime closure
+On native `/sessions`:
 
-- [ ] browser WebSocket is transport only; durable Hermes Session is authoritative;
-- [ ] `session.resume` uses `close_on_disconnect=false`;
-- [ ] socket loss becomes `reconnecting`, never immediate `interrupted`;
-- [ ] reconnect obtains a fresh authenticated WS URL and rebinds the live runtime;
-- [ ] image → `image.attach_bytes`;
-- [ ] PDF → `pdf.attach`;
-- [ ] generic file → `file.attach` and returned `@file:` is passed to the prompt;
-- [ ] picker / paste / drag-drop share the arbitrary-file path;
-- [ ] Full Access approval/clarify/MCP/sudo/secret/terminal waits resolve through official Hermes response contracts;
-- [ ] unavailable credentials/MFA may fail the task but must not leave Studio indefinitely parked waiting for its own UI.
+- [ ] normal Hermes shell/navigation returns;
+- [ ] at least one `← Worker Studio` official slot is visible and works back to `/`.
 
-## 6. Architecture/security invariants
+## 6. Runtime closure
 
-- [ ] no second execution service is required;
-- [ ] no private Hermes `AIAgent`/delegate implementation is imported;
-- [ ] no direct Hermes SQLite/state access;
-- [ ] browser bundle contains no API Server bearer secret;
-- [ ] remote Hermes API bridge remains opt-in;
-- [ ] Hermes Hardline Blocklist remains authoritative;
-- [ ] model/reasoning capabilities are not guessed;
-- [ ] installed favicon reuses official Hermes Web `/favicon.ico`;
-- [ ] installer does not patch Hermes core files.
+- [ ] WebSocket is transport only; durable Session is authoritative;
+- [ ] `session.resume(close_on_disconnect=false)`;
+- [ ] disconnect -> reconnecting -> fresh authenticated socket -> resume/rebind;
+- [ ] image -> `image.attach_bytes`;
+- [ ] PDF -> `pdf.attach`;
+- [ ] generic file -> `file.attach` + returned `@file:` ref;
+- [ ] picker / paste / drag-drop use one file path;
+- [ ] Full Access sets Hermes `approvals.mode=off`, headless approval modes to approve and subagent auto-approval;
+- [ ] approval auto-resolves, Clarify skips, MCP setup declines, unavailable sudo/secret/terminal input cancels immediately;
+- [ ] missing credentials/MFA may fail the task but never leave Studio waiting indefinitely;
+- [ ] Hermes Hardline Blocklist remains authoritative.
 
-## 7. Four modes
+## 7. Architecture/security
 
-- `OFFICIAL`: Studio-managed worker delegation sleeps; Hermes native defaults remain authoritative.
-- `AUTO`: Main may use Hermes child agents through public lifecycle.
-- `WORKER`: wire=`DELEGATE`; same Hermes runtime, orchestration-emphasized UX.
-- `MAIN`: Hermes `pre_tool_call` blocks new `delegate_task` and `worker_delegate` launches.
-
-Unknown mode must fail closed.
+- [ ] no second runtime/model/planner/tokenizer;
+- [ ] no private `AIAgent`/delegation implementation import;
+- [ ] no direct Hermes database access;
+- [ ] no browser bearer secret;
+- [ ] no Hermes core patch or DOM/CSS navigation monkey-hack;
+- [ ] official Hermes favicon is reused.
 
 ## 8. Final decision
-
-Re-run the independent verifier if needed:
 
 ```bash
 python scripts/verify_seal_evidence.py
 ```
 
-Only when exact-head CI is green **and** `.seal/SEALED.json` says `eligible: true` for that same SHA may PR #4 be marked Ready / `SEALED` and merged.
-
-If real-target evidence is unavailable, the correct status is **ARCHIVE CANDIDATE**, never SEALED.
+`SEALED.json` must be `eligible=true`, name the exact Worker Studio candidate, and record the exact verified Hermes upstream commit. Only then may PR #4 become Ready and merge.
