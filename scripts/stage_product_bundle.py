@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministically widen the Product 3 composer for pinned Hermes attachments.
+"""Deterministically stage Product 3 UI for pinned Hermes product contracts.
 
 The supported installer runs this transform on its temporary copy only. Every
 substitution is exact-count checked so source drift fails closed instead of
@@ -19,6 +19,17 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def stage_bundle(text: str) -> str:
+    # Promote the most useful native Hermes destinations into the visible
+    # product rail. Less-frequent operational pages stay under Advanced.
+    text = replace_once(
+        text,
+        "  const HERMES_PRIMARY = [\n    ['/skills', '技能', '◇'],\n    ['/plugins', '插件', '⬡'],\n    ['/mcp', 'MCP', '⌘'],\n  ];\n  const HERMES_ADVANCED = [\n    ['/sessions', '原生 Dashboard · 会话'],\n    ['/cron', '自动化 / Cron'],",
+        "  const HERMES_PRIMARY = [\n    ['/sessions', 'Hermes 会话', '☷'],\n    ['/skills', '技能', '◇'],\n    ['/plugins', '插件', '⬡'],\n    ['/mcp', 'MCP', '⌘'],\n    ['/cron', '自动化', '◷'],\n  ];\n  const HERMES_ADVANCED = [",
+        "native Hermes navigation",
+    )
+
+    # Any-file composer. The Gateway wrapper owns the corresponding official
+    # image.attach_bytes / pdf.attach / file.attach staging semantics.
     text = replace_once(
         text,
         "  const MAX_IMAGE_BYTES = 25 * 1024 * 1024;",
@@ -66,6 +77,27 @@ def stage_bundle(text: str) -> str:
         "        for (const item of attachments) parts.push({ type: 'image_url', image_url: { url: item.dataUrl, detail: 'high' } });",
         "        for (const item of attachments) {\n          if (item.kind === 'image') parts.push({ type: 'image_url', image_url: { url: item.dataUrl, detail: 'high', name: item.name, mime_type: item.type, kind: 'image' } });\n          else parts.push({ type: 'file_url', file_url: { url: item.dataUrl, name: item.name, mime_type: item.type, kind: item.kind || 'file' } });\n        }",
         "mixed attachment Run payload",
+    )
+
+    # Product-copy disclosure for the no-wait Full Access semantics implemented
+    # by the Gateway wrapper. Hardline remains explicitly untouched.
+    text = replace_once(
+        text,
+        "像 ChatGPT“完全访问”一样简单，但底层仍是 Hermes 官方 approvals / delegation",
+        "像 ChatGPT“完全访问”一样直接；底层仍是 Hermes 官方 approvals / delegation / input RPCs",
+        "Full Access subtitle",
+    )
+    text = replace_once(
+        text,
+        "已关闭可配置的人机审批，并允许子代理自动批准。",
+        "审批自动放行；Clarify 等交互请求自动 Skip/Decline，不再等待人工；子代理自动批准。",
+        "Full Access no-wait disclosure",
+    )
+    text = replace_once(
+        text,
+        "完全访问不会修改、绕过或弱化 Hermes Hardline Blocklist。Studio 只控制 Hermes 本来就允许配置的审批项。",
+        "完全访问不会修改、绕过或弱化 Hermes Hardline Blocklist。缺少密码、MFA 或外部授权时会自动失败/继续可行路径，而不是无限等待用户。",
+        "Full Access permanent boundary",
     )
     return text
 
