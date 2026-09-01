@@ -47,9 +47,6 @@ class InstallScriptTests(unittest.TestCase):
             {
                 "HOME": str(self.home),
                 "HERMES_HOME": str(self.hermes_home),
-                # Keep the real host's /usr/local/bin/hermes out of this
-                # negative-path test; the fixture intentionally removes its
-                # only Hermes binary.
                 "PATH": str(self.bin) + os.pathsep + "/usr/bin:/bin",
             }
         )
@@ -71,6 +68,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("Installed:", result.stdout)
         self.assertIn("Candidate:", result.stdout)
         self.assertIn("official Hermes Dashboard /favicon.ico", result.stdout)
+        self.assertIn("Hermes official TUI Gateway JSON-RPC", result.stdout)
         dest = self._dest()
         expected = {
             "plugin.yaml",
@@ -80,6 +78,7 @@ class InstallScriptTests(unittest.TestCase):
             "dashboard/manifest.json",
             "dashboard/plugin_api.py",
             "dashboard/plugin_api_v3.py",
+            "dashboard/dist/gateway-native.js",
             "dashboard/dist/index-v3.js",
             "dashboard/dist/product.css",
             "dashboard/dist/product-sealed.css",
@@ -93,7 +92,23 @@ class InstallScriptTests(unittest.TestCase):
         self.assertNotIn("dashboard/dist/index.js", actual)
         self.assertNotIn("dashboard/dist/style.css", actual)
         manifest = json.loads((dest / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["entry"], "dist/gateway-native.js")
         self.assertEqual(manifest["css"], "dist/product-sealed.css")
+        gateway_js = (dest / "dashboard" / "dist" / "gateway-native.js").read_text(encoding="utf-8")
+        for token in (
+            "SDK.buildWsUrl('/api/ws')",
+            "'session.resume'",
+            "'prompt.submit'",
+            "'session.usage'",
+            "'session.context_breakdown'",
+            "'todo.updated'",
+            "'status.update'",
+            "'image.attach_bytes'",
+            "'session.steer'",
+            "'session.interrupt'",
+            "'approval.respond'",
+        ):
+            self.assertIn(token, gateway_js)
         sealed_css = (dest / "dashboard" / "dist" / "product-sealed.css").read_text(encoding="utf-8")
         self.assertIn('@import url("./product.css");', sealed_css)
         self.assertIn("hws3-context-meter", sealed_css)
@@ -141,6 +156,7 @@ class InstallScriptTests(unittest.TestCase):
         result = self._run()
         self.assertTrue(self._dest().is_dir())
         self.assertTrue((self._dest() / "dashboard" / "plugin_api_v3.py").is_file())
+        self.assertTrue((self._dest() / "dashboard" / "dist" / "gateway-native.js").is_file())
         self.assertTrue((self._dest() / "dashboard" / "dist" / "product-sealed.css").is_file())
         installed_js = (self._dest() / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
         self.assertIn("baseHref('/favicon.ico')", installed_js)
