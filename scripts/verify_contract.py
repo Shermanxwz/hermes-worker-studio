@@ -176,7 +176,7 @@ for token in (
     "registerSlot('hermes-worker-studio', 'header-left'",
     "← Worker Studio", "/api/sessions/search", "jinit('PATCH', { title:",
     "jinit('PATCH', { archived:", "jinit('DELETE')", "titleFromPrompt",
-    "Date.now().toString(36)", "/api/model/options", "/api/providers/custom-endpoints",
+    "GENERATED_TITLE_SUFFIX", "/api/model/options", "/api/providers/custom-endpoints",
     "/activate", "/hermes/model-probe", "/hermes/runs-v3", "/steer", "/stop",
     "/approval", "官方计划", "已完成 ${completed} / ${items.length}", "hws3-plan-summary",
     "todo", "Hermes Skills 变化", "unattended_restore", "subagent_auto_approve",
