@@ -99,8 +99,8 @@ aggregator, model registry, or credential store.
 
 Daily surface limits:
 
-- recent rail: 20 sessions;
-- current transcript: latest 80 messages;
+- recent rail: latest 10 sessions;
+- current transcript: latest 10 messages;
 - full history: 30 sessions/page;
 - full-history messages: 100/page.
 

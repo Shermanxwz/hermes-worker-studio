@@ -1,5 +1,7 @@
 # Hermes Worker Studio 3.0
 
+**项目介绍：** [中文](docs/PROJECT_INTRODUCTION.zh-CN.md) · [English](docs/PROJECT_INTRODUCTION.en-US.md)
+
 面向长期封存的 **Hermes 原生 Web 工作台**。项目只维护产品壳、官方能力编排与 UI 投影；不 fork Hermes、不 patch Hermes core、不读私有数据库、不 import 私有 `AIAgent` / delegation 实现，也不维护第二套 Worker runtime、planner、tokenizer、模型目录或 Provider 客户端。
 
 > 接管 UX，不接管 Hermes 内核。能由 Hermes 公共接口解决的能力，只通过 Hermes 公共合同接入。
