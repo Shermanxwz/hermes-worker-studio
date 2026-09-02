@@ -29,7 +29,7 @@ Mounted Product 3 tests cover:
 - Custom Endpoint validate/edit/activate/delete and URL normalization;
 - real model-probe route wiring;
 - Worker / Verifier route persistence;
-- official Hermes favicon release rewrite and installed candidate-SHA contract.
+- project mark through the official Hermes plugin static-asset route and installed candidate-SHA contract.
 
 ## Job: Pinned Hermes public contracts
 
@@ -44,7 +44,7 @@ Contract families:
 - sessions/search/archive/messages;
 - approvals/config;
 - Skills/Plugins/MCP;
-- official `web/public/favicon.ico` provenance.
+- pinned Hermes `web/public/favicon.ico` provenance for the upstream baseline (the Product 3 install uses its own plugin static project mark).
 
 ## Job: Hermes lifecycle + Runs + approvals + Plugin Doctor
 

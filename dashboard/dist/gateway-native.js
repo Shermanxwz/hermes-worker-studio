@@ -7,13 +7,37 @@
     return;
   }
 
+  // Hermes 0.20.6 can redirect `/` to `/sessions` before its plugin route
+  // finishes registering. Repair that one SPA transition at the plugin edge;
+  // the explicit marker is set only by Studio's Advanced link.
+  const ADVANCED_MARKER = 'hws3:advanced-hermes-dashboard';
+  const advancedNavigation = (() => { try { return sessionStorage.getItem(ADVANCED_MARKER) === '1'; } catch (_) { return false; } })();
+  const originalNavigation = performance.getEntriesByType('navigation')[0]?.name || '';
+  if (!advancedNavigation && ['/sessions', '/'].includes(window.location.pathname)) {
+    let originalPath = window.location.pathname;
+    try { originalPath = new URL(originalNavigation || window.location.href).pathname; } catch (_) {}
+    if (window.location.pathname === '/sessions' && (originalPath === '/' || originalPath === '/sessions')) {
+      history.replaceState(history.state, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  }
+
   const originalFetchJSON = SDK.fetchJSON.bind(SDK);
   const PLUGIN = '/api/plugins/hermes-worker-studio';
   const RUNS_V3 = `${PLUGIN}/hermes/runs-v3`;
+  const COMMANDS_CATALOG = `${PLUGIN}/hermes/commands`;
+  const SLASH_COMPLETE = `${PLUGIN}/hermes/slash-complete`;
+  const SLASH_EXEC = `${PLUGIN}/hermes/slash-exec`;
+  const SESSION_RECONCILE = `${PLUGIN}/hermes/session-reconcile`;
+  const SESSION_ATTACH = `${PLUGIN}/hermes/session-attach`;
   const runRoute = new RegExp(`^${PLUGIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/hermes/runs/([^/?]+)(?:/(steer|stop|approval))?(?:\\?after=(\\d+))?$`);
   const contextRoute = new RegExp(`^${PLUGIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/hermes/sessions/([^/?]+)/context$`);
 
   const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted', 'incomplete']);
+  // Contract marker for the official resume reconciliation path.  An idle
+  // snapshot is deliberately not emitted as this source's terminal event;
+  // the browser verifies it against official messages/lifecycle frames.
+  const RESUME_RECONCILIATION_SOURCE = 'hermes.gateway.session.resume_reconciliation';
   const runtimeByStored = new Map();
   const storedByRuntime = new Map();
   const runs = new Map();
@@ -107,6 +131,49 @@
   function eventData(payload) {
     return payload && typeof payload === 'object' ? payload : {};
   }
+  function payloadText(payload) {
+    const data = eventData(payload);
+    for (const key of ['delta', 'text', 'content', 'output_text']) {
+      if (typeof data[key] === 'string') return data[key];
+    }
+    return '';
+  }
+  function terminalErrorText(payload) {
+    const data = eventData(payload);
+    const status = String(data.status || data.state || '').trim().toLowerCase();
+    let value = data.error;
+    if (value == null && (status === 'error' || status === 'failed' || status === 'failure')) value = data.message || data.text;
+    if (value == null || value === '') return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'object') return String(value.message || value.error || value.detail || JSON.stringify(value));
+    return String(value);
+  }
+  function runtimeSelection(body) {
+    const provider = String(body?.provider || '').trim();
+    const model = String(body?.model || '').trim();
+    if (!provider && !model) return null;
+    if (!provider || !model) throw new Error('Hermes model selection requires both provider and model');
+    return { provider, model };
+  }
+  async function applyRuntimeSelection(gw, runtimeId, body) {
+    const selection = runtimeSelection(body);
+    if (!selection) return null;
+    // The browser model-lock REST contract persists the selection for the
+    // official API surface. The native Gateway session has its own live agent
+    // and must receive the same selection through Hermes' native config.set
+    // RPC before prompt.submit; otherwise a resumed session can silently fall
+    // back to the profile's provider (the MOA/default bug).
+    const value = `${selection.model} --provider ${selection.provider} --session`;
+    const result = await gw.request('config.set', {
+      session_id: runtimeId,
+      key: 'model',
+      value,
+    }, 60000);
+    if (result?.confirm_required) {
+      throw new Error(result.confirm_message || result.warning || 'Hermes requires confirmation for this model');
+    }
+    return result;
+  }
   function unwrapConfig(raw) {
     return raw?.config && typeof raw.config === 'object' ? raw.config : (raw && typeof raw === 'object' ? raw : {});
   }
@@ -138,16 +205,37 @@
     run.last_seq = row.seq;
     return row;
   }
+  function addGatewayEvent(run, event, data = {}, at = nowSec(), gatewaySeq = null) {
+    const seq = Number(gatewaySeq);
+    if (Number.isFinite(seq) && seq > 0) {
+      run.gateway_last_seq = Math.max(Number(run.gateway_last_seq) || 0, seq);
+    }
+    const row = addRunEvent(run, event, data, at);
+    if (Number.isFinite(seq) && seq > 0) row.gateway_seq = seq;
+    return row;
+  }
   function runPublic(run, after = 0) {
+    const ended = run.ended_at || (TERMINAL.has(run.status) ? nowSec() : null);
+    const measured = Number(run.elapsed_ms);
+    const elapsedMs = Number.isFinite(measured) && measured >= 0
+      ? measured
+      : Math.max(0, ((ended || nowSec()) - Number(run.started_at || nowSec())) * 1000);
     return {
       id: run.id,
       run_id: run.id,
       session_id: run.storedSessionId,
       status: run.status,
       started_at: run.started_at,
-      ended_at: run.ended_at,
+      ended_at: run.ended_at || ended,
+      elapsed_ms: Math.round(elapsedMs),
+      elapsed_source: run.elapsed_source || (run.duration_s != null ? 'hermes.gateway.message.complete.duration_s' : 'hermes.gateway.lifecycle.clock'),
+      duration_s: run.duration_s ?? null,
       last_seq: run.last_seq,
+      gateway_last_seq: Number(run.gateway_last_seq) || 0,
+      gateway_replay_epoch: run.gateway_replay_epoch || null,
       events: run.events.filter((event) => event.seq > after),
+      output: run.output || null,
+      error: run.error || null,
       source: 'hermes_gateway_jsonrpc',
       transport: 'official_gateway_websocket',
       reconnecting: run.status === 'reconnecting',
@@ -285,7 +373,7 @@
     return gatewayPromise;
   }
 
-  async function resumeStored(storedSessionId, { omitMessages = true } = {}) {
+  async function resumeStored(storedSessionId, { omitMessages = true, eagerBuild = false } = {}) {
     const stored = String(storedSessionId || '').trim();
     if (!stored) throw new Error('Hermes stored session id is required');
     const gw = await getGateway();
@@ -294,6 +382,7 @@
       source: 'hermes_browser',
       omit_messages: omitMessages,
       close_on_disconnect: false,
+      eager_build: eagerBuild,
     });
     const runtime = String(resumed?.session_id || '').trim();
     if (!runtime) throw new Error('Hermes Gateway did not return a runtime session id');
@@ -301,12 +390,193 @@
     if (resumed?.todo_state) seedTodoForRuntime(runtime, resumed.todo_state);
     return { runtime, resumed };
   }
-  async function ensureRuntime(storedSessionId) {
+  async function ensureRuntime(storedSessionId, { eagerBuild = false } = {}) {
     const stored = String(storedSessionId || '').trim();
     if (!stored) throw new Error('Hermes stored session id is required');
     const existing = runtimeByStored.get(stored);
     if (existing) return existing;
-    return (await resumeStored(stored, { omitMessages: true })).runtime;
+    return (await resumeStored(stored, { omitMessages: true, eagerBuild })).runtime;
+  }
+
+  async function officialCommandsCatalog() {
+    const gw = await getGateway();
+    return gw.request('commands.catalog', {});
+  }
+
+  async function officialSlashComplete(body) {
+    const gw = await getGateway();
+    const sessionId = String(body?.session_id || '').trim();
+    return gw.request('complete.slash', { session_id: sessionId || undefined, text: String(body?.text || '') });
+  }
+
+  async function officialSlashExec(body) {
+    const sessionId = String(body?.session_id || '').trim();
+    if (!sessionId) throw new Error('session_id is required for Hermes slash commands');
+    const runtimeId = await ensureRuntime(sessionId, { eagerBuild: true });
+    const gw = await getGateway();
+    if (body?.provider && body?.model) await applyRuntimeSelection(gw, runtimeId, body);
+    return gw.request('slash.exec', { session_id: runtimeId, command: String(body?.command || '') }, 180000);
+  }
+
+  async function reconcileOfficialSession(body) {
+    const storedSessionId = String(body?.session_id || '').trim();
+    if (!storedSessionId) throw new Error('session_id is required for Hermes session reconciliation');
+    // This is deliberately the same official resume contract used by Run
+    // reconnects.  It asks Hermes whether the durable session is still live;
+    // the Studio projection is never treated as the source of truth for
+    // liveness after a browser refresh.
+    const { runtime, resumed } = await resumeStored(storedSessionId, { omitMessages: true });
+    const pendingApproval = resumed?.pending_approval && typeof resumed.pending_approval === 'object' ? resumed.pending_approval : null;
+    const pendingClarify = resumed?.pending_clarify && typeof resumed.pending_clarify === 'object' ? resumed.pending_clarify : null;
+    const running = resumed?.running === true;
+    const inflight = resumed?.inflight === true;
+    return {
+      session_id: storedSessionId,
+      runtime_session_id: runtime,
+      resumed_session_id: String(resumed?.resumed || storedSessionId),
+      active: running || inflight || Boolean(pendingApproval || pendingClarify),
+      running,
+      inflight,
+      pending_approval: pendingApproval,
+      pending_clarify: pendingClarify,
+      message_count: resumed?.message_count ?? null,
+      source: 'hermes.gateway.session.resume',
+      checked_at: nowSec(),
+    };
+  }
+
+  function replayFramesForRun(result, lastSeen) {
+    const frames = Array.isArray(result?.events) ? result.events.filter((frame) => frame && typeof frame === 'object') : [];
+    const watermark = Number(lastSeen) || 0;
+    if (watermark > 0) return frames.filter((frame) => Number(frame.seq) > watermark);
+    // A newly attached page has no Gateway watermark yet.  The official
+    // replay ring can contain several earlier turns, so only replay the
+    // latest message lifecycle.  If Hermes has not emitted message.start yet
+    // the resumed snapshot still keeps the run attached and live events will
+    // arrive through the re-bound WebSocket.
+    let latestStart = -1;
+    frames.forEach((frame, index) => { if (String(frame.type || '') === 'message.start') latestStart = index; });
+    return latestStart >= 0 ? frames.slice(latestStart) : [];
+  }
+
+  async function replayGatewayEvents(run, runtime, lastSeen = 0) {
+    const gw = await getGateway();
+    let replayFrom = Math.max(0, Math.floor(Number(lastSeen) || 0));
+    let result = await gw.request('session.events.since', {
+      session_id: runtime,
+      last_seen: replayFrom,
+    }, 30000);
+    // Hermes seq counters are process-local.  If the Dashboard Gateway was
+    // restarted while the browser was open, a stale high watermark would
+    // otherwise look like an empty healthy replay.  Reset only when the
+    // official latest seq proves the counter moved backwards.
+    if (Number(result?.latest_seq) >= 0 && Number(result.latest_seq) < Number(lastSeen || 0)) {
+      replayFrom = 0;
+      run.gateway_last_seq = 0;
+      result = await gw.request('session.events.since', { session_id: runtime, last_seen: 0 }, 30000);
+    }
+    const frames = replayFramesForRun(result, replayFrom);
+    if (result?.truncated) {
+      addRunEvent(run, 'transport.replay_gap', {
+        source: 'hermes.gateway.session.events.since',
+        last_seen: Number(lastSeen) || 0,
+        latest_seq: Number(result.latest_seq) || 0,
+        epoch: result.epoch || null,
+      });
+    }
+    if (result?.epoch) run.gateway_replay_epoch = String(result.epoch);
+    for (const frame of frames) {
+      onGatewayEvent({ ...frame, session_id: frame.session_id || runtime });
+    }
+    return { ...eventData(result), events: frames };
+  }
+
+  async function attachOfficialSession(body) {
+    const storedSessionId = String(body?.session_id || '').trim();
+    if (!storedSessionId) throw new Error('session_id is required for Hermes session attachment');
+    const requestedRunId = String(body?.run_id || '').trim();
+    const existing = requestedRunId ? runs.get(requestedRunId) : null;
+    if (existing) {
+      if (!TERMINAL.has(existing.status) && existing.storedSessionId) {
+        const previousRuntime = existing.runtimeId || null;
+        const { runtime, resumed } = await resumeStored(existing.storedSessionId, { omitMessages: false, eagerBuild: true });
+        existing.runtimeId = runtime;
+        if (runtime !== previousRuntime) {
+          addRunEvent(existing, 'transport.reconnected', {
+            source: 'hermes.gateway.session.resume',
+            previous_runtime: previousRuntime,
+            runtime,
+            restored: true,
+          });
+        }
+        await replayGatewayEvents(existing, runtime, Number(body?.gateway_last_seq) || 0);
+        await reconcileResumeSnapshot(existing, resumed, previousRuntime);
+        if (!TERMINAL.has(existing.status)) await refreshOfficialUsage(existing);
+      }
+      return { attached: true, active: !TERMINAL.has(existing.status), session_id: storedSessionId, run: runPublic(existing, 0), source: 'hermes.gateway.session.attach' };
+    }
+    const previousRuntime = runtimeByStored.get(storedSessionId) || null;
+    const { runtime, resumed } = await resumeStored(storedSessionId, { omitMessages: false, eagerBuild: true });
+    const lastSeen = Math.max(0, Math.floor(Number(body?.gateway_last_seq) || 0));
+    const run = {
+      id: requestedRunId || `gw_resume_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      storedSessionId,
+      runtimeId: runtime,
+      status: 'running',
+      started_at: Number(body?.started_at) || nowSec(),
+      turn_started_at: Number(body?.started_at) || null,
+      ended_at: null,
+      elapsed_ms: Number.isFinite(Number(body?.elapsed_ms)) ? Number(body.elapsed_ms) : null,
+      elapsed_source: String(body?.elapsed_source || ''),
+      duration_s: Number.isFinite(Number(body?.duration_s)) ? Number(body.duration_s) : null,
+      seq: Math.max(0, Math.floor(Number(body?.last_seq) || 0)),
+      last_seq: Math.max(0, Math.floor(Number(body?.last_seq) || 0)),
+      gateway_last_seq: lastSeen,
+      gateway_replay_epoch: null,
+      events: [],
+      approval: null,
+      promptAccepted: true,
+      baselineMessageCount: Number(resumed?.message_count ?? 0),
+      output: body?.output || null,
+      error: body?.error || null,
+    };
+    runs.set(run.id, run);
+    addRunEvent(run, 'transport.reconnected', {
+      source: 'hermes.gateway.session.resume',
+      previous_runtime: previousRuntime || null,
+      runtime,
+      restored: true,
+    });
+    const replay = await replayGatewayEvents(run, runtime, lastSeen);
+    const active = resumed?.running === true || resumed?.inflight === true
+      || Boolean(resumed?.pending_approval || resumed?.pending_clarify);
+    const hasTerminalReplay = replay.events.some((frame) => ['message.complete', 'error'].includes(String(frame?.type || '').toLowerCase()));
+    if (!active && !hasTerminalReplay) {
+      runs.delete(run.id);
+      return {
+        attached: false,
+        active: false,
+        session_id: storedSessionId,
+        runtime_session_id: runtime,
+        resumed_session_id: String(resumed?.resumed || storedSessionId),
+        replay_count: replay.events.length,
+        replay_truncated: Boolean(replay.truncated),
+        source: 'hermes.gateway.session.attach',
+      };
+    }
+    await reconcileResumeSnapshot(run, resumed, previousRuntime);
+    if (!TERMINAL.has(run.status)) await refreshOfficialUsage(run);
+    return {
+      attached: true,
+      active: !TERMINAL.has(run.status),
+      session_id: storedSessionId,
+      runtime_session_id: runtime,
+      resumed_session_id: String(resumed?.resumed || storedSessionId),
+      replay_count: replay.events.length,
+      replay_truncated: Boolean(replay.truncated),
+      run: runPublic(run, 0),
+      source: 'hermes.gateway.session.attach',
+    };
   }
 
   async function autoResolveInput(run, type, payload) {
@@ -382,13 +652,12 @@
     const active = resumed?.running === true || resumed?.inflight === true;
     if (active && !['waiting_for_approval', 'waiting_for_input'].includes(run.status)) run.status = 'running';
     if (!active && !pendingApproval && !pendingClarify && run.promptAccepted && !TERMINAL.has(run.status)) {
-      run.status = 'completed';
-      run.ended_at = nowSec();
-      addRunEvent(run, 'run.completed', {
-        source: 'hermes.gateway.session.resume_reconciliation',
-        previous_runtime: previousRuntime || null,
-        message_count: resumed?.message_count ?? (Array.isArray(resumed?.messages) ? resumed.messages.length : null),
-      });
+      // An idle resume is not a terminal event.  Hermes can report the
+      // session idle in the narrow commit/reconnect window before the official
+      // assistant row or `message.complete` frame is visible. Keep the run
+      // attached and let the browser's official message/liveness backstop
+      // decide whether it completed or is genuinely incomplete.
+      run.status = 'running';
     }
   }
 
@@ -401,6 +670,7 @@
       previous_runtime: previousRuntime || null,
       runtime,
     });
+    await replayGatewayEvents(run, runtime, Number(run.gateway_last_seq) || 0);
     await reconcileResumeSnapshot(run, resumed, previousRuntime);
     if (!TERMINAL.has(run.status)) await refreshOfficialUsage(run);
   }
@@ -456,20 +726,25 @@
     if (!runtime) return;
     const run = activeRunForRuntime(runtime);
     if (!run) return;
+    const gatewaySeq = Number(event?.seq);
+    if (Number.isFinite(gatewaySeq) && gatewaySeq > 0 && gatewaySeq <= (Number(run.gateway_last_seq) || 0)) return;
     const type = String(event.type || '');
     const payload = eventData(event.payload);
     const at = Number(event.timestamp || event.at || nowSec());
 
-    if (type === 'message.start') addRunEvent(run, 'run.message_started', payload, at);
-    else if (type === 'message.delta') addRunEvent(run, 'assistant.delta', payload, at);
-    else if (type === 'reasoning.available') addRunEvent(run, 'reasoning.available', payload, at);
-    else if (type === 'thinking.delta' || type === 'reasoning.delta') addRunEvent(run, type, payload, at);
-    else if (type === 'tool.start') addRunEvent(run, 'tool.started', payload, at);
-    else if (type === 'tool.progress') addRunEvent(run, 'tool.progress', payload, at);
-    else if (type === 'tool.complete') addRunEvent(run, 'tool.completed', payload, at);
-    else if (type === 'todo.updated') addRunEvent(run, 'todo.updated', payload, at);
+    if (type === 'message.start') {
+      run.turn_started_at = Number(payload.turn_started_at || run.turn_started_at || at) || at;
+      addGatewayEvent(run, 'run.message_started', payload, at, gatewaySeq);
+    }
+    else if (type === 'message.delta') addGatewayEvent(run, 'assistant.delta', payload, at, gatewaySeq);
+    else if (type === 'reasoning.available') addGatewayEvent(run, 'reasoning.available', payload, at, gatewaySeq);
+    else if (type === 'thinking.delta' || type === 'reasoning.delta') addGatewayEvent(run, type, payload, at, gatewaySeq);
+    else if (type === 'tool.start') addGatewayEvent(run, 'tool.started', payload, at, gatewaySeq);
+    else if (type === 'tool.progress') addGatewayEvent(run, 'tool.progress', payload, at, gatewaySeq);
+    else if (type === 'tool.complete') addGatewayEvent(run, 'tool.completed', payload, at, gatewaySeq);
+    else if (type === 'todo.updated') addGatewayEvent(run, 'todo.updated', payload, at, gatewaySeq);
     else if (['approval.request', 'clarify.request', 'mcp.setup.request', 'sudo.request', 'secret.request', 'terminal.read.request'].includes(type)) {
-      addRunEvent(run, type, payload, at);
+      addGatewayEvent(run, type, payload, at, gatewaySeq);
       if (type === 'approval.request') run.approval = payload;
       if (type === 'approval.request') run.status = 'waiting_for_approval';
       else run.status = 'waiting_for_input';
@@ -477,27 +752,41 @@
     } else if (type === 'status.update') {
       const kind = String(payload.kind || '').toLowerCase();
       if (kind === 'compacting' || kind === 'compacted') {
-        addRunEvent(run, 'context.compaction', { ...payload, kind, source: 'hermes.gateway.status.update' }, at);
+        addGatewayEvent(run, 'context.compaction', { ...payload, kind, source: 'hermes.gateway.status.update' }, at, gatewaySeq);
         if (kind === 'compacted') void refreshOfficialUsage(run);
       } else {
-        addRunEvent(run, 'status.update', payload, at);
+        addGatewayEvent(run, 'status.update', payload, at, gatewaySeq);
       }
     } else if (type === 'session.usage') {
-      addRunEvent(run, 'context.snapshot', { ...payload, compression_count: payload.compressions, source: 'hermes.gateway.session.usage' }, at);
-    } else if (type.startsWith('subagent.') || type.startsWith('delegation.')) addRunEvent(run, type, payload, at);
+      addGatewayEvent(run, 'context.snapshot', { ...payload, compression_count: payload.compressions, source: 'hermes.gateway.session.usage' }, at, gatewaySeq);
+    } else if (type.startsWith('subagent.') || type.startsWith('delegation.')) addGatewayEvent(run, type, payload, at, gatewaySeq);
     else if (type === 'error') {
       run.status = 'failed';
-      run.ended_at = nowSec();
-      addRunEvent(run, 'run.failed', payload, at);
+      run.ended_at = at || nowSec();
+      run.error = terminalErrorText(payload) || 'Hermes Gateway returned an error';
+      addGatewayEvent(run, 'run.failed', payload, at, gatewaySeq);
       void refreshOfficialUsage(run);
     } else if (type === 'message.complete') {
-      addRunEvent(run, 'message.complete', payload, at);
-      run.status = 'completed';
-      run.ended_at = nowSec();
-      addRunEvent(run, 'run.completed', { source: 'hermes.gateway.message.complete' }, at);
+      addGatewayEvent(run, 'message.complete', payload, at, gatewaySeq);
+      const terminalError = terminalErrorText(payload);
+      if (terminalError) run.error = terminalError;
+      if (!terminalError) run.output = payloadText(payload) || run.output || null;
+      run.status = terminalError ? 'failed' : 'completed';
+      run.ended_at = at || nowSec();
+      const durationSeconds = Number(payload.duration_s);
+      if (Number.isFinite(durationSeconds) && durationSeconds >= 0) {
+        run.duration_s = durationSeconds;
+        run.elapsed_ms = Math.round(durationSeconds * 1000);
+        run.elapsed_source = 'hermes.gateway.message.complete.duration_s';
+      } else if (Number.isFinite(run.turn_started_at) && at >= run.turn_started_at) {
+        run.elapsed_ms = Math.round((at - run.turn_started_at) * 1000);
+        run.elapsed_source = 'hermes.gateway.message.lifecycle.timestamps';
+      }
+      if (terminalError) addRunEvent(run, 'run.failed', { ...payload, error: terminalError, source: 'hermes.gateway.message.complete' }, at);
+      else addRunEvent(run, 'run.completed', { source: 'hermes.gateway.message.complete' }, at);
       void refreshOfficialUsage(run);
     } else {
-      addRunEvent(run, type, payload, at);
+      addGatewayEvent(run, type, payload, at, gatewaySeq);
     }
   }
 
@@ -536,6 +825,7 @@
     const { runtime: runtimeId, resumed } = await resumeStored(storedSessionId, { omitMessages: true });
     const parsed = parseStudioInput(body?.input);
     const gw = await getGateway();
+    await applyRuntimeSelection(gw, runtimeId, body);
     const fileRefs = await stageAttachments(gw, runtimeId, parsed.attachments);
 
     const run = {
@@ -547,6 +837,8 @@
       ended_at: null,
       seq: 0,
       last_seq: 0,
+      gateway_last_seq: 0,
+      gateway_replay_epoch: null,
       events: [],
       approval: null,
       promptAccepted: false,
@@ -641,6 +933,11 @@
     if (url === RUNS_V3 && String(init?.method || 'GET').toUpperCase() === 'POST') {
       return startGatewayRun(jsonBody(init));
     }
+    if (url === COMMANDS_CATALOG && String(init?.method || 'GET').toUpperCase() === 'GET') return officialCommandsCatalog();
+    if (url === SLASH_COMPLETE && String(init?.method || 'GET').toUpperCase() === 'POST') return officialSlashComplete(jsonBody(init));
+    if (url === SLASH_EXEC && String(init?.method || 'GET').toUpperCase() === 'POST') return officialSlashExec(jsonBody(init));
+    if (url === SESSION_RECONCILE && String(init?.method || 'GET').toUpperCase() === 'POST') return reconcileOfficialSession(jsonBody(init));
+    if (url === SESSION_ATTACH && String(init?.method || 'GET').toUpperCase() === 'POST') return attachOfficialSession(jsonBody(init));
     const contextMatch = url.match(contextRoute);
     if (contextMatch) return getOfficialContext(decodeURIComponent(contextMatch[1]));
     const runMatch = url.match(runRoute);
@@ -654,7 +951,20 @@
   }
   function registerNativeReturnSlots() {
     const registry = window.__HERMES_PLUGINS__;
-    const React = SDK.React;
+  const React = SDK.React;
+  // Hermes 0.20.6 may perform its root redirect before the plugin route is
+  // mounted. Repair only that initial navigation at the plugin boundary;
+  // Advanced marks intentional native navigation and therefore remains native.
+  const ADVANCED_MARKER = 'hws3:advanced-hermes-dashboard';
+  const originalNavigation = performance.getEntriesByType('navigation')[0]?.name || '';
+  const advancedNavigation = (() => { try { return sessionStorage.getItem(ADVANCED_MARKER) === '1'; } catch (_) { return false; } })();
+  if (!advancedNavigation && ['/sessions', '/'].includes(window.location.pathname)) {
+    const originalPath = (() => { try { return new URL(originalNavigation || window.location.href).pathname; } catch (_) { return window.location.pathname; } })();
+    if (window.location.pathname === '/sessions' && (originalPath === '/' || originalPath === '/sessions')) {
+      history.replaceState(history.state, '', '/');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+  }
     if (!registry || typeof registry.registerSlot !== 'function' || !React?.createElement) return;
     const h = React.createElement;
     function NativeReturn() {
@@ -676,6 +986,8 @@
     protocol: 'tui_gateway_jsonrpc_websocket',
     chat: 'prompt.submit',
     reconnect: 'session.resume(close_on_disconnect=false)',
+    session_attach: 'session.resume + session.events.since',
+    event_replay: 'session.events.since',
     context: ['session.usage', 'session.context_breakdown'],
     compact: ['status.update:compacting', 'status.update:compacted'],
     plan: 'todo.updated',

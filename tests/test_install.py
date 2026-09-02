@@ -67,7 +67,7 @@ class InstallScriptTests(unittest.TestCase):
         result = self._run()
         self.assertIn("Installed:", result.stdout)
         self.assertIn("Candidate:", result.stdout)
-        self.assertIn("official Hermes Dashboard /favicon.ico", result.stdout)
+        self.assertIn("project mark via Hermes official plugin static assets", result.stdout)
         self.assertIn("Hermes official TUI Gateway JSON-RPC", result.stdout)
         self.assertIn("arbitrary attachments", result.stdout)
         self.assertIn("WebSocket reconnects resume durable Hermes Sessions", result.stdout)
@@ -82,6 +82,7 @@ class InstallScriptTests(unittest.TestCase):
             "dashboard/plugin_api_v3.py",
             "dashboard/dist/gateway-native.js",
             "dashboard/dist/index-v3.js",
+            "dashboard/dist/project-mark.png",
             "dashboard/dist/product.css",
             "dashboard/dist/product-sealed.css",
         }
@@ -125,7 +126,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("hws3-file-icon", sealed_css)
         self.assertIn("prefers-reduced-motion", sealed_css)
         installed_js = (dest / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
-        self.assertIn("const href = baseHref('/favicon.ico');", installed_js)
+        self.assertIn("PROJECT_MARK_PATH", installed_js)
+        self.assertIn("project-mark.png", installed_js)
         self.assertNotIn("const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;", installed_js)
         self.assertIn("const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;", installed_js)
         self.assertIn("title: '添加文件'", installed_js)
@@ -176,7 +178,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertTrue((self._dest() / "dashboard" / "dist" / "gateway-native.js").is_file())
         self.assertTrue((self._dest() / "dashboard" / "dist" / "product-sealed.css").is_file())
         installed_js = (self._dest() / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
-        self.assertIn("baseHref('/favicon.ico')", installed_js)
+        self.assertIn("PROJECT_MARK_PATH", installed_js)
         self.assertIn("type: 'file_url'", installed_js)
         installed_bridge = (self._dest() / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
         self.assertNotIn('BUILD_CANDIDATE_SHA = "source-tree"', installed_bridge)

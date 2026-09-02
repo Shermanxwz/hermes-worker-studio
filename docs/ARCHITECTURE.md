@@ -23,6 +23,7 @@ Official Hermes Web Dashboard
           ├─ header-left slot                 native-page return
           ├─ Sessions/history/search/archive  Hermes /api/sessions/*
           ├─ Models/Custom Endpoints          Hermes model/options + custom-endpoints
+          ├─ MOA                            Hermes model/options + /api/model/moa
           ├─ Config/Full Access               Hermes /api/config
           └─ Conversation execution           Hermes /v1/runs
                                                ├─ status/events
@@ -39,7 +40,7 @@ There is no execution hop outside Hermes.
 
 ## 3. Dashboard ownership
 
-Product 3 owns only `/`. Native `/sessions` and the rest of Hermes Dashboard remain intact and are linked under Advanced. Native pages render the official `header-left` slot with `← Worker Studio`.
+Product 3 owns only `/`. The Studio Advanced entry links directly to native `/sessions`; Hermes owns the native shell/sidebar and therefore future Hermes navigation additions. On the Studio root, a narrow, reversible host-shell compatibility layer suppresses the official outer sidebar/header because Hermes 0.20.6 has no public exclusive-shell contract; entering `/sessions` unmounts Studio and restores the native shell. Native pages render the official `header-left` slot with `← Worker Studio`.
 
 The plugin never patches Hermes Web source files. Product home ownership is declared in `dashboard/manifest.json`.
 
@@ -66,6 +67,17 @@ Unknown configuration fails closed.
 
 Canonical inventory is Hermes `/api/model/options`. Custom endpoint credentials/discovery use `/api/providers/custom-endpoints`.
 
+Custom endpoint route suffixes are normalized at the Studio form boundary and
+stored through Hermes' official Custom Endpoint contract. An explicit Hermes
+provider/model capability is used as-is. Hermes 0.20.6 keeps generic-provider
+transport at provider scope, so a mixed endpoint is handled only after the
+operator explicitly starts the Studio “official probe” or chooses a mode: the
+bridge makes up to two real Hermes `/v1/runs` calls, stores only bounded private
+routing state, and writes a hidden per-model compatibility Provider through
+Hermes `/api/config`. The source Provider remains unchanged. Unresolved or
+ambiguous models fail closed; Studio never guesses from a model name or URL and
+never probes while merely rendering the catalog.
+
 - Main: Session model lock / Run request provider+model.
 - Worker: Hermes `delegation.*`.
 - Verifier: Hermes `auxiliary.review.*`.
@@ -73,6 +85,15 @@ Canonical inventory is Hermes `/api/model/options`. Custom endpoint credentials/
 - Reasoning controls: explicit upstream metadata only; missing metadata => `Auto`.
 
 Studio never keeps a parallel model registry.
+
+MOA is a separate Studio sidebar surface rather than a section embedded in the
+Models page. Its provider/model selectors are populated from the same official
+`/api/model/options` response, so Hermes-discovered New API Custom Endpoint
+models and other configured models stay in one source of truth. Preset edits
+and native execution use Hermes' public `/api/model/moa`; immediately before a
+MOA Run, the bridge resolves any already-probed per-model compatibility aliases
+through the same official route. Studio does not implement a second
+aggregator, model registry, or credential store.
 
 ## 6. Sessions and bounded UI state
 
@@ -83,7 +104,11 @@ Daily surface limits:
 - full history: 30 sessions/page;
 - full-history messages: 100/page.
 
-Search/archive/session CRUD stay server-side through Hermes APIs.
+Search/archive/session CRUD stay server-side through Hermes APIs. Full-history
+FTS search is deliberately kept out of the bounded chat surface: a clicked
+Hermes search result loads the official message pages until the matching
+message is found, then highlights and scrolls to that message. The chat view
+continues to load only its latest 10 messages.
 
 Studio's Run event ring, UI projections and retained lifecycle handles are bounded/disposable. Authoritative state remains Hermes.
 
@@ -109,7 +134,7 @@ Hermes Hardline Blocklist remains authoritative and non-bypassable.
 
 The source bridge contains `BUILD_CANDIDATE_SHA = "source-tree"`. The supported atomic installer rewrites the **staged copy only** to the exact candidate SHA (`HWS_CANDIDATE_SHA` or current git HEAD). `/product-capabilities` exposes that loaded identity.
 
-The installer also rewrites the staged Product 3 favicon to same-origin `/favicon.ico`, reusing the official Hermes Web asset. No independent Studio favicon ships in the installed runtime.
+The installer copies the project mark through Hermes' official plugin static-asset route. No independent favicon or copied native navigation list ships in the installed runtime.
 
 This lets real-target evidence prove it is testing the same commit whose CI is green.
 

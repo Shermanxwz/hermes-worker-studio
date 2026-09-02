@@ -11,16 +11,21 @@ async function assertNoHorizontalOverflow(page) {
 }
 
 async function assertExclusiveProductHome(page) {
-  await expect(page.locator('.hws3-hermes-nav a')).toHaveCount(0);
-  const advanced = page.locator('.hws3-advanced');
-  await expect(advanced.locator('summary')).toContainText('高级 · Hermes Dashboard');
-  for (const suffix of ['/sessions', '/cron', '/skills', '/plugins', '/mcp', '/profiles', '/analytics', '/logs', '/config']) {
-    await expect(advanced.locator(`a[href$="${suffix}"]`)).toHaveCount(1);
+  // Hermes 0.20.6 has no public exclusive-shell field, so the installed
+  // preview uses a narrow host-shell compatibility layer. If the official
+  // shell is present in the DOM, it must not be visible on the Studio root.
+  for (const selector of ['#app-sidebar', '#app-sidebar + div > header', '#root > [data-layout-variant] > header']) {
+    const hostShell = page.locator(selector);
+    if (await hostShell.count()) await expect(hostShell).toBeHidden();
   }
-  for (const suffix of ['/sessions', '/skills', '/plugins', '/mcp', '/config']) {
-    const allNativeLinks = page.locator(`a[href$="${suffix}"]`);
-    const advancedLinks = advanced.locator(`a[href$="${suffix}"]`);
-    expect(await allNativeLinks.count(), `native Hermes shell leaked ${suffix} onto product home`).toBe(await advancedLinks.count());
+  await expect(page.locator('.hws3-advanced')).toHaveCount(0);
+  const nativeDashboard = page.locator('.hws3-native-dashboard-link');
+  await expect(nativeDashboard).toHaveCount(1);
+  await expect(nativeDashboard).toHaveAttribute('href', /\/sessions$/);
+  await expect(nativeDashboard).toContainText('高级 · Hermes Dashboard');
+  await expect(page.locator('a[href$="/sessions"]:visible')).toHaveCount(1);
+  for (const suffix of ['/cron', '/skills', '/plugins', '/mcp', '/profiles', '/analytics', '/logs', '/config']) {
+    await expect(page.locator(`a[href$="${suffix}"]:visible`), `native Hermes navigation leaked ${suffix} onto product home`).toHaveCount(0);
   }
 }
 
@@ -85,7 +90,7 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
     await menu.click();
     await expect(page.locator('.hws3-mobile-scrim')).toBeVisible();
     await expect(page.locator('.hws3-nav').getByText('Worker', { exact: true })).toBeVisible();
-    await expect(page.locator('.hws3-advanced summary')).toContainText('高级 · Hermes Dashboard');
+    await expect(page.locator('.hws3-native-dashboard-link')).toContainText('高级 · Hermes Dashboard');
     await page.locator('.hws3-mobile-scrim').click();
     await expect(page.locator('.hws3-mobile-scrim')).toHaveCount(0);
   } else {

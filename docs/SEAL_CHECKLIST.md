@@ -55,7 +55,7 @@ There is no upstream-contract skip flag.
 On `/`:
 
 - [ ] only Worker Studio product navigation is visible normally;
-- [ ] `HERMES_PRIMARY` release navigation is empty;
+- [ ] Studio contains no copied Hermes navigation list; Advanced links directly to native `/sessions`;
 - [ ] Sessions / Cron / Skills / Plugins / MCP / Profiles / Analytics / Logs / Config are only under `高级 · Hermes Dashboard`;
 - [ ] total native-route link counts equal the counts inside Advanced — no second Hermes shell navigation exists anywhere else in the DOM;
 - [ ] composer is usable, arbitrary-file picker is installed and there is no horizontal overflow;
@@ -87,8 +87,9 @@ On native `/sessions`:
 - [ ] no private `AIAgent`/delegation implementation import;
 - [ ] no direct Hermes database access;
 - [ ] no browser bearer secret;
-- [ ] no Hermes core patch or DOM/CSS navigation monkey-hack;
-- [ ] official Hermes favicon is reused.
+- [ ] no Hermes core patch, copied native navigation, or fork;
+- [ ] the local preview's host-shell compatibility selectors are narrow, reversible, and are removed when Studio unmounts; the official exclusive-shell contract is still required for sealing;
+- [ ] the project mark is served through Hermes' official plugin static-asset route.
 
 ## 8. Final decision
 

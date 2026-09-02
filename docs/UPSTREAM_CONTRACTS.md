@@ -9,11 +9,12 @@ The project consumes only documented/public Hermes contracts. If a required feat
 Required contract:
 
 - Dashboard plugin manifest and `tab.override`;
+- route-scoped exclusive-shell contract when available (currently missing from the pinned revision; local fallback remains explicitly non-sealing);
 - official plugin registry;
 - `SDK.fetchJSON` / authenticated Dashboard API bridge;
 - plugin backend mounted under Hermes plugin API namespace.
 
-Studio overrides `/sessions` without patching Hermes Web.
+Studio overrides `/` without patching Hermes Web and enters native `/sessions` directly for all Hermes navigation.
 
 ## Plugin runtime
 

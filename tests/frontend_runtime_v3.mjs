@@ -51,11 +51,21 @@ let sessions = [
 const modelOptions = {
   provider: 'official',
   model: 'main-model',
-  providers: [{
-    slug: 'official', name: 'Official', authenticated: true, is_current: true,
-    models: ['main-model', 'worker-model'],
-    capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], context_window: 128000 }, 'worker-model': {} },
-  }],
+  providers: [
+    {
+      slug: 'official', name: 'Official', authenticated: true, is_current: true,
+      models: ['main-model', 'worker-model'],
+      capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], context_window: 128000 }, 'worker-model': {} },
+    },
+    { slug: 'moa', name: 'Mixture of Agents', authenticated: true, models: ['default'] },
+  ],
+};
+const moaConfig = {
+  default_preset: 'default', active_preset: '',
+  presets: { default: {
+    reference_models: [{ provider: 'official', model: 'main-model', enabled: true }],
+    aggregator: { provider: 'official', model: 'main-model' },
+  } },
 };
 
 function parseBody(init) { return init?.body ? JSON.parse(init.body) : null; }
@@ -64,10 +74,10 @@ function responseFor(url, init = {}) {
   const body = parseBody(init);
   calls.push({ url, method, body });
 
-  if (url === '/api/sessions?limit=20&offset=0&order=recent&archived=exclude') return { sessions: sessions.filter((s) => !s.archived), total: sessions.filter((s) => !s.archived).length };
-  if (url.startsWith('/api/sessions/search?')) return { results: sessions };
-  if (url === '/api/sessions/session-1/messages?limit=80&order=latest') return { messages: [{ id: 'm1', role: 'user', content: 'hello' }, { id: 'm2', role: 'assistant', content: 'hi' }] };
-  if (url === '/api/sessions/session-new/messages?limit=80&order=latest') return { messages: [{ id: 'nm1', role: 'assistant', content: 'persisted final' }] };
+  if (url === '/api/sessions?limit=10&offset=0&order=recent&archived=exclude') return { sessions: sessions.filter((s) => !s.archived), total: sessions.filter((s) => !s.archived).length };
+  if (url.startsWith('/api/sessions/search?')) return { results: [{ ...(sessions.find((s) => s.id === 'session-1') || { id: 'session-1', title: 'Conversation One' }), session_id: 'session-1', role: 'user', snippet: 'needle appears in the complete Hermes history' }] };
+  if (url === '/api/sessions/session-1/messages?limit=10&offset=0&order=latest') return { messages: [{ id: 'm1', role: 'user', content: 'hello' }, { id: 'm2', role: 'assistant', content: 'hi' }] };
+  if (url === '/api/sessions/session-new/messages?limit=10&offset=0&order=latest') return { messages: [{ id: 'nm1', role: 'assistant', content: 'persisted final' }] };
   if (url.startsWith('/api/sessions/') && method === 'PATCH') {
     const id = decodeURIComponent(url.split('/')[3]);
     patches.push({ id, body });
@@ -81,13 +91,15 @@ function responseFor(url, init = {}) {
     return { ok: true };
   }
   if (url.startsWith('/api/sessions?limit=30')) return { sessions, total: sessions.length };
-  if (url.startsWith('/api/sessions/') && url.includes('/messages?limit=100')) return { messages: [] };
+  if (url.startsWith('/api/sessions/session-1/messages?limit=100&offset=0&order=oldest')) return { total: 1, messages: [{ id: 'h1', role: 'user', content: 'needle appears in the complete Hermes history' }] };
+  if (url.startsWith('/api/sessions/') && url.includes('/messages?limit=100')) return { total: 0, messages: [] };
 
   if (url === '/api/config') {
     if (method === 'PUT') { config = body.config; return { ok: true }; }
     return { config };
   }
   if (url === '/api/model/options' || url === '/api/model/options?refresh=1') return modelOptions;
+  if (url === '/api/model/moa' && method === 'GET') return moaConfig;
   if (url === '/api/skills') return { skills: [{ name: 'base', enabled: true }] };
   if (url === '/api/providers/custom-endpoints') return { endpoints: [] };
 
@@ -171,11 +183,25 @@ function setValue(el, value) {
 }
 
 await waitFor(() => window.document.querySelectorAll('.hws3-recents .hws3-session-row').length === 2, 'initial recents');
-for (const label of ['对话', 'Worker', '模型', '完全访问', '完整历史']) assert.ok(byText('.hws3-nav button', label), `missing nav ${label}`);
-assert.ok(byText('.hws3-advanced a', '原生 Dashboard · 会话'));
+for (const label of ['对话', 'Worker', '模型', 'MOA', '完全访问', '完整历史']) assert.ok(byText('.hws3-nav button', label), `missing nav ${label}`);
+const nativeDashboardLink = byText('.hws3-native-dashboard-link', '高级 · Hermes Dashboard');
+assert.ok(nativeDashboardLink);
+assert.equal(nativeDashboardLink.getAttribute('href'), '/sessions');
+assert.equal(window.document.querySelector('.hws3-advanced'), null);
 assert.equal(window.document.title, 'Hermes Worker Studio');
 assert.ok(window.document.querySelector('link[data-hws-favicon]'));
+assert.ok(window.document.querySelector('.hws3-brand img[src*="project-mark.png"]'));
 assert.equal(window.document.getElementById('slot').textContent.trim(), '← Worker Studio');
+
+// MOA is an independent sidebar surface, not a duplicate section in Models.
+await click(byText('.hws3-nav button', 'MOA'));
+await waitFor(() => window.document.querySelector('.hws3-moa-page'), 'independent MOA page');
+assert.ok(byText('.hws3-moa-page', '选择参与模型'));
+assert.ok(window.document.querySelectorAll('.hws3-moa-slot-grid select').length >= 4);
+await click(byText('.hws3-nav button', '模型'));
+await waitFor(() => window.document.querySelector('.hws3-model-catalog'), 'models page without MOA panel');
+assert.equal(window.document.querySelector('.hws3-moa-page'), null);
+assert.equal(window.document.querySelector('.hws3-moa-panel'), null);
 
 // Mobile drawer state is real React state, not a CSS-only mock.
 await click(window.document.querySelector('.hws3-mobile-bar button[title="菜单"]'));
@@ -191,8 +217,7 @@ const composer = window.document.querySelector('.hws3-composer textarea');
 setValue(composer, 'Build a seal test');
 await act(async () => { window.document.querySelector('.hws3-composer').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); });
 await waitFor(() => latestRunBody?.session_id === 'session-new', 'first Run submission');
-assert.ok(createdTitle.startsWith('Build a seal test · '));
-assert.notEqual(createdTitle, 'New conversation');
+assert.equal(createdTitle, 'Build a seal test');
 assert.equal(latestRunBody.input, 'Build a seal test');
 await waitFor(() => byText('.hws3-plan-card', '官方计划'), 'official plan render');
 assert.match(window.document.querySelector('.hws3-plan-summary').textContent, /已完成 1 \/ 2/);
@@ -221,6 +246,17 @@ await waitFor(() => polls.get('run-2') >= 2, 'image run completion');
 // Open an existing session and exercise the complete official Session CRUD surface.
 await click([...window.document.querySelectorAll('.hws3-session-row')].find((el) => el.textContent.includes('Conversation One')));
 await waitFor(() => byText('.hws3-chat-title', 'Conversation One'), 'open existing session');
+assert.equal(window.document.querySelector('.hws3-chat-search'), null, 'content search belongs only to Complete History');
+await click(byText('.hws3-nav button', '完整历史'));
+const historySearch = window.document.querySelector('.hws3-history-search-label input');
+setValue(historySearch, 'needle');
+await waitFor(() => calls.some((x) => x.url.startsWith('/api/sessions/search?q=needle&limit=100')), 'official message FTS search');
+assert.ok(byText('.hws3-history-search-row', '消息命中'));
+await click(window.document.querySelector('.hws3-history-search-row .main'));
+await waitFor(() => window.document.querySelector('.hws3-history-hit-anchor.is-hit'), 'jump to complete-history message');
+assert.ok(window.document.querySelector('.hws3-history-hit-anchor.is-hit mark[data-search-match="true"]'));
+await click(byText('.hws3-nav button', '对话'));
+await waitFor(() => byText('.hws3-chat-title', 'Conversation One'), 'return to conversation after history search');
 await click(window.document.querySelector('.hws3-chat-actions button[title="重命名"]'));
 const renameInput = window.document.querySelector('.hws3-modal input');
 setValue(renameInput, 'Renamed Product Session');

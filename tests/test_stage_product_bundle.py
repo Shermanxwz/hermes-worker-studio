@@ -20,13 +20,12 @@ class ProductBundleStageTests(unittest.TestCase):
         self.assertIn("kind: item.kind || 'file'", staged)
         self.assertNotIn("accept: 'image/png,image/jpeg,image/webp,image/gif,image/bmp'", staged)
 
-        self.assertIn("const HERMES_PRIMARY = [];", staged)
-        self.assertIn("['/sessions', '会话 / Sessions']", staged)
-        self.assertIn("['/cron', '自动化 / Cron']", staged)
-        self.assertIn("['/skills', 'Skills']", staged)
-        self.assertIn("['/plugins', 'Plugins']", staged)
-        self.assertIn("['/mcp', 'MCP']", staged)
+        self.assertIn("hws3-native-dashboard-link", staged)
+        self.assertIn("href: baseHref('/sessions')", staged)
         self.assertIn("高级 · Hermes Dashboard", staged)
+        self.assertNotIn("const HERMES_PRIMARY = [];", staged)
+        self.assertNotIn("['/sessions', '会话 / Sessions']", staged)
+        self.assertNotIn("['/cron', '自动化 / Cron']", staged)
         self.assertNotIn("['/sessions', 'Hermes 会话', '☷']", staged)
         self.assertNotIn("['/cron', '自动化', '◷']", staged)
 

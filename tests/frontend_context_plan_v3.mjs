@@ -62,12 +62,12 @@ function contextPayload() {
 async function responseFor(url, init = {}) {
   const method = init.method || 'GET';
   const body = bodyOf(init);
-  if (url === '/api/sessions?limit=20&offset=0&order=recent&archived=exclude') return { sessions: [session], total: 1 };
+  if (url === '/api/sessions?limit=10&offset=0&order=recent&archived=exclude') return { sessions: [session], total: 1 };
   if (url === '/api/config') return { config };
   if (url === '/api/model/options') return modelOptions;
   if (url === '/api/skills') return { skills: [] };
   if (url === '/api/plugins/hermes-worker-studio/health') return { ok: true };
-  if (url === '/api/sessions/session-1/messages?limit=80&order=latest') return { messages: [{ id: 'm1', role: 'assistant', content: 'Ready.' }] };
+  if (url === '/api/sessions/session-1/messages?limit=10&offset=0&order=latest') return { messages: [{ id: 'm1', role: 'assistant', content: 'Ready.' }] };
   if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/context') return contextPayload();
   if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/model') return { ok: true };
   if (url === '/api/plugins/hermes-worker-studio/hermes/runs-v3') {
@@ -153,7 +153,7 @@ await click(window.document.querySelector('.hws3-plan-summary'));
 assert.match(window.document.querySelector('.hws3-plan-list').textContent, /Inspect official context/);
 assert.match(window.document.querySelector('.hws3-plan-list').textContent, /Verify desktop and mobile presentation/);
 await waitFor(() => window.document.querySelector('.hws3-context-meter')?.classList.contains('compacting'), 'official compact animation');
-assert.match(window.document.querySelector('.hws3-context-meter').textContent, /正在压缩上下文/);
+assert.match(window.document.querySelector('.hws3-context-popover').textContent, /Auto Compact 进行中/);
 await waitFor(() => pollCount >= 2, 'run completion');
 await waitFor(() => window.document.querySelector('.hws3-context-meter')?.textContent.includes('28K / 128K · 22%'), 'context restored after compact', 6000);
 assert.equal(latestRunBody.provider, 'official');

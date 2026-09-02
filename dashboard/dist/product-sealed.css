@@ -1,5 +1,10 @@
 @import url("./product.css");
 
+.hws3-root{width:100%;min-width:0;overflow:hidden}.hws3-main{min-width:0;overflow:hidden}.hws3-transcript,.hws3-page{min-width:0;max-width:100%}.hws3-composer-zone{position:relative;max-width:100%}
+.hws3-slash-menu{position:absolute;z-index:80;left:0;right:0;bottom:calc(100% + 8px);display:grid;max-height:min(46vh,360px);overflow:auto;padding:6px;border:1px solid rgba(58,168,151,.34);border-radius:12px;background:rgba(10,31,28,.98);box-shadow:0 18px 48px rgba(0,0,0,.38)}
+.hws3-slash-menu button{display:grid;gap:3px;padding:9px 10px;border:0;border-radius:8px;background:transparent;color:inherit;text-align:left;cursor:pointer}.hws3-slash-menu button:hover,.hws3-slash-menu button.active{background:rgba(58,168,151,.15)}.hws3-slash-menu strong{font-size:11px}.hws3-slash-menu small{color:var(--hws-muted);font-size:9px;line-height:1.4}
+.hws3-moa-session-list{display:grid;gap:6px}.hws3-moa-session-row{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;padding:9px;border:1px solid rgba(93,167,153,.16);border-radius:9px;background:rgba(7,21,19,.35);color:inherit;text-align:left;cursor:pointer}.hws3-moa-session-row:hover{border-color:rgba(58,168,151,.45);background:rgba(58,168,151,.09)}.hws3-moa-session-row>span:nth-child(2){min-width:0}.hws3-moa-session-row strong,.hws3-moa-session-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hws3-moa-session-row strong{font-size:11px}.hws3-moa-session-row small{margin-top:3px;color:var(--hws-muted);font-size:9px}.hws3-moa-session-row>span:last-child{color:var(--hws-muted);font-size:16px}
+
 /* Product 3 seal polish: presentation only. Runtime/context/plan truth stays Hermes-owned. */
 .hws3-chat-head{
   grid-template-columns:minmax(180px,1fr) minmax(0,auto) auto auto;
@@ -77,3 +82,91 @@
   .hws3-plan-progress i,.hws3-context-meter,.hws3-context-ring{transition:none!important}
   .hws3-context-meter.compacting .hws3-context-ring,.hws3-context-meter.compacted,.hws3-context-hero.compacting .hws3-context-hero-ring,.hws3-context-hero.compacting .hws3-context-hero-ring i{animation:none!important}
 }
+
+/* Native project mark and the direct hand-off to Hermes' own dashboard shell. */
+.hws3-mark img{width:100%;height:100%;display:block;object-fit:cover}.hws3-brand-link{display:inline-flex;border-radius:10px}.hws3-brand-link:focus-visible,.hws3-mobile-brand:focus-visible,.hws3-native-dashboard-link:focus-visible{outline:2px solid var(--hws-accent);outline-offset:2px}.hws3-brand-link:hover .hws3-mark{box-shadow:0 0 0 1px rgba(232,213,172,.55),0 0 22px rgba(58,168,151,.18)}.hws3-native-dashboard-link{font-weight:650!important;background:linear-gradient(90deg,rgba(58,168,151,.1),transparent)!important}.hws3-native-dashboard-link>span{font-size:15px}
+.hws3-reasoning-control{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:5px 8px;border:1px solid var(--hws-border);border-radius:9px;background:rgba(18,48,43,.7);color:var(--hws-muted);font-size:10px;white-space:nowrap}.hws3-reasoning-control input{width:66px;accent-color:var(--hws-teal);cursor:pointer}.hws3-reasoning-control b{min-width:31px;color:var(--hws-text);font-size:10px;font-weight:650;text-align:right}.hws3-reasoning-control input:disabled{cursor:not-allowed}
+.hws3-form-grid select{width:100%;min-height:38px;border:1px solid var(--hws-border);border-radius:9px;background:var(--hws-bg);color:var(--hws-text);padding:8px 10px;outline:0;font-size:11px}
+.hws3-search-source{color:var(--hws-muted);font-size:9px}.hws3-search-error{color:var(--hws-bad);font-size:10px}.hws3-field-hint{margin:8px 0 0;color:var(--hws-muted);font-size:9px;line-height:1.5}.hws3-history-search-row{border-color:rgba(58,168,151,.3);background:linear-gradient(100deg,rgba(18,48,43,.8),rgba(10,31,28,.9))}.hws3-history-hit-snippet{margin:5px 0 0;line-height:1.5}.hws3-history-hit-snippet mark,.hws3-history-hit-anchor mark{padding:0 2px;border-radius:3px;background:rgba(232,213,172,.3);color:var(--hws-accent);box-shadow:0 0 0 1px rgba(232,213,172,.12)}.hws3-history-hit-anchor{scroll-margin:120px;border-radius:10px;transition:background .25s ease,box-shadow .25s ease}.hws3-history-hit-anchor.is-hit{background:rgba(232,213,172,.08);box-shadow:0 0 0 2px rgba(232,213,172,.32),0 10px 28px rgba(0,0,0,.18)}
+.hws3-work-source{color:var(--hws-muted);font-size:8px;white-space:nowrap}.hws3-reasoning-panel{margin-top:8px;border:1px solid rgba(93,167,153,.14);border-radius:9px;background:rgba(7,21,19,.38)}.hws3-reasoning-panel summary{padding:7px 9px;color:var(--hws-muted);cursor:pointer;font-size:10px}.hws3-reasoning-panel pre{max-height:220px;margin:0;padding:8px 9px;border-top:1px solid rgba(93,167,153,.12);color:var(--hws-text);white-space:pre-wrap;overflow:auto;font:inherit;font-size:10px;line-height:1.55}
+.hws3-history-search-label{display:grid;gap:5px;color:var(--hws-muted);font-size:9px}.hws3-history-search-label .hws3-search{margin-bottom:0}.hws3-history-detail{margin-top:15px;padding:13px;border:1px solid rgba(58,168,151,.32);border-radius:13px;background:linear-gradient(180deg,rgba(18,48,43,.62),rgba(10,31,28,.8))}.hws3-history-detail>header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:9px}.hws3-history-detail>header strong,.hws3-history-detail>header small{display:block}.hws3-history-detail>header strong{font-size:12px}.hws3-history-detail>header small{margin-top:3px;color:var(--hws-muted);font-size:9px}.hws3-history-detail-messages{max-height:620px;overflow:auto;padding:4px 5px}.hws3-history-detail-messages .hws3-message{margin-bottom:15px}.hws3-history-detail-messages .hws3-message:last-child{margin-bottom:3px}.hws3-provider-badges{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}.hws3-model-result{display:grid;justify-items:end;gap:2px}.hws3-model-result small{max-width:260px;margin:0;text-align:right;color:var(--hws-bad)}.hws3-moa-card{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:13px;padding:14px;border:1px solid rgba(232,213,172,.28);border-radius:13px;background:linear-gradient(135deg,rgba(232,213,172,.09),rgba(18,48,43,.7))}.hws3-moa-card h3{margin:3px 0 0;font-size:13px}.hws3-moa-card p{max-width:720px;margin:4px 0 0;color:var(--hws-muted);font-size:10px;line-height:1.5}.hws3-moa-card>div>small{color:var(--hws-accent);font-size:9px;letter-spacing:.04em}.hws3-moa-panel{align-items:flex-start}.hws3-moa-panel>div:first-child{min-width:0;flex:1}.hws3-moa-summary{display:grid;justify-items:end;gap:5px;white-space:nowrap}.hws3-moa-summary small{color:var(--hws-muted);font-size:9px}.hws3-moa-readiness{margin-top:9px;padding:7px 9px;border:1px solid rgba(158,181,174,.18);border-radius:8px;color:var(--hws-muted);font-size:10px}.hws3-moa-readiness.good{border-color:rgba(85,201,150,.36);color:var(--hws-good);background:rgba(85,201,150,.06)}.hws3-moa-readiness.bad{border-color:rgba(226,109,109,.3);color:var(--hws-bad);background:rgba(226,109,109,.055)}.hws3-moa-note{color:var(--hws-muted)!important}.hws3-moa-config{margin-top:12px;border-top:1px solid rgba(93,167,153,.13)}.hws3-moa-config summary{padding-top:10px;color:var(--hws-accent);cursor:pointer;font-size:10px}.hws3-moa-slots{display:grid;gap:8px;margin-top:10px}.hws3-moa-slot{display:grid;gap:6px;padding:9px;border:1px solid rgba(93,167,153,.14);border-radius:9px;background:rgba(7,21,19,.34)}.hws3-moa-slot>strong{font-size:10px}.hws3-moa-slot-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:8px}.hws3-moa-slot label{display:grid;gap:4px;color:var(--hws-muted);font-size:9px}.hws3-moa-slot input{min-height:32px!important;font-size:10px!important}.hws3-moa-slot>small{color:var(--hws-muted);font-size:8px}.hws3-moa-enabled{display:flex!important;align-items:center;gap:5px}.hws3-moa-enabled input{min-height:auto!important;width:auto}
+.hws3-mobile-brand{min-width:0;display:flex;align-items:center;gap:7px;color:inherit;text-decoration:none}.hws3-mobile-brand strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+
+/*
+ * Hermes 0.20.6 exposes a page override, but not a route-scoped exclusive
+ * shell contract. Keep the compatibility bridge narrow and reversible: while
+ * the Studio root is mounted, hide only the official host sidebar and its
+ * route header; native /sessions unmounts Studio and restores both naturally.
+ * The Studio UI never depends on, copies, or rewrites Hermes navigation data.
+ */
+html:has(.hws3-root) #app-sidebar,html[data-hws-studio="true"] #app-sidebar{display:none!important}
+html:has(.hws3-root) #app-sidebar+div>header,html[data-hws-studio="true"] #app-sidebar+div>header{display:none!important}
+html:has(.hws3-root) #root>[data-layout-variant]>header,html[data-hws-studio="true"] #root>[data-layout-variant]>header{display:none!important}
+
+@media(max-width:1020px){
+  .hws3-chat-head{grid-template-columns:minmax(150px,1fr) auto auto}.hws3-route-compact{grid-column:1/-1;grid-row:2}.hws3-context-wrap{grid-column:2;grid-row:1}.hws3-chat-actions{grid-column:3;grid-row:1}
+}
+@media(max-width:820px){
+  .hws3-chat-head{grid-template-columns:minmax(0,1fr) auto auto}.hws3-chat-actions{grid-column:3;grid-row:1}.hws3-history-row{grid-template-columns:minmax(0,1fr) auto auto auto}.hws3-moa-card{align-items:flex-start}
+}
+@media(max-width:540px){
+  .hws3-slash-menu{left:0;right:0;max-height:min(52dvh,340px);padding:4px}.hws3-slash-menu button{padding:10px 8px}.hws3-slash-menu strong{font-size:10px}
+  .hws3-chat-head{grid-template-columns:minmax(0,1fr) auto;row-gap:7px}.hws3-chat-actions{grid-column:2;grid-row:1}.hws3-context-wrap{grid-column:1/-1;grid-row:2}.hws3-route-compact{grid-column:1/-1;grid-row:3}.hws3-history-row{grid-template-columns:minmax(0,1fr) auto}.hws3-history-row .hws3-button{grid-row:2}.hws3-history-detail{padding:9px}.hws3-moa-card{display:grid}.hws3-moa-card .hws3-pill{justify-self:start}.hws3-moa-summary{justify-items:start}.hws3-moa-slot-grid{grid-template-columns:1fr}.hws3-reasoning-control{flex:1;justify-content:space-between}.hws3-reasoning-control input{width:min(42vw,120px)}
+}
+
+/* Independent MOA surface: the catalog is Hermes-owned, while this page is the product entry point. */
+.hws3-moa-page-head{align-items:flex-start}
+.hws3-moa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+.hws3-moa-page-actions .hws3-button{min-height:34px}
+.hws3-moa-flow{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr);align-items:center;gap:8px;margin-bottom:14px;padding:14px}
+.hws3-moa-flow-node{display:grid;grid-template-columns:28px minmax(0,1fr);column-gap:9px;align-items:center;min-width:0;padding:11px 12px;border:1px solid rgba(93,167,153,.2);border-radius:12px;background:rgba(18,48,43,.48)}
+.hws3-moa-flow-node b{grid-row:span 2;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:rgba(58,168,151,.16);color:var(--hws-teal);font-size:11px}
+.hws3-moa-flow-node strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.hws3-moa-flow-node small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--hws-muted);font-size:9px}
+.hws3-moa-flow-node.aggregator{border-color:rgba(232,213,172,.28);background:rgba(232,213,172,.08)}
+.hws3-moa-flow-node.aggregator b{background:rgba(232,213,172,.17);color:var(--hws-accent)}
+.hws3-moa-flow-node.result{border-color:rgba(85,201,150,.25)}
+.hws3-moa-flow-node.result b{background:rgba(85,201,150,.13);color:var(--hws-good)}
+.hws3-moa-flow-arrow{color:var(--hws-muted);font-size:17px;text-align:center}
+.hws3-moa-config-card{display:grid;gap:12px}
+.hws3-moa-section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.hws3-moa-section-head h3{margin:3px 0 0;font-size:14px}
+.hws3-moa-section-head p{max-width:650px;margin:5px 0 0;color:var(--hws-muted);font-size:10px;line-height:1.5}
+.hws3-moa-section-head>div:first-child>small{color:var(--hws-accent);font-size:9px;letter-spacing:.04em}
+.hws3-moa-preset-control{min-width:150px}
+.hws3-moa-preset-control label{display:grid;gap:5px;color:var(--hws-muted);font-size:9px}
+.hws3-moa-preset-control select{min-height:34px;border:1px solid var(--hws-border);border-radius:9px;background:var(--hws-bg);color:var(--hws-text);padding:7px 9px;outline:0;font-size:10px}
+.hws3-moa-editor{display:grid;gap:10px}
+.hws3-moa-slot-title{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hws3-moa-slot-title strong{font-size:11px}
+.hws3-moa-slot.aggregator{border-color:rgba(232,213,172,.24);background:rgba(232,213,172,.055)}
+.hws3-moa-slot select{width:100%;min-height:34px;border:1px solid var(--hws-border);border-radius:8px;background:var(--hws-bg);color:var(--hws-text);padding:7px 8px;outline:0;font-size:10px}
+.hws3-moa-slot select:focus,.hws3-moa-preset-control select:focus{border-color:rgba(58,168,151,.58);box-shadow:0 0 0 3px rgba(58,168,151,.08)}
+.hws3-moa-actions{align-items:center;flex-wrap:wrap}
+.hws3-moa-probe{padding:8px 10px;border:1px solid rgba(158,181,174,.18);border-radius:8px;color:var(--hws-muted);font-size:10px;line-height:1.5}
+.hws3-moa-probe.good{border-color:rgba(85,201,150,.36);background:rgba(85,201,150,.06);color:var(--hws-good)}
+.hws3-moa-probe.bad{border-color:rgba(226,109,109,.3);background:rgba(226,109,109,.055);color:var(--hws-bad)}
+.hws3-moa-source-note{margin:0;color:rgba(158,181,174,.7);font-size:9px;line-height:1.5}
+
+@media(max-width:820px){
+  .hws3-moa-section-head{display:grid;grid-template-columns:minmax(0,1fr) auto}
+  .hws3-moa-preset-control{min-width:130px}
+  .hws3-moa-flow{grid-template-columns:1fr;gap:6px}
+  .hws3-moa-flow-arrow{transform:rotate(90deg);height:18px}
+}
+@media(max-width:540px){
+  .hws3-moa-page-head{display:grid;gap:9px}
+  .hws3-moa-page-actions{justify-content:flex-start}
+  .hws3-moa-section-head{grid-template-columns:1fr;gap:9px}
+  .hws3-moa-preset-control{min-width:0}
+  .hws3-moa-flow{padding:10px}
+  .hws3-moa-flow-node{padding:9px 10px}
+  .hws3-moa-actions .hws3-button{flex:1;min-width:130px}
+}
+
+/* Model protocol evidence stays readable when the catalog becomes narrow.
+ * These are layout rules only; protocol truth remains
+ * the Hermes inventory/Run result rendered above. */
+.hws3-model-actions{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap;min-width:0}.hws3-model-actions .hws3-button{white-space:nowrap}
+@media(max-width:820px){.hws3-model-actions{grid-column:2/-1;justify-content:flex-end}}
+@media(max-width:540px){.hws3-model-actions{grid-column:1/-1;justify-content:flex-start}.hws3-model-actions .hws3-button{flex:1;min-width:105px}}

@@ -123,6 +123,8 @@ for token in (
     "'prompt.submit'",
     "'session.usage'",
     "'session.context_breakdown'",
+    "const SESSION_RECONCILE",
+    "hermes.gateway.session.resume_reconciliation",
     "type === 'todo.updated'",
     "type === 'status.update'",
     "kind === 'compacting'",
@@ -166,11 +168,12 @@ for forbidden in (
 
 frontend = read("dashboard/dist/index-v3.js")
 for token in (
-    "RECENT_LIMIT = 20", "CHAT_MESSAGE_LIMIT = 80", "HISTORY_SESSION_LIMIT = 30",
+    "RECENT_LIMIT = 10", "CHAT_MESSAGE_LIMIT = 10", "HISTORY_SESSION_LIMIT = 30",
     "['chat', '对话'", "['worker', 'Worker'", "['models', '模型'",
+    "['moa', 'MOA'",
     "['unattended', '完全访问'", "['history', '完整历史'",
-    "['/skills', '技能'", "['/plugins', '插件'", "['/mcp', 'MCP'",
-    "['/sessions', '原生 Dashboard · 会话'", "registerSlot('hermes-worker-studio', 'header-left'",
+    "hws3-native-dashboard-link", "href: baseHref('/sessions')",
+    "registerSlot('hermes-worker-studio', 'header-left'",
     "← Worker Studio", "/api/sessions/search", "jinit('PATCH', { title:",
     "jinit('PATCH', { archived:", "jinit('DELETE')", "titleFromPrompt",
     "Date.now().toString(36)", "/api/model/options", "/api/providers/custom-endpoints",
@@ -178,8 +181,18 @@ for token in (
     "/approval", "官方计划", "已完成 ${completed} / ${items.length}", "hws3-plan-summary",
     "todo", "Hermes Skills 变化", "unattended_restore", "subagent_auto_approve",
     "Hardline Blocklist", "auxiliary.review", "delegation.reasoning_effort", "onPaste",
-    "onDrop", "Ctrl/Cmd+V 粘贴图片", "ContextMeter", "officialContextTelemetry",
-    "context.compaction", "context.snapshot", "正在压缩上下文", "上下文已压缩",
+    "onDrop", "Ctrl/Cmd+V 粘贴文件", "ContextMeter", "officialContextTelemetry",
+    "reconcileProjectedTurns", "projectedTurnIsActive", "officialAssistantForProjectedTurn",
+    "projectedTurnNeedsReconciliation", "unique nearest response",
+    "official timestamp only when it is the unique nearest response in a",
+    "Load the official messages before exposing the recovered projection",
+    "official_message_timestamp", "messagesLoading", "官方未提供时长",
+    "inferApiModeFromEndpointInput", "canonicalApiMode", "modelApiMode",
+    "protocol capabilities are read per", "hws3-slash-menu", "hws3-moa-session-list",
+    "/api/model/moa", "Mixture of Agents", "hws3-moa-page", "hws3-moa-flow", "选择参与模型",
+    "modelsFor(modelOptions", "locateSearchHit", "hws3-history-hit-anchor",
+    "highlightText", "context.compaction", "context.snapshot",
+    "Auto Compact 进行中", "Compact 完成，正在恢复实时上下文",
     "不会把累计 billing/input token 当成当前上下文",
 ):
     require(frontend, token, "product UI source")
@@ -230,18 +243,19 @@ for token in (
     '@import url("./product.css");', '.hws3-context-meter', '.hws3-context-popover',
     '.hws3-plan-summary', '.hws3-file-icon', '@keyframes hws3-context-spin', '@media(max-width:540px)',
     '@media(prefers-reduced-motion:reduce)', 'env(safe-area-inset-bottom)',
+    'html:has(.hws3-root) #app-sidebar', 'html:has(.hws3-root) #app-sidebar+div>header',
+    '#root>[data-layout-variant]>header',
 ):
     require(sealed_css, token, "sealed context/plan/attachment CSS")
 
 installer = read("scripts/install.sh")
 for token in (
     "dashboard/dist/gateway-native.js",
-    "const href = baseHref('/favicon.ico');",
-    "official Hermes Dashboard /favicon.ico",
+    "dashboard/dist/project-mark.png",
+    "project mark via Hermes official plugin static assets",
     "Hermes official TUI Gateway JSON-RPC",
-    "could not locate the unique Product 3 favicon assignment",
     "scripts/stage_product_bundle.py",
-    'python "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"',
+    'python3 "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"',
     "arbitrary attachments",
     "WebSocket reconnects resume durable Hermes Sessions",
     "dashboard/dist/product-sealed.css",

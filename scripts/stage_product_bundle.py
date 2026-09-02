@@ -19,23 +19,6 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 
 def stage_bundle(text: str) -> str:
-    # Final information architecture: Worker Studio owns the normal product
-    # rail. Every native Hermes Dashboard destination is intentionally behind
-    # Advanced; the outer Hermes shell itself is separately gated on the
-    # official route-scoped exclusive-shell SDK contract.
-    text = replace_once(
-        text,
-        "  const HERMES_PRIMARY = [\n    ['/skills', '技能', '◇'],\n    ['/plugins', '插件', '⬡'],\n    ['/mcp', 'MCP', '⌘'],\n  ];\n  const HERMES_ADVANCED = [\n    ['/sessions', '原生 Dashboard · 会话'],\n    ['/cron', '自动化 / Cron'],\n    ['/profiles', 'Profiles'],\n    ['/analytics', 'Analytics'],\n    ['/logs', 'Logs'],\n    ['/config', 'Config'],\n    ['https://github.com/NousResearch/hermes-agent/tree/main/website/docs', '官方文档'],\n  ];",
-        "  const HERMES_PRIMARY = [];\n  const HERMES_ADVANCED = [\n    ['/sessions', '会话 / Sessions'],\n    ['/cron', '自动化 / Cron'],\n    ['/skills', 'Skills'],\n    ['/plugins', 'Plugins'],\n    ['/mcp', 'MCP'],\n    ['/profiles', 'Profiles'],\n    ['/analytics', 'Analytics'],\n    ['/logs', 'Logs'],\n    ['/config', 'Config'],\n    ['https://github.com/NousResearch/hermes-agent/tree/main/website/docs', 'Hermes 官方文档'],\n  ];",
-        "Advanced-only native Hermes navigation",
-    )
-    text = replace_once(
-        text,
-        "        h('details', { className: 'hws3-advanced' }, h('summary', null, h('span', null, '⋯'), '高级'), h('div', null, HERMES_ADVANCED.map(([path, label]) => h('a', { href: baseHref(path), key: path, target: /^https?:\\/\\//.test(path) ? '_blank' : undefined, rel: /^https?:\\/\\//.test(path) ? 'noreferrer' : undefined }, label)))),",
-        "        h('details', { className: 'hws3-advanced' }, h('summary', null, h('span', null, '⋯'), '高级 · Hermes Dashboard'), h('div', null, HERMES_ADVANCED.map(([path, label]) => h('a', { href: baseHref(path), key: path, target: /^https?:\\/\\//.test(path) ? '_blank' : undefined, rel: /^https?:\\/\\//.test(path) ? 'noreferrer' : undefined }, label)))),",
-        "Advanced native Dashboard label",
-    )
-
     # Any-file composer. The Gateway wrapper owns the corresponding official
     # image.attach_bytes / pdf.attach / file.attach staging semantics.
     text = replace_once(
@@ -70,16 +53,17 @@ def stage_bundle(text: str) -> str:
     )
     text = replace_once(
         text,
-        "        h('div', { className: 'hws3-composer-hint' }, h('span', null, 'Enter 发送 · Shift+Enter 换行 · Ctrl/Cmd+V 粘贴图片'), sending ? h('span', null, '运行中再次发送 = 调整方向') : null),",
+        "        h('div', { className: 'hws3-composer-hint' }, h('span', null, 'Enter 发送 · Shift+Enter 换行 · Ctrl/Cmd+V 粘贴文件'), sending ? h('span', null, '运行中再次发送 = 调整方向') : null),",
         "        h('div', { className: 'hws3-composer-hint' }, h('span', null, 'Enter 发送 · Shift+Enter 换行 · Ctrl/Cmd+V 粘贴文件'), sending ? h('span', null, '运行中再次发送 = 调整方向') : null),",
         "composer hint",
     )
     text = replace_once(
         text,
-        "        const session = current?.id ? current : await createSession(text || '图片对话');\n        const route = await lockRuntime(session, chatRoute);\n        const localContent = text || `[${attachments.length} 张图片]`;",
-        "        const session = current?.id ? current : await createSession(text || '附件对话');\n        const route = await lockRuntime(session, chatRoute);\n        const localContent = text || `[${attachments.length} 个附件]`;",
-        "attachment-only conversation labels",
+        "        const executionRoute = await resolveExecutionRoute(route);\n        const session = current?.id ? current : await createSession(text || '图片对话', route);",
+        "        const executionRoute = await resolveExecutionRoute(route);\n        const session = current?.id ? current : await createSession(text || '附件对话', route);",
+        "attachment-only session label",
     )
+    text = replace_once(text, "[${attachments.length} 张图片]", "[${attachments.length} 个附件]", "attachment-only message label")
     text = replace_once(
         text,
         "        for (const item of attachments) parts.push({ type: 'image_url', image_url: { url: item.dataUrl, detail: 'high' } });",
@@ -87,26 +71,6 @@ def stage_bundle(text: str) -> str:
         "mixed attachment Run payload",
     )
 
-    # Product-copy disclosure for the no-wait Full Access semantics implemented
-    # by the Gateway wrapper. Hardline remains explicitly untouched.
-    text = replace_once(
-        text,
-        "像 ChatGPT“完全访问”一样简单，但底层仍是 Hermes 官方 approvals / delegation",
-        "像 ChatGPT“完全访问”一样直接；底层仍是 Hermes 官方 approvals / delegation / input RPCs",
-        "Full Access subtitle",
-    )
-    text = replace_once(
-        text,
-        "已关闭可配置的人机审批，并允许子代理自动批准。",
-        "审批自动放行；Clarify 等交互请求自动 Skip/Decline，不再等待人工；子代理自动批准。",
-        "Full Access no-wait disclosure",
-    )
-    text = replace_once(
-        text,
-        "完全访问不会修改、绕过或弱化 Hermes Hardline Blocklist。Studio 只控制 Hermes 本来就允许配置的审批项。",
-        "完全访问不会修改、绕过或弱化 Hermes Hardline Blocklist。缺少密码、MFA 或外部授权时会自动失败/继续可行路径，而不是无限等待用户。",
-        "Full Access permanent boundary",
-    )
     return text
 
 

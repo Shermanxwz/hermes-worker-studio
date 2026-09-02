@@ -39,17 +39,32 @@ class FakeWebSocket {
     const runtime = `runtime-${socketIndex}`;
     let result = {};
     if (frame.method === 'session.resume') {
+      // An idle resume is deliberately not a terminal signal. The reconnect
+      // regression below uses stored-1 to prove the native bridge keeps the
+      // run attached until an official message.complete or message row wins.
+      const active = frame.params.session_id === 'active-1';
       result = {
         session_id: runtime,
         message_count: frame.params.omit_messages === false ? 7 : 4,
-        running: frame.params.omit_messages === false,
-        inflight: frame.params.omit_messages === false,
-        todo_state: frame.params.omit_messages === false ? { revision: 2, todos: [] } : undefined,
+        running: active,
+        inflight: active,
+        todo_state: active ? { revision: 2, todos: [] } : undefined,
       };
     } else if (frame.method === 'session.usage') {
       result = { model: 'model-x', context_used: 32400, context_max: 128000, context_percent: 25.3125, compressions: 2 };
     } else if (frame.method === 'session.context_breakdown') {
       result = { context_used: 32400, context_max: 128000, context_percent: 25.3125, threshold_tokens: 96000, threshold_percent: 75, categories: [{ label: 'Conversation', tokens: 22000 }] };
+    } else if (frame.method === 'session.events.since') {
+      result = {
+        events: frame.params.session_id === 'runtime-2' ? [
+          { type: 'message.start', session_id: 'runtime-2', seq: 11, payload: { turn_started_at: 1700000000 } },
+          { type: 'message.delta', session_id: 'runtime-2', seq: 12, payload: { text: '刷新后继续接收' } },
+        ] : [],
+        latest_seq: frame.params.session_id === 'runtime-2' ? 12 : 0,
+        truncated: false,
+        count: frame.params.session_id === 'runtime-2' ? 2 : 0,
+        epoch: 'test-epoch-1',
+      };
     } else if (frame.method === 'file.attach') {
       result = { attached: true, ref_text: '@file:attachments/readme.txt' };
     } else if (frame.method === 'image.attach_bytes' || frame.method === 'pdf.attach') {
@@ -58,6 +73,12 @@ class FakeWebSocket {
       result = { status: 'streaming' };
     } else if (frame.method === 'session.steer') {
       result = { status: 'queued' };
+    } else if (frame.method === 'commands.catalog') {
+      result = { commands: { '/compress': { description: 'Compress context' }, '/compact': { description: 'Compact context' } }, all: [['/compress', 'Compress context'], ['/compact', 'Compact context']] };
+    } else if (frame.method === 'complete.slash') {
+      result = { items: [{ text: '/compress', display: '/compress', meta: 'Compress context', kind: 'command' }] };
+    } else if (frame.method === 'slash.exec') {
+      result = { output: 'Hermes slash executed' };
     } else {
       result = { ok: true };
     }
@@ -190,6 +211,20 @@ assert.equal(context.threshold_tokens, 96000);
 assert.equal(context.compression_count, 2);
 assert.ok(sent.some((x) => x.method === 'session.context_breakdown'));
 
+const reconciliation = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/session-reconcile', {
+  method: 'POST',
+  body: JSON.stringify({ session_id: 'stored-1' }),
+});
+assert.equal(reconciliation.active, false, 'session reconciliation must expose the official idle state');
+assert.equal(reconciliation.source, 'hermes.gateway.session.resume');
+assert.ok(Number.isFinite(reconciliation.checked_at));
+assert.ok(sent.filter((x) => x.method === 'session.resume').some((x) => x.params.omit_messages === true));
+const activeReconciliation = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/session-reconcile', {
+  method: 'POST',
+  body: JSON.stringify({ session_id: 'active-1' }),
+});
+assert.equal(activeReconciliation.active, true, 'session reconciliation must preserve an officially active session');
+
 ws1.close();
 polled = await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${encodeURIComponent(run.id)}?after=0`);
 assert.equal(polled.status, 'reconnecting');
@@ -204,6 +239,7 @@ const resumes = sent.filter((x) => x.method === 'session.resume');
 assert.ok(resumes.every((x) => x.params.close_on_disconnect === false));
 assert.ok(resumes.some((x) => x.params.omit_messages === false));
 assert.ok(polled.events.some((e) => e.event === 'transport.reconnected' && e.data.runtime === 'runtime-2'));
+assert.ok(!polled.events.some((e) => e.event === 'run.completed' && e.data?.source === 'hermes.gateway.session.resume_reconciliation'), 'an idle resume must not fabricate run completion');
 
 const ws2 = FakeWebSocket.instances[1];
 ws2.gatewayEvent('message.complete', { text: '完成' });
@@ -212,16 +248,66 @@ polled = await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${en
 assert.equal(polled.status, 'completed');
 assert.ok(polled.events.some((e) => e.event === 'run.completed'));
 
+const attached = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/session-attach', {
+  method: 'POST',
+  body: JSON.stringify({
+    session_id: 'active-1',
+    run_id: 'projection-refresh-1',
+    started_at: 1699999998,
+    last_seq: 4,
+    gateway_last_seq: 0,
+  }),
+});
+assert.equal(attached.attached, true, 'a refreshed page must attach to the official live session');
+assert.equal(attached.run.id, 'projection-refresh-1');
+assert.equal(attached.run.status, 'running');
+assert.equal(attached.source, 'hermes.gateway.session.attach');
+assert.equal(attached.replay_count, 2, 'refresh attach must replay the official Gateway event ring');
+assert.ok(attached.run.events.some((e) => e.event === 'run.message_started' && e.gateway_seq === 11));
+assert.ok(attached.run.events.some((e) => e.event === 'assistant.delta' && e.gateway_seq === 12 && e.data.text === '刷新后继续接收'));
+assert.ok(sent.some((x) => x.method === 'session.events.since' && x.params.last_seen === 0));
+const attachedAgain = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/session-attach', {
+  method: 'POST',
+  body: JSON.stringify({ session_id: 'active-1', run_id: 'projection-refresh-1', gateway_last_seq: 0 }),
+});
+assert.equal(attachedAgain.attached, true, 'a second refresh must re-resume an already attached official run');
+assert.equal(attachedAgain.run.status, 'running');
+assert.ok(sent.filter((x) => x.method === 'session.resume').length >= 4, 'refresh attach must call official session.resume even when the browser run map already has the run');
+ws2.gatewayEvent('message.complete', { text: '刷新后完成' }, 'runtime-2');
+await new Promise((resolve) => setTimeout(resolve, 10));
+const attachedDone = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs/projection-refresh-1?after=4');
+assert.equal(attachedDone.status, 'completed');
+assert.ok(attachedDone.events.some((e) => e.event === 'run.completed'));
+
 const run2 = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', {
   method: 'POST',
-  body: JSON.stringify({ session_id: 'stored-1', input: '控制测试' }),
+  body: JSON.stringify({ session_id: 'stored-1', input: '控制测试', provider: 'moa', model: 'default' }),
 });
+assert.ok(sent.some((x) => x.method === 'config.set' && x.params.key === 'model' && x.params.value === 'default --provider moa --session'));
+const catalog = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/commands');
+assert.ok(catalog.all.some((item) => item[0] === '/compress'), 'official slash catalog must be exposed');
+const completion = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/slash-complete', { method: 'POST', body: JSON.stringify({ session_id: 'stored-1', text: '/' }) });
+assert.equal(completion.items[0].text, '/compress', 'official slash completion must be exposed');
+const slashResult = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/slash-exec', { method: 'POST', body: JSON.stringify({ session_id: 'stored-1', command: '/compress' }) });
+assert.equal(slashResult.output, 'Hermes slash executed', 'slash submission must use native slash.exec');
+assert.ok(sent.some((x) => x.method === 'slash.exec' && x.params.command === '/compress'));
 await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run2.id}/steer`, { method: 'POST', body: JSON.stringify({ input: '调整方向' }) });
 assert.equal(sent.at(-1).method, 'session.steer');
 await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run2.id}/stop`, { method: 'POST', body: '{}' });
 assert.equal(sent.at(-1).method, 'session.interrupt');
 const stopped = await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run2.id}?after=0`);
 assert.equal(stopped.status, 'interrupted');
+
+const run3 = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', {
+  method: 'POST',
+  body: JSON.stringify({ session_id: 'stored-1', input: '失败可见性测试', provider: 'moa', model: 'default' }),
+});
+ws2.gatewayEvent('message.complete', { status: 'error', error: 'No LLM provider configured for task=moa_aggregator' });
+await new Promise((resolve) => setTimeout(resolve, 10));
+const failed = await SDK.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${run3.id}?after=0`);
+assert.equal(failed.status, 'failed');
+assert.equal(failed.error, 'No LLM provider configured for task=moa_aggregator');
+assert.ok(failed.events.some((e) => e.event === 'run.failed'));
 
 const passthrough = await SDK.fetchJSON('/api/not-studio');
 assert.deepEqual(passthrough, { passthrough: true });

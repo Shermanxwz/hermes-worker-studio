@@ -2,7 +2,7 @@
 
 Worker Studio's final product requirement is stricter than replacing the `/` page: while `/` is owned by Worker Studio, Hermes' built-in Dashboard navigation/chrome must not be rendered. Native Hermes Dashboard routes must remain untouched and regain the normal Hermes shell as soon as the user enters them through Worker Studio's **Advanced** navigation.
 
-This must be implemented through a **public Hermes Dashboard Plugin contract**, never through DOM/CSS hiding, patched Hermes bundles, or a forked Dashboard.
+The preferred implementation is a **public Hermes Dashboard Plugin contract**. Hermes 0.20.6 currently exposes only the page-level `tab.override`; it does not expose route-scoped shell ownership. Until the upstream contract lands, this local build uses a narrow, reversible host-shell compatibility layer that hides only the official outer sidebar/header while the Studio root is mounted. It never copies native navigation, patches Hermes bundles, or forks the Dashboard.
 
 Upstream tracking: https://github.com/NousResearch/hermes-agent/issues/100149
 
@@ -67,4 +67,4 @@ Product 3 is **ARCHIVE CANDIDATE**, not `SEALED`, until all of these are true:
 - real-target Playwright proves `/` is the Worker Studio product shell and native routes restore Hermes navigation;
 - `scripts/verify_seal_evidence.py` combines upstream + target + browser evidence and writes `SEALED.json` only when all three planes pass.
 
-There is intentionally no `--skip-upstream-contract` or CSS fallback. If the official contract is missing, seal closure fails.
+There is intentionally no `--skip-upstream-contract`. The compatibility layer is a local UX fallback only; if the official contract is missing, seal closure still fails at Gate 0.

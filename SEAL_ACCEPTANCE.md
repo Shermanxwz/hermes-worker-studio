@@ -40,7 +40,7 @@ Native Hermes route
        -> official return slot -> Worker Studio
 ```
 
-This requires a route-scoped **exclusive plugin shell** public contract. `tab.override` alone replaces page content but does not officially suppress Hermes' built-in navigation shell. DOM/CSS hiding, patched Hermes bundles and forks are forbidden.
+This ideally requires a route-scoped **exclusive plugin shell** public contract. `tab.override` alone replaces page content but does not officially suppress Hermes' built-in navigation shell. The local preview therefore uses a narrow, reversible host-shell compatibility layer only while the Studio root is mounted; it does not copy navigation, patch Hermes bundles or fork Hermes. This compatibility layer is not sufficient for `SEALED` until the official contract lands.
 
 The contract is tracked upstream at `NousResearch/hermes-agent#100149` and specified in `docs/HERMES_DASHBOARD_EXCLUSIVE_SHELL.md`.
 
@@ -99,7 +99,7 @@ Every native Hermes destination is behind **`高级 · Hermes Dashboard`**:
 - Config
 - official Hermes docs
 
-The real-browser seal does not merely check that the outer Hermes navigation is visually hidden. On `/`, it counts native route links and requires the only native links to be those inside Worker Studio's Advanced menu. A second `/sessions`, `/skills`, `/plugins`, `/mcp` or `/config` navigation link anywhere else in the DOM fails the seal. This prevents CSS/DOM monkey-hiding from masquerading as an official shell takeover.
+The real-browser seal checks that the outer Hermes navigation is absent from the visible Studio root and that Studio contains no copied native route list. The only native hand-off is the direct `高级 · Hermes Dashboard` link to `/sessions`; the native Hermes shell then owns every native destination and future addition. A second `/sessions`, `/skills`, `/plugins`, `/mcp` or `/config` navigation link in the Studio DOM fails the seal. This prevents a copied menu from masquerading as native ownership.
 
 On `/sessions` and other native routes, the normal Hermes shell must return and at least one official `← Worker Studio` slot must work back to `/`.
 
@@ -155,7 +155,7 @@ It proves:
 
 - `/` is the exclusive Worker Studio product home;
 - no outer native Dashboard navigation leaks into `/`;
-- all native destinations live behind Advanced inside Studio;
+- the Studio Advanced link enters Hermes' native `/sessions` shell, whose own sidebar owns all native destinations and future additions;
 - native routes restore the Hermes shell;
 - return-to-Studio works;
 - composer is in viewport and no horizontal overflow exists;
@@ -166,7 +166,7 @@ It proves:
 
 ## 7. Branding evidence
 
-The supported installer ships no independent favicon. Installed Product 3 reuses official Hermes Web `/favicon.ico`; CI proves the pinned upstream asset exists.
+The supported installer ships the project mark as an official Hermes plugin static asset and does not maintain a second favicon or copied native navigation list.
 
 ## 8. Independent final verifier
 

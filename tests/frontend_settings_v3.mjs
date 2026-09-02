@@ -44,12 +44,26 @@ let endpoints = [{
   id: 'local-api', name: 'Local API', base_url: 'http://127.0.0.1:8080/v1', model: 'old-model',
   models: ['old-model'], discover_models: true, is_current: false, source: 'custom-endpoint',
 }];
+let moaConfig = {
+  default_preset: 'default', active_preset: '',
+  presets: { default: {
+    reference_models: [{ provider: 'official', model: 'main-model', enabled: true }],
+    aggregator: { provider: 'official', model: 'main-model' },
+    reference_temperature: null, aggregator_temperature: null, reference_timeout: null,
+    degraded_reference_policy: 'loud', max_tokens: 4096, reference_max_tokens: null,
+    fanout: 'user_turn', enabled: true,
+  } },
+};
 
 const modelOptions = {
-  provider: 'official', model: 'main-model', providers: [{
-    slug: 'official', name: 'Official', authenticated: true, is_current: true,
-    models: ['main-model'], capabilities: { 'main-model': {} },
-  }],
+  provider: 'official', model: 'main-model', providers: [
+    {
+      slug: 'official', name: 'Official', authenticated: true, is_current: true,
+      models: ['main-model'], capabilities: { 'main-model': {} },
+    },
+    { slug: 'local-api', name: 'Local API', authenticated: true, models: ['found-model'], capabilities: { 'found-model': {} } },
+    { slug: 'moa', name: 'Mixture of Agents', authenticated: true, models: ['default'] },
+  ],
 };
 
 function parseBody(init) { return init?.body ? JSON.parse(init.body) : null; }
@@ -58,8 +72,10 @@ function responseFor(url, init = {}) {
   const body = parseBody(init);
   calls.push({ url, method, body });
 
-  if (url === '/api/sessions?limit=20&offset=0&order=recent&archived=exclude') return { sessions: [], total: 0 };
+  if (url === '/api/sessions?limit=10&offset=0&order=recent&archived=exclude') return { sessions: [], total: 0 };
   if (url === '/api/model/options' || url === '/api/model/options?refresh=1') return modelOptions;
+  if (url === '/api/model/moa' && method === 'GET') return moaConfig;
+  if (url === '/api/model/moa' && method === 'PUT') { moaConfig = body; return { ok: true, ...moaConfig }; }
   if (url === '/api/config') {
     if (method === 'PUT') { config = body.config; return { ok: true }; }
     return { config };
@@ -126,7 +142,7 @@ async function waitFor(check, label, timeout = 4000) {
 function byText(selector, text) { return [...window.document.querySelectorAll(selector)].find((el) => el.textContent.includes(text)); }
 async function click(el) { assert.ok(el, 'element to click must exist'); await act(async () => { el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true })); }); }
 function setValue(el, value) {
-  const proto = el instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+  const proto = el instanceof window.HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : el instanceof window.HTMLSelectElement ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
   el.dispatchEvent(new window.Event('input', { bubbles: true }));
   el.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -161,6 +177,22 @@ assert.equal(config.plugins.entries['hermes-worker-studio'].settings.unattended_
 // Custom Endpoint lifecycle is Product 3 UI over the official Hermes endpoints.
 await click(byText('.hws3-nav button', '模型'));
 await waitFor(() => byText('.hws3-endpoint', 'Local API'), 'endpoint list');
+assert.equal(window.document.querySelector('.hws3-moa-panel'), null, 'MOA must not be embedded in Models');
+
+// MOA has its own sidebar surface and uses the same official model inventory.
+await click(byText('.hws3-nav button', 'MOA'));
+await waitFor(() => window.document.querySelector('.hws3-moa-page'), 'independent MOA page');
+assert.ok(byText('.hws3-moa-page', '选择参与模型'));
+const moaProviderSelects = [...window.document.querySelectorAll('.hws3-moa-slot-grid select')].filter((_, index) => index % 2 === 0);
+const moaModelSelects = [...window.document.querySelectorAll('.hws3-moa-slot-grid select')].filter((_, index) => index % 2 === 1);
+assert.equal(moaProviderSelects.length, 2);
+assert.equal(moaModelSelects.length, 2);
+setValue(moaProviderSelects[0], 'local-api');
+await waitFor(() => moaModelSelects[0].value === 'found-model', 'MOA model list follows selected provider');
+await click(byText('.hws3-moa-actions button', '保存官方 MoA 配置'));
+await waitFor(() => calls.some((call) => call.url === '/api/model/moa' && call.method === 'PUT'), 'official MoA config save');
+await click(byText('.hws3-nav button', '模型'));
+await waitFor(() => byText('.hws3-endpoint', 'Local API'), 'return to Models');
 await click(byText('.hws3-endpoint button', '使用'));
 await waitFor(() => activatedEndpoint === 'local-api', 'endpoint activation');
 assert.ok(calls.some((call) => call.url === '/api/providers/custom-endpoints/local-api/activate' && call.method === 'POST'));
@@ -171,6 +203,7 @@ await waitFor(() => labeledInput('Base URL').value.includes('127.0.0.1'), 'edit 
 setValue(labeledInput('Name'), 'Local API Edited');
 setValue(labeledInput('Base URL'), 'https://proxy.example/v1/responses');
 setValue(labeledInput('Model'), 'found-model');
+assert.equal(window.document.querySelector('.hws3-form-grid select'), null, 'API mode must not be a misleading provider-global selector');
 await click(byText('.hws3-actions button', '测试'));
 await waitFor(() => byText('.hws3-result', '连接成功'), 'endpoint validation');
 const validation = calls.findLast((call) => call.url === '/api/providers/custom-endpoints/validate');
@@ -180,6 +213,7 @@ await waitFor(() => savedEndpointPayload?.name === 'Local API Edited', 'endpoint
 assert.equal(savedEndpointPayload.id, 'local-api');
 assert.equal(savedEndpointPayload.base_url, 'https://proxy.example/v1');
 assert.equal(savedEndpointPayload.model, 'found-model');
+assert.ok(!calls.some((call) => call.url === '/api/config' && call.method === 'PUT' && call.body?.providers?.['local-api']?.api_mode), 'saving an endpoint must not overwrite a provider-global protocol mode');
 
 await waitFor(() => byText('.hws3-endpoint', 'Local API Edited'), 'saved endpoint render');
 await click(byText('.hws3-endpoint button', '删除'));

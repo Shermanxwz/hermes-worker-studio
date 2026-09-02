@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -20,6 +21,40 @@ class ProductRunsBridgeTests(unittest.TestCase):
     def setUp(self):
         with plugin_api_v3._legacy._RUNS_LOCK:
             plugin_api_v3._legacy._RUNS.clear()
+
+    def test_projection_sanitizes_and_preserves_moa_marker(self):
+        previous = {"moa": {"provider": "moa", "preset": "default"}}
+        result = plugin_api_v3._sanitize_projection(
+            {
+                "turns": [{
+                    "id": "r1",
+                    "last_seq": 7,
+                    "gateway_last_seq": 12,
+                    "gateway_replay_epoch": "epoch-1",
+                    "assistant_message_id": "assistant-1",
+                    "user_message_id": "user-1",
+                    "events": [{"event": "message.complete"}],
+                    "secret": "drop",
+                }]
+            },
+            previous,
+        )
+        self.assertEqual(result["moa"], previous["moa"])
+        self.assertNotIn("secret", result["turns"][0])
+        self.assertEqual(result["turns"][0]["assistant_message_id"], "assistant-1")
+        self.assertEqual(result["turns"][0]["user_message_id"], "user-1")
+        self.assertEqual(result["turns"][0]["gateway_last_seq"], 12)
+        self.assertEqual(result["turns"][0]["gateway_replay_epoch"], "epoch-1")
+        with self.assertRaises(HTTPException):
+            plugin_api_v3._sanitize_projection({"turns": [{}] * 101})
+
+    def test_projection_write_is_atomic_and_readable(self):
+        with self.subTest("private projection store"):
+            with tempfile.TemporaryDirectory() as directory, patch.object(plugin_api_v3, "_PROJECTION_ROOT", pathlib.Path(directory)):
+                plugin_api_v3._write_projection("session/one", {"turns": [], "moa": {"provider": "moa"}})
+                result = plugin_api_v3._read_projection("session/one")
+                self.assertEqual(result["moa"]["provider"], "moa")
+                self.assertTrue(plugin_api_v3._projection_file("session/one").exists())
 
     def test_structured_input_is_preserved_verbatim(self):
         structured = [
@@ -252,6 +287,191 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["data"]["context_used"], 32000)
 
+    def test_custom_endpoint_protocol_route_fails_closed_before_probe(self):
+        config = {
+            "providers": {
+                "new-api": {
+                    "name": "New API",
+                    "api": "https://gateway.example/v1",
+                    "models": {"gpt-responses": {}, "chat-model": {}},
+                }
+            }
+        }
+        options = {
+            "providers": [{
+                "slug": "new-api",
+                "authenticated": True,
+                "models": ["gpt-responses", "chat-model"],
+                "capabilities": {},
+            }]
+        }
+        route = plugin_api_v3._protocol_route_snapshot(config, options, "new-api", "gpt-responses")
+        self.assertEqual(route["status"], "unresolved")
+        self.assertTrue(route["requires_probe"])
+        self.assertEqual(route["execution_provider"], "")
+
+    def test_protocol_alias_is_written_through_official_config_without_touching_source(self):
+        source = {
+            "name": "New API",
+            "api": "https://gateway.example/v1",
+            "key_env": "NEW_API_KEY",
+            "models": {"gpt-responses": {"context_length": 128000}},
+        }
+        config = {"providers": {"new-api": source}, "approvals": {"mode": "smart"}}
+        writes = []
+
+        def fake_proxy(path, method="GET", body=None, timeout=None):
+            if method == "PUT":
+                writes.append((path, body))
+            return {"ok": True}
+
+        with patch.object(plugin_api_v3._legacy, "_hermes_proxy", side_effect=fake_proxy):
+            updated, aliases = plugin_api_v3._ensure_protocol_aliases(
+                config,
+                "new-api",
+                "gpt-responses",
+                ("codex_responses",),
+            )
+
+        alias = aliases["codex_responses"]
+        self.assertEqual(source["models"], {"gpt-responses": {"context_length": 128000}})
+        self.assertEqual(updated["providers"]["new-api"], source)
+        self.assertEqual(updated["providers"][alias]["transport"], "codex_responses")
+        self.assertEqual(updated["providers"][alias]["models"], {"gpt-responses": {"context_length": 128000}})
+        self.assertEqual(writes[0][0], "/api/config")
+        self.assertEqual(set(writes[0][1]["config"]), {"providers"})
+
+    def test_real_protocol_probe_resolves_one_supported_wire_mode(self):
+        config = {
+            "providers": {
+                "new-api": {
+                    "name": "New API",
+                    "api": "https://gateway.example/v1",
+                    "models": {"gpt-responses": {}},
+                }
+            }
+        }
+        options = {
+            "providers": [{
+                "slug": "new-api",
+                "authenticated": True,
+                "models": ["gpt-responses"],
+                "capabilities": {},
+            }]
+        }
+
+        def fake_proxy(path, method="GET", body=None, timeout=None):
+            return {"ok": True} if method == "PUT" else {}
+
+        def fake_start(body, session_required=False):
+            return {"id": "probe-chat", "status": "running"} if body["provider"].endswith("-chat") else {"id": "probe-responses", "status": "running"}
+
+        def fake_wait(run_id, timeout):
+            return {"status": "completed"} if run_id == "probe-responses" else {"status": "failed", "error": "chat rejected"}
+
+        with tempfile.TemporaryDirectory() as directory, \
+            patch.object(plugin_api_v3, "_PROTOCOL_FILE", pathlib.Path(directory) / "protocols.json"), \
+            patch.object(plugin_api_v3, "_read_official_config", return_value=config), \
+            patch.object(plugin_api_v3, "_read_official_model_options", return_value=options), \
+            patch.object(plugin_api_v3._legacy, "_hermes_proxy", side_effect=fake_proxy), \
+            patch.object(plugin_api_v3._legacy, "_start_native_run", side_effect=fake_start), \
+            patch.object(plugin_api_v3._legacy, "_wait_run", side_effect=fake_wait):
+            result = plugin_api_v3._probe_protocols_sync("new-api", "gpt-responses")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["status"], "resolved")
+        self.assertEqual(result["route"]["mode"], "codex_responses")
+        self.assertTrue(result["route"]["execution_provider"].endswith("-responses"))
+        self.assertFalse(result["results"]["chat_completions"]["ok"])
+        self.assertTrue(result["results"]["codex_responses"]["ok"])
+
+    def test_protocol_route_recreates_missing_managed_alias_for_actual_run(self):
+        config = {
+            "providers": {
+                "new-api": {
+                    "name": "New API",
+                    "api": "https://gateway.example/v1",
+                    "models": {"gpt-responses": {}},
+                }
+            }
+        }
+        options = {"providers": [{"slug": "new-api", "models": ["gpt-responses"], "capabilities": {}}]}
+        with tempfile.TemporaryDirectory() as directory, \
+            patch.object(plugin_api_v3, "_PROTOCOL_FILE", pathlib.Path(directory) / "protocols.json"), \
+            patch.object(plugin_api_v3, "_read_official_config", return_value=config), \
+            patch.object(plugin_api_v3, "_read_official_model_options", return_value=options), \
+            patch.object(plugin_api_v3._legacy, "_hermes_proxy", return_value={"ok": True}) as proxy:
+            plugin_api_v3._save_route_state("new-api", "gpt-responses", {
+                "source_provider": "new-api",
+                "source_model": "gpt-responses",
+                "mode": "codex_responses",
+                "status": "resolved",
+                "execution_provider": "stale-alias",
+            })
+            route = plugin_api_v3._protocol_route_snapshot(
+                config, options, "new-api", "gpt-responses", ensure_alias=True
+            )
+
+        self.assertEqual(route["status"], "resolved")
+        self.assertTrue(route["execution_provider"].endswith("-responses"))
+        self.assertTrue(any(call.args[0] == "/api/config" for call in proxy.call_args_list))
+
+    def test_v3_run_replaces_source_provider_with_resolved_alias_before_official_submission(self):
+        config = {
+            "providers": {
+                "new-api": {
+                    "name": "New API",
+                    "api": "https://gateway.example/v1",
+                    "models": {"gpt-responses": {}},
+                }
+            }
+        }
+        options = {
+            "providers": [{
+                "slug": "new-api",
+                "authenticated": True,
+                "models": ["gpt-responses"],
+                "capabilities": {},
+            }]
+        }
+        submitted = {}
+
+        def fake_proxy(path, method="GET", body=None, timeout=None):
+            if path.startswith("/api/sessions/"):
+                return {"messages": []}
+            if path == "/api/config" and method == "PUT":
+                return {"ok": True}
+            if path == "/v1/runs" and method == "POST":
+                submitted.update(body)
+                return {"id": "run-responses", "status": "running"}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory, \
+            patch.object(plugin_api_v3, "_PROTOCOL_FILE", pathlib.Path(directory) / "protocols.json"), \
+            patch.object(plugin_api_v3, "_read_official_config", return_value=config), \
+            patch.object(plugin_api_v3, "_read_official_model_options", return_value=options), \
+            patch.object(plugin_api_v3._legacy, "_require_runs", return_value={"submission": True, "events": False, "stop": True, "approval": True, "steer": True}), \
+            patch.object(plugin_api_v3._legacy, "_hermes_proxy", side_effect=fake_proxy):
+            plugin_api_v3._save_route_state("new-api", "gpt-responses", {
+                "source_provider": "new-api",
+                "source_model": "gpt-responses",
+                "mode": "codex_responses",
+                "status": "resolved",
+                "execution_provider": "stale-alias",
+            })
+            result = plugin_api_v3._start_native_run_v3({
+                "session_id": "session-v3-route",
+                "input": "route this model",
+                "provider": "new-api",
+                "model": "gpt-responses",
+            })
+
+        self.assertTrue(submitted["provider"].endswith("-responses"))
+        self.assertEqual(submitted["model"], "gpt-responses")
+        self.assertEqual(result["source_route"]["status"], "resolved")
+        self.assertEqual(result["source_route"]["mode"], "codex_responses")
+
+
     def test_product_capabilities_are_explicit(self):
         caps = plugin_api_v3.product_capabilities()
         self.assertEqual(caps["version"], 3)
@@ -263,6 +483,7 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertIn("/api/sessions", caps["official_plan"]["fallback"])
         self.assertIn("/api/sessions/{session_id}/context", caps["context_telemetry"]["source"])
         self.assertIn("never", caps["context_telemetry"]["fallback"])
+        self.assertEqual(caps["moa_runtime_resolution"]["source"], "Hermes official /api/model/moa")
 
 
 if __name__ == "__main__":

@@ -33,6 +33,13 @@ for (const token of [
   "'prompt.submit'",
   "'session.usage'",
   "'session.context_breakdown'",
+  'const SESSION_RECONCILE',
+  'const SESSION_ATTACH',
+  "'session.events.since'",
+  "session_attach: 'session.resume + session.events.since'",
+  'gateway_last_seq',
+  'transport.replay_gap',
+  'hermes.gateway.session.resume_reconciliation',
   "type === 'todo.updated'",
   "type === 'status.update'",
   "kind === 'compacting'",
@@ -68,18 +75,50 @@ assert.ok(!gateway.includes('close_on_disconnect: true'), 'browser disconnect mu
 assert.ok(!gateway.includes("source: 'hermes.gateway.close_on_disconnect'"), 'disconnect must not be projected as a terminal Hermes Run');
 
 // Source Product 3 remains reviewable; the supported installer applies a
-// fail-closed release transform for arbitrary files, Advanced-only native
-// Dashboard navigation and Full Access disclosure.
+// fail-closed release transform for arbitrary files, the direct native
+// Dashboard hand-off and Full Access disclosure.
 for (const token of [
   "registerSlot('hermes-worker-studio', 'header-left'",
-  "['/sessions', '原生 Dashboard · 会话']",
+  "hws3-native-dashboard-link",
+  "href: baseHref('/sessions')",
+  'inferApiModeFromEndpointInput',
+  'modelApiMode',
+  'protocol capabilities are read per',
+  "plugin('/hermes/slash-complete'",
+  "plugin('/hermes/commands'",
+  "plugin('/hermes/slash-exec'",
+  'slashItems.map',
+  'ADVANCED_MARKER',
+  'markAdvancedNavigation',
+  'clearAdvancedNavigation',
+  '/hermes/sessions/${encodeURIComponent(id)}/projection',
+  '/hermes/moa-sessions',
+  'model_config?.provider',
+  'browser_model_lock?.provider',
+  'expandedTurns',
+  'hws3-slash-menu',
+  'slashCommandText',
+  "display_kind: 'command-result'",
+  'hws3-tool-row',
+  'hws3-tool-activity',
+  'commandBusy',
+  'stopPropagation',
+  'hws3-moa-session-list',
+  '/api/model/moa',
+  'Mixture of Agents',
+  'locateSearchHit',
+  'hws3-history-hit-anchor',
+  'highlightText',
+  'RECENT_LIMIT = 10',
+  'CHAT_MESSAGE_LIMIT = 10',
+  '消息全文 FTS',
   '← Worker Studio',
   "jinit('PATCH', { title:",
   "jinit('PATCH', { archived:",
   "jinit('DELETE')",
   'titleFromPrompt',
-  'Date.now().toString(36)',
-  'Ctrl/Cmd+V 粘贴图片',
+  'GENERATED_TITLE_SUFFIX',
+  'Ctrl/Cmd+V 粘贴文件',
   'onPaste',
   'onDrop',
   "plugin('/hermes/runs-v3'",
@@ -98,10 +137,32 @@ for (const token of [
   '删除',
   'ContextMeter',
   'officialContextTelemetry',
+  'mapTurnRunsToMessages',
+  'reconcileProjectedTurns',
+  'projectedTurnIsActive',
+  'officialAssistantForProjectedTurn',
+  'projectedTurnNeedsReconciliation',
+  'hasStaleIncompleteReconciliation',
+  'mergeProjectedRunEvents',
+  'attachProjectedRun',
+  'pollAttachedRun',
+  'pollProjectedRecovery',
+  'session-attach',
+  'cancelRunPoll',
+  'unique nearest response',
+  'official timestamp only when it is the unique nearest response in a',
+  'Load the official messages before exposing the recovered projection',
+  'official_message_timestamp',
+  'messagesLoading',
+  '官方未提供时长',
+  'hermes_message_id',
+  'hermes_output_exact',
+  'hermes_timestamp',
+  'system-sync',
   'context.compaction',
   'context.snapshot',
-  '正在压缩上下文',
-  '上下文已压缩',
+  'Auto Compact 进行中',
+  'Compact 完成，正在恢复实时上下文',
   '不会把累计 billing/input token 当成当前上下文',
 ]) assert.ok(js.includes(token), `missing v3 product UI source contract token: ${token}`);
 
@@ -111,16 +172,8 @@ for (const token of [
   'Ctrl/Cmd+V 粘贴文件',
   "type: 'file_url'",
   "kind: item.kind || 'file'",
-  'const HERMES_PRIMARY = [];',
-  "['/sessions', '会话 / Sessions']",
-  "['/cron', '自动化 / Cron']",
-  "['/skills', 'Skills']",
-  "['/plugins', 'Plugins']",
-  "['/mcp', 'MCP']",
-  '高级 · Hermes Dashboard',
-  'Clarify 等交互请求自动 Skip/Decline，不再等待人工',
-  '缺少密码、MFA 或外部授权时会自动失败/继续可行路径',
 ]) assert.ok(stageBundle.includes(token), `missing installed Product 3 release transform token: ${token}`);
+assert.ok(!stageBundle.includes('HERMES_PRIMARY'), 'the installer must not maintain a copied Hermes navigation list');
 assert.ok(!stageBundle.includes("['/sessions', 'Hermes 会话', '☷']"), 'native Sessions must not return to the visible Studio product rail');
 assert.ok(!stageBundle.includes("['/cron', '自动化', '◷']"), 'native Automation must not return to the visible Studio product rail');
 
@@ -129,11 +182,14 @@ assert.ok(!js.includes('API_SERVER_KEY'), 'browser UI bundle must never see Herm
 assert.ok(js.includes("new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/bmp'])"));
 assert.ok(js.includes('25 * 1024 * 1024'));
 
-for (const token of ['@media(max-width:820px)', 'env(safe-area-inset-bottom)', '.hws3-mobile-scrim', '.hws3-composer', '.hws3-plan-card', '.hws3-return-slot']) {
+for (const token of ['@media(max-width:820px)', 'env(safe-area-inset-bottom)', '.hws3-mobile-scrim', '.hws3-composer', '.hws3-plan-card', '.hws3-return-slot', '.hws3-message.user{grid-template-columns']) {
   assert.ok(css.includes(token), `missing responsive/product base CSS token: ${token}`);
 }
-for (const token of ['.hws3-context-meter', '.hws3-context-popover', '.hws3-plan-summary', '.hws3-file-icon', '@keyframes hws3-context-spin', '@media(max-width:540px)', '@media(prefers-reduced-motion:reduce)']) {
+for (const token of ['.hws3-context-meter', '.hws3-context-popover', '.hws3-plan-summary', '.hws3-file-icon', '.hws3-history-hit-anchor', '.hws3-moa-page', '.hws3-moa-flow', '.hws3-moa-source-note', '@keyframes hws3-context-spin', '@media(max-width:540px)', '@media(prefers-reduced-motion:reduce)']) {
   assert.ok(sealedCss.includes(token), `missing sealed context/plan/attachment CSS token: ${token}`);
+}
+for (const token of ['html:has(.hws3-root) #app-sidebar', 'html:has(.hws3-root) #app-sidebar+div>header', '#root>[data-layout-variant]>header']) {
+  assert.ok(sealedCss.includes(token), `missing scoped official host-shell compatibility token: ${token}`);
 }
 
 for (const token of [
@@ -141,6 +197,11 @@ for (const token of [
   '"input": raw_input',
   '@router.post("/hermes/runs-v3")',
   '@router.get("/hermes/sessions/{session_id}/context")',
+  '@router.get("/hermes/sessions/{session_id}/projection")',
+  '@router.put("/hermes/sessions/{session_id}/projection")',
+  '@router.get("/hermes/moa-sessions")',
+  '_write_projection',
+  'os.replace(temporary, path)',
   '_legacy._hermes_proxy',
   'Hermes official /v1/runs',
   'BUILD_CANDIDATE_SHA = "source-tree"',
@@ -155,8 +216,8 @@ for (const token of [
 assert.ok(!bridge.includes('str(body.get("message") or body.get("input")'), 'v3 bridge must preserve structured multimodal input');
 
 assert.ok(installer.includes('dashboard/dist/gateway-native.js'));
-assert.ok(installer.includes("const href = baseHref('/favicon.ico');"));
-assert.ok(installer.includes('official Hermes Dashboard /favicon.ico'));
+assert.ok(installer.includes('dashboard/dist/project-mark.png'));
+assert.ok(installer.includes('project mark via Hermes official plugin static assets'));
 assert.ok(installer.includes('Hermes official TUI Gateway JSON-RPC'));
 assert.ok(installer.includes('scripts/stage_product_bundle.py'));
 assert.ok(installer.includes('arbitrary attachments'));

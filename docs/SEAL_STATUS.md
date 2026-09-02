@@ -115,13 +115,23 @@ embedding model is not a dialogue model, and `qwen3:4b-instruct` rejected
 Hermes' thinking parameter; those are model compatibility results, not
 credential failures.
 
-The remaining host blocker is precise: Hermes `0.20.6` resolves a generic named
-custom provider without an explicit provider-level `api_mode` to
+The pinned-core limitation is precise: Hermes `0.20.6` resolves a generic named
+custom provider without an explicit provider-level transport to
 `chat_completions`, and does not dynamically select `codex_responses` per
-model. A single custom provider therefore cannot transparently route this
-mixed New API inventory. Adding `api_mode: codex_responses` globally would
-break the verified Chat Completions models. The pinned Hermes source also
-intentionally does not apply a generic custom-endpoint GPT-name heuristic.
+model. Adding `api_mode: codex_responses` globally would break the verified
+Chat Completions models. The pinned Hermes source also intentionally does not
+apply a generic custom-endpoint GPT-name heuristic.
+
+The current Product 3 bridge closes that limitation without claiming it is an
+upstream capability. A pasted route suffix is normalized only as endpoint
+input; an explicit Hermes capability is authoritative. For a generic mixed
+provider, the operator must click “官方探测” or choose Chat/Responses. Studio
+then makes up to two real Hermes `/v1/runs` calls, records the result in a
+private bounded route state, and materializes a hidden per-model Provider with
+the selected transport through Hermes `/api/config`. The original provider is
+left intact, the hidden aliases are excluded from the Studio catalog, and
+unresolved or ambiguous results fail closed. MOA uses the same resolution
+before handing execution back to Hermes' native `moa` provider.
 
 Reproduce the configuration and transport evidence through an authenticated
 Dashboard session (the session token and API key must remain private):
@@ -129,24 +139,29 @@ Dashboard session (the session token and API key must remain private):
 ```text
 GET  http://127.0.0.1:9119/api/providers/custom-endpoints
 GET  http://127.0.0.1:9119/api/model/options?refresh=1
-POST http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/model-probe
+GET  http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/protocols
+POST http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/protocols/probe
      {"provider":"worker-studio-new-api","model":"gpt-5.6-sol"}
+GET  http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/protocol-route?provider=worker-studio-new-api&model=gpt-5.6-sol
 ```
 
-The last request currently demonstrates the blocker as Hermes attempts
-`/v1/chat/completions`; a direct authenticated New API request to
-`https://api.230385.xyz/v1/responses` with the same GPT model and streaming
-enabled demonstrates that the provider's Responses surface is available.
+The probe is an explicit real-Run action and may make billable upstream calls;
+it is never performed as a page-load side effect. The route response names the
+actual execution Provider and protocol, or reports `unresolved`/`ambiguous`
+without guessing. A direct authenticated New API request is still useful as
+operator evidence, but is not substituted for Hermes' official Run probe.
 
 The pinned environment also has no local Bandit executable; the repository's
 previous CI security gate passed, while the post-change local static gates and
-contract checks passed. Because the mixed-provider transport remains
-unresolved, the host acceptance is recorded as **NOT YET SEALED**.
+contract checks passed. The compatibility bridge is implemented and covered by
+unit tests, but this document is not a substitute for fresh target-machine
+probe evidence and the pinned upstream exclusive-shell Gate 0. Host acceptance
+therefore remains **NOT YET SEALED**.
 
 ## Target-machine seal
 
 Status: **NOT YET SEALED**.
 
-`SEALED` additionally requires the authenticated host evidence in `SEAL_CHECKLIST.md`: real target-machine installation/Plugin Doctor, live Hermes API readiness, real New API credentials/model probes, four-mode live child behavior, unattended config read-back + marker Run, restart/failure injection and security sweep. It also requires a supported configuration or upstream fix for the mixed New API Chat Completions/Responses routing described above, followed by successful end-to-end probes for every intended dialogue model and final CI.
+`SEALED` additionally requires the authenticated host evidence in `SEAL_CHECKLIST.md`: real target-machine installation/Plugin Doctor, live Hermes API readiness, real New API credentials/model probes, four-mode live child behavior, unattended config read-back + marker Run, restart/failure injection and security sweep. It also requires successful explicit protocol evidence for every intended mixed-provider dialogue model and the pinned Hermes upstream exclusive-shell contract, followed by final CI.
 
 The repository must never label itself `SEALED` solely because GitHub CI is green.
