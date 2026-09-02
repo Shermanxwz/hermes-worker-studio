@@ -977,9 +977,25 @@
     );
   }
 
-  function ToolActivityGroup({ rows, searchQuery = '' }) {
+  function ToolActivityGroup({ rows, searchQuery = '', compact = false }) {
     const calls = rows.flatMap((msg) => Array.isArray(msg?.tool_calls) ? msg.tool_calls : []);
     const results = rows.filter((msg) => msg?.role === 'tool');
+    const toolNames = [...new Set([
+      ...calls.map((call) => call?.function?.name || call?.name || 'tool'),
+      ...results.map((msg) => msg?.tool_name || msg?.name || 'tool'),
+    ].map((name) => String(name).trim()).filter(Boolean))];
+    const complete = calls.length > 0 ? results.length >= calls.length : results.length > 0;
+    if (compact) {
+      return h('section', { className: `hws3-tool-activity hws3-tool-activity-compact ${complete ? 'complete' : 'running'}`, 'data-tool-activity': 'summary', 'data-tool-detail-source': 'work-timeline' },
+        h('div', { className: 'hws3-tool-compact-row' },
+          h('span', { className: 'hws3-tool-compact-state', 'aria-hidden': 'true' }, complete ? '✓' : h(Spinner)),
+          h('div', null,
+            h('strong', null, `工具 · ${toolNames.join(' · ') || 'Hermes 工具'}`),
+            h('small', null, `${complete ? '已完成' : '进行中'} · ${calls.length} 次调用 · ${results.length} 个结果 · 官方详情在下方工作过程中`),
+          ),
+        ),
+      );
+    }
     const activity = [];
     rows.forEach((msg, rowIndex) => {
       if (msg?.role === 'assistant' && Array.isArray(msg?.tool_calls)) {
@@ -1260,7 +1276,11 @@
           if (msg?.role === 'assistant' && Array.isArray(msg?.tool_calls) && msg.tool_calls.length) {
             let end = i + 1;
             while (end < rows.length && (rows[end]?.role === 'tool' || (rows[end]?.role === 'assistant' && Array.isArray(rows[end]?.tool_calls) && rows[end].tool_calls.length))) end += 1;
-            return [h(ToolActivityGroup, { rows: rows.slice(i, end), key: `tools-${msg?.id || i}` })];
+            // Hermes messages remain authoritative, but the detailed command
+            // and result are already represented by the same Run lifecycle
+            // below. Keep only a compact acknowledgement here so one official
+            // tool event is not presented twice in the conversation.
+            return [h(ToolActivityGroup, { rows: rows.slice(i, end), compact: true, key: `tools-${msg?.id || i}` })];
           }
           const nodes = [h(MessageBubble, { msg, key: msg?.id || `${msg?.role}-${i}` })];
           if (msg?.role === 'assistant') {

@@ -37,6 +37,7 @@ let runSerial = 0;
 const polls = new Map();
 let createdTitle = '';
 let latestRunBody = null;
+let includeToolMessages = false;
 let config = {
   plugins: { entries: { 'hermes-worker-studio': { settings: { mode: 'AUTO' } } } },
   approvals: { mode: 'smart', timeout: 300, cron_mode: 'approve', single_query_mode: 'approve', unattended_mode: 'approve', mcp_reload_confirm: true, destructive_slash_confirm: true },
@@ -76,7 +77,14 @@ function responseFor(url, init = {}) {
 
   if (url === '/api/sessions?limit=10&offset=0&order=recent&archived=exclude') return { sessions: sessions.filter((s) => !s.archived), total: sessions.filter((s) => !s.archived).length };
   if (url.startsWith('/api/sessions/search?')) return { results: [{ ...(sessions.find((s) => s.id === 'session-1') || { id: 'session-1', title: 'Conversation One' }), session_id: 'session-1', role: 'user', snippet: 'needle appears in the complete Hermes history' }] };
-  if (url === '/api/sessions/session-1/messages?limit=10&offset=0&order=latest') return { messages: [{ id: 'm1', role: 'user', content: 'hello' }, { id: 'm2', role: 'assistant', content: 'hi' }] };
+  if (url === '/api/sessions/session-1/messages?limit=10&offset=0&order=latest') return { messages: includeToolMessages
+    ? [
+      { id: 'm1', role: 'user', content: 'hello' },
+      { id: 'm-tool-call', role: 'assistant', content: '', tool_calls: [{ id: 'call-1', function: { name: 'terminal', arguments: 'pwd' } }] },
+      { id: 'm-tool-result', role: 'tool', tool_name: 'terminal', content: '/workspace' },
+      { id: 'm2', role: 'assistant', content: 'hi' },
+    ]
+    : [{ id: 'm1', role: 'user', content: 'hello' }, { id: 'm2', role: 'assistant', content: 'hi' }] };
   if (url === '/api/sessions/session-new/messages?limit=10&offset=0&order=latest') return { messages: [{ id: 'nm1', role: 'assistant', content: 'persisted final' }] };
   if (url.startsWith('/api/sessions/') && method === 'PATCH') {
     const id = decodeURIComponent(url.split('/')[3]);
@@ -244,8 +252,12 @@ assert.ok(parts[1].image_url.url.startsWith('data:image/png;base64,'));
 await waitFor(() => polls.get('run-2') >= 2, 'image run completion');
 
 // Open an existing session and exercise the complete official Session CRUD surface.
+includeToolMessages = true;
 await click([...window.document.querySelectorAll('.hws3-session-row')].find((el) => el.textContent.includes('Conversation One')));
 await waitFor(() => byText('.hws3-chat-title', 'Conversation One'), 'open existing session');
+await waitFor(() => window.document.querySelector('.hws3-tool-activity-compact'), 'compact official tool activity');
+assert.equal(window.document.querySelectorAll('.hws3-tool-activity-compact .hws3-tool-card').length, 0, 'conversation tool summary must not repeat raw command/result cards');
+assert.match(window.document.querySelector('.hws3-tool-activity-compact').textContent, /官方详情在下方工作过程中/);
 assert.equal(window.document.querySelector('.hws3-chat-search'), null, 'content search belongs only to Complete History');
 await click(byText('.hws3-nav button', '完整历史'));
 const historySearch = window.document.querySelector('.hws3-history-search-label input');

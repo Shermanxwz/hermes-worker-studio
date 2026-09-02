@@ -34,4 +34,14 @@
 .hws3-tool-activity-note{display:flex;gap:7px;align-items:flex-start;margin-top:7px;padding:7px 8px;border-radius:9px;background:rgba(7,21,19,.38)}
 .hws3-tool-activity-note span{color:var(--hws-muted);font-size:9px;font-weight:700}
 .hws3-tool-activity-note p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;line-height:1.55}
+.hws3-tool-activity-compact{display:grid;gap:6px;padding:7px 9px;background:rgba(13,36,32,.34)}
+.hws3-tool-activity-compact>header{padding:0 1px}
+.hws3-tool-activity-compact>header strong{font-size:9px}
+.hws3-tool-activity-compact>header small{font-size:8px}
+.hws3-tool-compact-row{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:center;min-width:0;padding:6px 7px;border:1px solid rgba(93,167,153,.14);border-radius:8px;background:rgba(7,21,19,.34)}
+.hws3-tool-compact-state{width:18px;height:18px;display:grid;place-items:center;border:1px solid rgba(58,168,151,.3);border-radius:50%;color:var(--hws-teal);font-size:10px}
+.hws3-tool-activity-compact.running .hws3-tool-compact-state{color:var(--hws-accent)}
+.hws3-tool-compact-row strong,.hws3-tool-compact-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hws3-tool-compact-row strong{font-size:10px}
+.hws3-tool-compact-row small{margin-top:2px;color:var(--hws-muted);font-size:8px}
 @media(max-width:520px){.hws3-tool-row{padding-left:34px}}
