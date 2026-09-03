@@ -32,6 +32,7 @@ jobs:
         run: |
           python upstream/hermes-exclusive-shell/apply.py .upstream/hermes
           python upstream/hermes-exclusive-shell/apply-backend.py .upstream/hermes
+          python upstream/hermes-exclusive-shell/apply-cache-gate.py .upstream/hermes
 
       - name: Diff integrity gate
         working-directory: .upstream/hermes
@@ -52,29 +53,39 @@ jobs:
           python -m pip install --disable-pip-version-check -e .
           python -m pip install --disable-pip-version-check 'pytest==9.1.1'
 
-      - name: Verify Dashboard manifest pass-through
+      - name: Verify Dashboard manifest contract
         working-directory: .upstream/hermes
         run: |
           python -m pytest -q \
-            tests/hermes_cli/test_web_server.py::TestDashboardPluginManifestExtensions::test_override_and_hidden_carried_through
+            tests/hermes_cli/test_web_server.py::TestDashboardPluginManifestExtensions
 
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
           node-version: "24"
 
-      - name: Install Hermes Web dependencies
-        working-directory: .upstream/hermes/web
-        run: npm install --no-audit --no-fund
+      - name: Install Hermes root and Web dependencies
+        working-directory: .upstream/hermes
+        run: |
+          npm run install:root
+          npm run install:web
 
       - name: Typecheck Hermes Web
         working-directory: .upstream/hermes/web
         run: npm run typecheck
 
-      - name: Verify route-scoped shell resolver
+      - name: Verify shell ownership and manifest-cache gates
         working-directory: .upstream/hermes/web
-        run: npx vitest run src/plugins/shell-mode.test.ts
+        run: npx vitest run src/plugins/shell-mode.test.ts src/plugins/usePlugins.test.ts
 
       - name: Lint changed Hermes Web files
         working-directory: .upstream/hermes/web
-        run: npx eslint src/App.tsx src/plugins/types.ts src/plugins/shell-mode.ts src/plugins/shell-mode.test.ts
+        run: npx eslint src/App.tsx src/plugins/types.ts src/plugins/shell-mode.ts src/plugins/shell-mode.test.ts src/plugins/usePlugins.ts src/plugins/usePlugins.test.ts
+
+      - name: Run full Hermes Web regression suite
+        working-directory: .upstream/hermes/web
+        run: npm run test
+
+      - name: Build Hermes Web production bundle
+        working-directory: .upstream/hermes/web
+        run: npm run build
