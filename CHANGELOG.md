@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.1 — Mixed New API protocol closure
+## Unreleased — Mixed New API protocol closure
 
 - Closed the mixed OpenAI-compatible endpoint gap where one New API inventory can contain both Chat Completions and Responses-only models.
 - Added first-use per-model protocol resolution: unresolved custom models run real Hermes Chat/Responses probes automatically, cache the verified result, and continue through the resulting official execution route without requiring a pre-click in Models.
