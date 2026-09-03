@@ -149,6 +149,22 @@ class SealEvidenceVerifierTests(unittest.TestCase):
         self.assertFalse(verdict["eligible"])
         self.assertTrue(any("mobile-landscape-chromium" in error for error in verdict["errors"]))
 
+    def test_skipped_required_viewport_blocks_seal(self):
+        ui = good_ui()
+        landscape = ui["suites"][0]["specs"][3]["tests"][0]["results"][0]
+        landscape["status"] = "skipped"
+        verdict = seal.validate(good_target(), ui, good_upstream(), CANDIDATE)
+        self.assertFalse(verdict["eligible"])
+        self.assertTrue(any("mobile-landscape-chromium product-shell" in error for error in verdict["errors"]))
+
+    def test_skipped_desktop_native_return_blocks_seal(self):
+        ui = good_ui()
+        native = ui["suites"][0]["specs"][1]["tests"][0]["results"][0]
+        native["status"] = "skipped"
+        verdict = seal.validate(good_target(), ui, good_upstream(), CANDIDATE)
+        self.assertFalse(verdict["eligible"])
+        self.assertTrue(any("desktop-chromium native-return" in error for error in verdict["errors"]))
+
     def test_missing_official_exclusive_shell_contract_blocks_seal(self):
         upstream = good_upstream()
         upstream["contracts"]["dashboard_route_scoped_exclusive_shell"]["verified"] = False
