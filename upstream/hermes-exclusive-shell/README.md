@@ -57,6 +57,7 @@ The contribution applies upstream-ready changes to:
 - `web/src/plugins/usePlugins.ts`
 - `web/src/plugins/usePlugins.test.ts`
 - `web/src/App.tsx`
+- `web/src/App.exclusive-shell.test.tsx` (new)
 - `tests/hermes_cli/test_web_server.py`
 - `website/docs/user-guide/features/extending-the-dashboard.md`
 
@@ -71,13 +72,18 @@ contribution generalizes that ownership gate to exclusive-shell overrides and
 to background manifest refreshes so no stale cache path can flash native
 Dashboard chrome before the active plugin route is resolved.
 
+The focused jsdom App test verifies the actual rendered contract, not only the
+resolver: pending discovery has no native chrome, `/` exclusive renders the
+plugin without shell slots/sidebar, and a standard `/sessions` override renders
+inside the normal Hermes shell again.
+
 ## Validation
 
 `.github/workflows/upstream-exclusive-shell.yml` checks out the exact Hermes
 revision, applies every contribution stage, rejects patch drift with
 `git diff --check`, runs the complete Dashboard manifest-extension backend test
-class, TypeScript typecheck, focused shell/cache Vitest coverage, ESLint on all
-changed Web sources, the full Hermes Web Vitest regression suite, and a
+class, TypeScript typecheck, focused resolver/cache/jsdom DOM tests, ESLint on
+all changed Web sources, the full Hermes Web Vitest regression suite, and a
 production Web build.
 
 This branch is staging evidence only. It does **not** make Worker Studio

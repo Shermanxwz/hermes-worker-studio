@@ -31,8 +31,10 @@ jobs:
       - name: Apply exclusive-shell contribution
         run: |
           python upstream/hermes-exclusive-shell/apply.py .upstream/hermes
+          python upstream/hermes-exclusive-shell/apply-app-structure.py .upstream/hermes
           python upstream/hermes-exclusive-shell/apply-backend.py .upstream/hermes
           python upstream/hermes-exclusive-shell/apply-cache-gate.py .upstream/hermes
+          python upstream/hermes-exclusive-shell/apply-app-runtime-test.py .upstream/hermes
 
       - name: Diff integrity gate
         working-directory: .upstream/hermes
@@ -74,13 +76,25 @@ jobs:
         working-directory: .upstream/hermes/web
         run: npm run typecheck
 
-      - name: Verify shell ownership and manifest-cache gates
+      - name: Verify shell ownership, DOM and manifest-cache gates
         working-directory: .upstream/hermes/web
-        run: npx vitest run src/plugins/shell-mode.test.ts src/plugins/usePlugins.test.ts
+        run: |
+          npx vitest run \
+            src/App.exclusive-shell.test.tsx \
+            src/plugins/shell-mode.test.ts \
+            src/plugins/usePlugins.test.ts
 
       - name: Lint changed Hermes Web files
         working-directory: .upstream/hermes/web
-        run: npx eslint src/App.tsx src/plugins/types.ts src/plugins/shell-mode.ts src/plugins/shell-mode.test.ts src/plugins/usePlugins.ts src/plugins/usePlugins.test.ts
+        run: |
+          npx eslint \
+            src/App.tsx \
+            src/App.exclusive-shell.test.tsx \
+            src/plugins/types.ts \
+            src/plugins/shell-mode.ts \
+            src/plugins/shell-mode.test.ts \
+            src/plugins/usePlugins.ts \
+            src/plugins/usePlugins.test.ts
 
       - name: Run full Hermes Web regression suite
         working-directory: .upstream/hermes/web
