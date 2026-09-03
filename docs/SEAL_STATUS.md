@@ -4,7 +4,7 @@ Status: **ARCHIVE CANDIDATE**
 
 Product: **Hermes Worker Studio 3.0** — Hermes-native single-runtime product shell.
 
-This file intentionally does **not** hard-code a current PR number or claim that an older target capture seals a newer commit. The exact seal candidate is always the clean SHA supplied to the real-target workflow / `seal_close.py`, and `.seal/SEALED.json` must name that same SHA.
+This file intentionally does **not** hard-code a current PR number or treat an older target capture as proof for newer code. Development changes are merged first; the only final seal identity is the exact current **`main` HEAD** supplied to the real-target workflow / `seal_close.py`.
 
 ## Current repository engineering state
 
@@ -12,20 +12,24 @@ The repository has reached code-level archive-candidate closure around these inv
 
 - Hermes is the only runtime upstream, pinned in `tests/upstream-lock.json`;
 - product chat uses the official Hermes TUI Gateway WebSocket (`session.resume`, `prompt.submit`, Gateway context/todo/tool/subagent events);
-- official `/v1/runs` remains the probe/CI/unattended rail, not a second product chat runtime;
+- official `/v1/runs` remains the probe/acceptance/unattended rail, not a second product chat runtime;
 - Worker uses `PluginContext.subagent_lifecycle`; native `delegate_task` remains Hermes-owned;
 - Main / Worker / Verifier / MOA share Hermes model inventory and the same per-model execution-route resolver;
 - mixed custom endpoints can contain Chat Completions and Responses-only models without a provider-global guess;
 - first unresolved model use performs real Hermes Chat/Responses probes, caches exactly verified routing, deduplicates concurrent first-use probes, and fails closed on ambiguous/both-failed outcomes;
 - reasoning effort is emitted only from explicit upstream capability metadata;
-- session/history/search/archive, config, Custom Endpoints, MOA, Skills/Plugins/MCP ownership all remain on official Hermes surfaces;
+- Session/history/search/archive, config, Custom Endpoints, MOA, Skills/Plugins/MCP ownership remain on official Hermes surfaces;
 - there is no second model registry, planner, tokenizer, worker daemon, queue or persistence database;
 - candidate installation is atomic and candidate-SHA stamped;
-- deterministic release transforms are exact-count/fail-closed and are independently built/syntax-checked in CI;
-- the final UI stylesheet is `product-closure.css`, layered over sealed/base CSS without changing the product visual language;
-- desktop, phone portrait and compact landscape real-target UI projects cover every existing first-level Studio page for viewport/overflow regressions;
-- keyboard focus, dialog Escape/focus lifecycle, disclosure/menu state, touch-only action discoverability and reduced-motion behavior are part of the product closure contract;
-- production security gates reject bearer-secret leaks and second-runtime residue.
+- deterministic release transforms are exact-count/fail-closed and independently built/syntax-checked in CI;
+- final UI stylesheet is `product-closure.css`, layered over sealed/base CSS without changing the existing visual language;
+- desktop, phone portrait and compact landscape real-target UI projects cover every existing first-level Studio page;
+- keyboard focus, dialog Escape/focus lifecycle, disclosure/menu state, touch-only action discoverability and reduced-motion behavior are contract-tested;
+- target evidence is `hermes-worker-studio.seal-evidence.v2` and includes the actual resolved execution route;
+- final verdict is `hermes-worker-studio.seal-verdict.v2`;
+- each browser project independently reads the running candidate SHA rather than relying on post-test report stamping;
+- final GitHub verification is exact-main and read-only; it cannot merge a PR or mutate repository contents;
+- production security gates reject bearer-secret leaks, second-runtime residue and mutation-capable real-target workflow drift.
 
 Repository CI can prove these code and integration contracts, but **CI success alone never changes this status to SEALED**.
 
@@ -51,7 +55,7 @@ That capture established useful environmental facts, including:
 - three `gpt-5.6-*` models failed Hermes Chat Completions but direct credentialed New API `/v1/responses` calls returned HTTP 200 and terminal `response.completed`;
 - this proved the pinned Hermes limitation: generic custom-provider transport is provider-global and cannot safely be switched to Responses for the whole mixed provider.
 
-Those observations motivated the current per-model compatibility bridge. They are **historical evidence only**. They do not prove that the current exact Studio candidate, current installer artifact or current UI closure has run on that machine.
+Those observations motivated the current per-model compatibility bridge. They are **historical evidence only**. Their old evidence schema/candidate cannot satisfy the current v2 exact-main verifier.
 
 ## Current mixed-protocol behavior
 
@@ -69,22 +73,38 @@ For one source Provider/Model:
 
 The Models **官方探测** action remains available for diagnostics and active retry; it is not required before normal first use. Probe work is never triggered merely by rendering the model catalog.
 
+## Exact-main release lifecycle
+
+A PR head is never the final sealed identity:
+
+```text
+PR CI green
+  -> merge code into main
+  -> main push CI green
+  -> ARCHIVE CANDIDATE
+  -> seal exact current main on real target
+  -> read-only GitHub exact-main verification
+```
+
+The manual `Seal Real Hermes Target` workflow verifies `origin/main == candidate_sha` before running, has only `actions: read` / `contents: read`, and performs no PR merge or branch update after evidence capture.
+
 ## What remains before SEALED
 
-`SEALED` requires **fresh evidence for the exact current candidate**, not reuse of the 2026-09-01 capture:
+`SEALED` requires **fresh evidence for the exact current `main` SHA**, not reuse of the 2026-09-01 capture:
 
-- clean exact candidate SHA;
-- exact-SHA repository CI green;
+- all intended code already merged to `main`;
+- exact-main push CI green;
 - deterministic candidate install and loaded SHA read-back;
+- target evidence v2 with `installed_candidate_verified=true`;
 - current real Hermes target health + Plugin Doctor;
-- current product Gateway/session/context/todo evidence;
-- current mixed-provider New API evidence for intended dialogue models, including automatic Responses routing where required;
-- current Worker/Verifier/MOA route evidence where those paths use mixed-provider models;
-- Full Access read-back/marker and failure-injection/security evidence;
-- Playwright desktop + phone portrait + compact landscape closure on every first-level Studio page;
-- native `/sessions` return-path evidence;
-- independent `.seal` evidence verification;
-- the required upstream route-scoped exclusive-shell contract (`NousResearch/hermes-agent#100149`, or an equivalent documented replacement in the pinned Hermes revision) must pass the upstream gate.
+- real Run with canonical todo and a final execution route matching the requested Provider/Model;
+- automatic Responses route evidence where a selected dialogue model requires Responses;
+- Session cleanup with post-delete 404;
+- Playwright desktop + phone portrait + compact landscape, with each product-shell test explicitly passed and candidate identity read in-browser;
+- desktop native `/sessions` return-path pass;
+- seal-verdict v2 `eligible=true`;
+- read-only finalizer confirms current main has not moved and canonical exact-main push CI is green;
+- required upstream route-scoped exclusive-shell contract (`NousResearch/hermes-agent#100149`, or an equivalent documented replacement in the pinned Hermes revision) passes the upstream gate.
 
 The canonical command is:
 
@@ -92,4 +112,4 @@ The canonical command is:
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
 
-Only when `scripts/verify_seal_evidence.py` accepts the generated evidence and `.seal/SEALED.json` reports `eligible=true` for the **same exact candidate SHA** may this project be called `SEALED`.
+Only when all of those checks close on the same exact current `main` SHA may this project be called `SEALED`.
