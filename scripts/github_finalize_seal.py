@@ -21,6 +21,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+SEAL_VERDICT_SCHEMA = "hermes-worker-studio.seal-verdict.v2"
+
 
 class FinalizeError(RuntimeError):
     pass
@@ -71,7 +73,7 @@ def _load_verdict(path: Path, candidate: str) -> dict[str, Any]:
         raise FinalizeError(f"cannot read seal verdict {path}: {exc}") from exc
     if not isinstance(verdict, dict):
         raise FinalizeError("seal verdict root must be an object")
-    if verdict.get("schema") != "hermes-worker-studio.seal-verdict.v1":
+    if verdict.get("schema") != SEAL_VERDICT_SCHEMA:
         raise FinalizeError(f"unexpected seal verdict schema: {verdict.get('schema')!r}")
     if verdict.get("eligible") is not True:
         raise FinalizeError("seal verdict is not eligible=true")
