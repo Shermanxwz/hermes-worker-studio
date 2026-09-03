@@ -1,0 +1,78 @@
+name: Upstream Hermes exclusive-shell seal
+
+on:
+  push:
+    branches:
+      - upstream/hermes-exclusive-shell-seal
+  pull_request:
+    paths:
+      - "upstream/hermes-exclusive-shell/**"
+      - ".github/workflows/upstream-exclusive-shell.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-upstream-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout contribution harness
+        uses: actions/checkout@v5
+
+      - name: Checkout exact Hermes upstream
+        uses: actions/checkout@v5
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 63279301bcbdc185c1b07b98a9312eb0c862f26d
+          path: .upstream/hermes
+          persist-credentials: false
+
+      - name: Apply exclusive-shell contribution
+        run: python upstream/hermes-exclusive-shell/apply.py .upstream/hermes
+
+      - name: Diff integrity gate
+        working-directory: .upstream/hermes
+        run: |
+          git diff --check
+          git status --short
+          git diff --stat
+          test -n "$(git status --short)"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Hermes test runtime
+        working-directory: .upstream/hermes
+        run: |
+          python -m pip install --disable-pip-version-check -e .
+          python -m pip install --disable-pip-version-check 'pytest==9.1.1'
+
+      - name: Verify Dashboard manifest pass-through
+        working-directory: .upstream/hermes
+        run: |
+          python -m pytest -q \
+            tests/hermes_cli/test_web_server.py::TestDashboardPluginManifestExtensions::test_override_and_hidden_carried_through
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Install Hermes Web dependencies
+        working-directory: .upstream/hermes/web
+        run: npm install --no-audit --no-fund
+
+      - name: Typecheck Hermes Web
+        working-directory: .upstream/hermes/web
+        run: npm run typecheck
+
+      - name: Verify route-scoped shell resolver
+        working-directory: .upstream/hermes/web
+        run: npx vitest run src/plugins/shell-mode.test.ts
+
+      - name: Lint changed Hermes Web files
+        working-directory: .upstream/hermes/web
+        run: npx eslint src/App.tsx src/plugins/types.ts src/plugins/shell-mode.ts src/plugins/shell-mode.test.ts
