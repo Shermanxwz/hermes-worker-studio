@@ -29,7 +29,9 @@ jobs:
           persist-credentials: false
 
       - name: Apply exclusive-shell contribution
-        run: python upstream/hermes-exclusive-shell/apply.py .upstream/hermes
+        run: |
+          python upstream/hermes-exclusive-shell/apply.py .upstream/hermes
+          python upstream/hermes-exclusive-shell/apply-backend.py .upstream/hermes
 
       - name: Diff integrity gate
         working-directory: .upstream/hermes

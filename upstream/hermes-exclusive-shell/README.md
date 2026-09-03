@@ -30,6 +30,9 @@ Semantics:
 - `shell` omitted or `"standard"` preserves the current Dashboard shell.
 - `"exclusive"` is valid as a route-ownership signal only when `tab.override`
   identifies the active route.
+- The server validates and forwards only `"standard"` / `"exclusive"`, and
+  only when a valid `tab.override` has already been accepted. Unknown or
+  standalone shell declarations fail closed and are not exposed to the UI.
 - While plugin manifests are loading, Dashboard chrome is not painted, so an
   exclusive override cannot flash the native sidebar/header before discovery
   completes.
@@ -41,8 +44,9 @@ Semantics:
 
 ## Change surface
 
-`apply.py` makes the upstream-ready changes to:
+The contribution applies upstream-ready changes to:
 
+- `hermes_cli/web_server.py`
 - `web/src/plugins/types.ts`
 - `web/src/plugins/shell-mode.ts` (new)
 - `web/src/plugins/shell-mode.test.ts` (new)
@@ -50,16 +54,17 @@ Semantics:
 - `tests/hermes_cli/test_web_server.py`
 - `website/docs/user-guide/features/extending-the-dashboard.md`
 
-The backend already passes the complete `tab` object through discovery, so no
-runtime server implementation change is required; the existing manifest test
-is extended to seal the `tab.shell` pass-through contract.
+`_discover_dashboard_plugins()` currently rebuilds `tab_info` from an explicit
+allow-list (`path`, `position`, `override`, `hidden`). The companion backend
+patch extends that public boundary with the validated route-scoped `shell`
+field; the existing manifest-extension test seals the pass-through contract.
 
 ## Validation
 
 `.github/workflows/upstream-exclusive-shell.yml` checks out the exact Hermes
-revision, applies the contribution, rejects patch drift with `git diff --check`,
-runs the backend manifest contract test, TypeScript typecheck, focused Vitest
-coverage, and ESLint on every changed Web source.
+revision, applies both contribution stages, rejects patch drift with
+`git diff --check`, runs the backend manifest contract test, TypeScript
+typecheck, focused Vitest coverage, and ESLint on every changed Web source.
 
 This branch is staging evidence only. It does **not** make Worker Studio
 globally SEALED until an equivalent typed, documented, runtime-enforced and
