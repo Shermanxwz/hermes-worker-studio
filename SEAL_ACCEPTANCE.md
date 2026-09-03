@@ -1,6 +1,6 @@
 # Hermes Worker Studio 3 — Seal Acceptance
 
-`SEALED` is a release state, not a design claim. The canonical repository state lives on **`main`**. Product 3 may be called sealed only when **three independent evidence planes** close on the exact current candidate and exact official Hermes pin:
+`SEALED` is a release state, not a design claim. The canonical repository state lives on **`main`**. Product 3 may be called sealed only when **three independent evidence planes** close on the exact current `main` commit and exact official Hermes pin:
 
 1. pinned Hermes public-contract evidence;
 2. real Hermes target/runtime evidence;
@@ -8,9 +8,21 @@
 
 Temporary development branches may exist while work is in progress, but a repository entering archive/seal state must converge back to `main` only.
 
-## 1. Repository health gate
+## 1. Repository health and release identity
 
-The exact candidate must be green for ordinary CI:
+A development PR is not the final seal identity. Code changes follow this order:
+
+```text
+PR exact-head CI green
+  -> merge into main
+  -> exact main push CI green
+  -> ARCHIVE CANDIDATE
+  -> real-target seal exact current main HEAD
+```
+
+This ordering is mandatory. Sealing a PR head and then merging would normally create a different canonical SHA, so target/browser evidence could no longer prove the `main` commit users actually receive.
+
+The exact repository candidate must be green for ordinary CI:
 
 - Studio static + unit + Product 3 mounted UI runtime;
 - exact staged release artifact syntax/closure gate;
@@ -41,7 +53,7 @@ Native Hermes route
        -> official return slot -> Worker Studio
 ```
 
-This ideally requires a route-scoped **exclusive plugin shell** public contract. `tab.override` alone replaces page content but does not officially suppress Hermes' built-in navigation shell. The local preview therefore uses a narrow, reversible host-shell compatibility layer only while the Studio root is mounted; it does not copy navigation, patch Hermes bundles or fork Hermes. This compatibility layer is not sufficient for `SEALED` until the official contract lands.
+This requires a route-scoped **exclusive plugin shell** public contract for final official-grade sealing. `tab.override` replaces page content but the pinned Hermes 0.20.6 contract does not officially grant route-scoped outer-shell ownership. The local product therefore uses a narrow, reversible host-shell compatibility layer only while the Studio root is mounted; it does not copy navigation, patch Hermes bundles or fork Hermes. This compatibility layer is not sufficient for `SEALED` until the official contract lands.
 
 The contract is tracked upstream at `NousResearch/hermes-agent#100149` and specified in `docs/HERMES_DASHBOARD_EXCLUSIVE_SHELL.md`.
 
@@ -69,7 +81,7 @@ The closure layer changes no product capability or visual language; it locks foc
 
 ## 3. One-command real-target closure
 
-Run from the exact candidate checkout on the Hermes target machine:
+Run only from the exact current `main` checkout on the Hermes target machine:
 
 ```bash
 python scripts/seal_close.py --url http://127.0.0.1:19119
@@ -83,17 +95,20 @@ python scripts/seal_close.py --hermes-root /path/to/hermes-agent --url http://12
 
 If omitted, `seal_close.py` prepares the exact pinned Hermes revision beneath `.seal/upstream/hermes`.
 
-The command intentionally refuses a dirty tracked working tree and performs, in order:
+The command refuses a dirty tracked working tree. When an explicit real-Run route is supplied, `--provider` and `--model` must be supplied together so the acceptance test cannot silently fall back to another model.
+
+It performs, in order:
 
 1. exact candidate SHA resolution;
 2. `scripts/seal_upstream_gate.py` against the exact Hermes pin;
 3. `.seal/upstream.json` creation only after baseline and seal-blocking public contracts pass;
 4. deterministic atomic Product 3 install with exact candidate stamp;
-5. real Hermes execution/session/todo acceptance -> `.seal/target.json`;
-6. running Dashboard candidate readback;
-7. desktop + phone portrait + compact landscape real-browser acceptance -> `.seal/ui-report.json` and screenshots;
-8. independent three-plane verification;
-9. `.seal/SEALED.json` only when all evidence planes pass.
+5. real Hermes execution/session/todo acceptance -> target evidence **v2**;
+6. running Dashboard candidate readback and `installed_candidate_verified=true`;
+7. proof of the actual final execution route (`provider`, `model`, route status, transport mode when declared/resolved, and execution provider);
+8. desktop + phone portrait + compact landscape real-browser acceptance -> `.seal/ui-report.json` and screenshots;
+9. each browser project independently reads the running `product-capabilities.candidate_sha` and requires it to equal the candidate;
+10. independent three-plane verification -> seal verdict **v2**.
 
 There is intentionally **no** `--skip-upstream-contract` escape hatch.
 
@@ -163,11 +178,13 @@ Reasoning effort may be emitted only from explicit upstream capability metadata;
 
 ## 7. Real execution + official-plan/context evidence
 
-The target acceptance proves health, Hermes execution/Worker ownership, model catalog ownership and temporary Session create -> rename -> archive -> unarchive -> delete.
+The target acceptance proves health, exact installed candidate identity, Hermes execution/Worker ownership, model catalog ownership and temporary Session create -> rename -> archive -> unarchive -> delete. Deletion must be followed by a 404 readback.
 
 A real Hermes official probe/acceptance turn must show:
 
 - completed Run and verified marker;
+- a final/executable source route with the requested Provider/Model and nonempty execution provider;
+- unresolved or ambiguous transport may not pass the execution evidence gate;
 - at least three persisted monotonic canonical todo revisions;
 - an `in_progress` phase;
 - at least three final todo items, all `completed`;
@@ -208,6 +225,9 @@ It proves:
 - Full Access disclosure remains visible without toggling authority during the UI seal;
 - Gateway capability marker reports attachment, reconnect and unattended contracts;
 - desktop native `/sessions` restores Hermes shell and provides return-to-Studio;
+- the product-shell test must explicitly `pass` in all three projects; project presence or `skipped` status is not sufficient;
+- desktop native-return must explicitly `pass`;
+- every project reads the running candidate SHA before its product evidence is accepted;
 - screenshots and machine-readable report are produced.
 
 Certificate errors are not ignored by default. `HWS_SEAL_IGNORE_HTTPS_ERRORS=1` is an explicit trusted test-environment override only.
@@ -225,31 +245,42 @@ Existing controls must remain keyboard/touch usable without adding a parallel UI
 - safe-area/short-height bounds prevent modal/root overflow;
 - `prefers-reduced-motion` suppresses Studio-owned motion.
 
-## 10. Independent final verifier
+## 10. Independent final verifier and GitHub gate
 
 Final verification consumes:
 
 ```text
 .seal/upstream.json
-.seal/target.json
+.seal/target.json        # hermes-worker-studio.seal-evidence.v2
 .seal/ui-report.json
 ```
 
 and writes:
 
 ```text
-.seal/SEALED.json
+.seal/SEALED.json        # hermes-worker-studio.seal-verdict.v2
 ```
 
-`eligible=true` is possible only when upstream evidence names the exact Hermes pin and verifies `dashboard_route_scoped_exclusive_shell`, while target/browser evidence names the exact Worker Studio candidate.
+`eligible=true` is possible only when upstream evidence names the exact Hermes pin and verifies `dashboard_route_scoped_exclusive_shell`, while target/browser evidence names the exact current `main` candidate.
+
+The final GitHub verifier is deliberately **read-only**. It requires:
+
+- repository default branch is `main`;
+- current `main` HEAD still equals the sealed candidate;
+- the latest exact-candidate **push** CI from `.github/workflows/ci.yml` is completed/success;
+- the local seal verdict is v2, eligible and names the same candidate.
+
+The real-target workflow has only `actions: read` and `contents: read`. It does not mark PRs ready, merge PRs, rewrite branches, or create a different post-evidence commit.
 
 ## 11. Release rule
 
 Do **not** tag or call Product 3 sealed until:
 
-1. the exact current candidate's ordinary CI is fully green;
-2. `seal_close.py` exits 0 on the real target;
-3. `.seal/SEALED.json` says `eligible: true` for that exact candidate and records the exact verified Hermes upstream commit;
-4. no temporary development branch remains in the repository.
+1. all development/closure changes have already been merged into `main`;
+2. the exact current `main` HEAD push CI is fully green;
+3. `seal_close.py` exits 0 on the real target for that same `main` SHA;
+4. `.seal/SEALED.json` says `eligible: true` for that exact SHA and records the exact verified Hermes upstream commit;
+5. the read-only GitHub finalizer confirms `main` still points at that SHA and its canonical push CI is green;
+6. no temporary development branch remains in the repository.
 
 Until the required official exclusive-shell contract is present in the pinned Hermes revision and exact-current real-target evidence closes, the correct state is **ARCHIVE CANDIDATE**.
