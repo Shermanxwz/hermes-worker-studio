@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:frontend": "node tests/frontend_runtime.mjs && node tests/frontend_runtime_v3.mjs && node tests/frontend_gateway_native.mjs && node tests/frontend_product_v3.mjs && node tests/frontend_settings_v3.mjs && node tests/frontend_context_plan_v3.mjs",
+    "test:frontend": "node tests/frontend_runtime.mjs && node tests/frontend_runtime_v3.mjs && node tests/frontend_gateway_native_core_runner.mjs && node tests/frontend_product_v3_core_runner.mjs && node tests/frontend_settings_v3.mjs && node tests/frontend_context_plan_v3.mjs && node tests/frontend_model_capabilities.mjs",
+    "test:model-capabilities": "node tests/frontend_model_capabilities.mjs",
     "seal:ui": "playwright test tests/target_ui.spec.mjs --config=playwright.seal.config.mjs",
     "seal:verify": "python scripts/verify_seal_evidence.py",
     "seal:close": "python scripts/seal_close.py"
