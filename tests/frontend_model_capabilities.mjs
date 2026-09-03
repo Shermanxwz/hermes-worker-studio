@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name) => fs.readFile(path.join(rootDir, `dashboard/dist/${name}`), 'utf8');
+const plain = (value) => JSON.parse(JSON.stringify(value));
 const [loader, core, bridge, domLayer] = await Promise.all(['gateway-native.js', 'model-capability-core.js', 'model-capability-bridge.js', 'model-capability-dom.js'].map(read));
 const dom = new JSDOM('<!doctype html><html><head><script src="http://127.0.0.1/dashboard/dist/gateway-native.js"></script></head><body></body></html>', { url: 'http://127.0.0.1/', runScripts: 'outside-only', pretendToBeVisual: true });
 const { window } = dom;
@@ -69,7 +70,7 @@ assert.equal(api.descriptor({ reasoning: false }).control, 'none');
 assert.equal(api.descriptor({ reasoning: true }).control, 'auto', 'bare reasoning:true must not invent a disable control');
 assert.equal(api.descriptor({ reasoning: true, can_disable_reasoning: true }).control, 'toggle');
 assert.equal(api.descriptor({ reasoning: { supported: true, control: 'fixed', can_disable: false } }).control, 'fixed');
-assert.deepEqual(api.descriptor({ reasoning: { supported: true, options: ['low', 'high'], can_disable: true } }).efforts.map((x) => x.value), ['low', 'high']);
+assert.deepEqual(plain(api.descriptor({ reasoning: { supported: true, options: ['low', 'high'], can_disable: true } }).efforts.map((x) => x.value)), ['low', 'high']);
 const toggleDescriptor = api.descriptor({ reasoning: true, can_disable_reasoning: true });
 assert.equal(api.reasoningValueFromModelOptions({ reasoning: { enabled: true } }), '');
 assert.equal(api.reasoningValueFromModelOptions({ reasoning: { enabled: true } }, toggleDescriptor), 'medium');
@@ -90,16 +91,16 @@ window.__HERMES_PLUGIN_SDK__.fetchJSON = async (url, init = {}) => {
 const enriched = await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/model/options');
 assert.equal(enriched.providers[0].capabilities['toggle-model'].hws_reasoning_control.control, 'toggle');
 assert.equal(enriched.providers[0].capabilities['unknown-model'].hws_reasoning_control.control, 'auto');
-assert.deepEqual(enriched.providers[0].capabilities['toggle-model'].reasoning_efforts.map((x) => x.value), ['none', 'medium']);
+assert.deepEqual(plain(enriched.providers[0].capabilities['toggle-model'].reasoning_efforts.map((x) => x.value)), ['none', 'medium']);
 assert.equal(enriched.providers[0].capabilities['unknown-model'].reasoning_efforts, undefined, 'unknown control must not fabricate none/default efforts');
-assert.deepEqual(enriched.providers[0].capabilities['effort-model'].reasoning_efforts.map((x) => x.value), ['none', 'low', 'high']);
+assert.deepEqual(plain(enriched.providers[0].capabilities['effort-model'].reasoning_efforts.map((x) => x.value)), ['none', 'low', 'high']);
 
 const started = await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: 'stored-session-1', input: 'hello', provider: 'official', model: 'toggle-model', model_options: { reasoning_effort: 'none' } }) });
-assert.deepEqual(calls.find((x) => x.rpc === 'session.resume').params.session_id, 'stored-session-1');
-assert.deepEqual(calls.find((x) => x.rpc === 'config.set').params, { key: 'reasoning', session_id: 'runtime-session-1', value: 'none' });
-assert.deepEqual(started.source_route, { provider: 'official', model: 'toggle-model', reasoning: 'none', reasoning_semantic: 'off', reasoning_control: 'toggle', source: 'hermes.model_options+gateway.config.set' });
+assert.equal(calls.find((x) => x.rpc === 'session.resume').params.session_id, 'stored-session-1');
+assert.deepEqual(plain(calls.find((x) => x.rpc === 'config.set').params), { key: 'reasoning', session_id: 'runtime-session-1', value: 'none' });
+assert.deepEqual(plain(started.source_route), { provider: 'official', model: 'toggle-model', reasoning: 'none', reasoning_semantic: 'off', reasoning_control: 'toggle', source: 'hermes.model_options+gateway.config.set' });
 const snap = await window.__HERMES_PLUGIN_SDK__.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${started.id}?after=0`);
-assert.deepEqual(snap.source_route, started.source_route);
+assert.deepEqual(plain(snap.source_route), plain(started.source_route));
 
 const configWritesBeforeInvalid = calls.filter((x) => x.rpc === 'config.set').length;
 await assert.rejects(
