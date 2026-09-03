@@ -2,19 +2,15 @@
 
 **项目介绍：** [中文](docs/PROJECT_INTRODUCTION.zh-CN.md) · [English](docs/PROJECT_INTRODUCTION.en-US.md)
 
-面向长期封存的 **Hermes 原生 Web 工作台**。项目只维护产品壳、官方能力编排与 UI 投影；不 fork Hermes、不 patch Hermes core、不读私有数据库、不 import 私有 `AIAgent` / delegation 实现，也不维护第二套 Worker runtime、planner、tokenizer、模型目录或 Provider 客户端。
+面向长期归档/封存的 **Hermes 原生 Web 工作台**。项目只维护产品壳、官方能力编排与 UI 投影；不 fork Hermes、不 patch Hermes core、不读私有数据库、不 import 私有 `AIAgent` / delegation 实现，也不维护第二套 Worker runtime、planner、tokenizer、模型目录或 Provider 客户端。
 
 > 接管 UX，不接管 Hermes 内核。能由 Hermes 公共接口解决的能力，只通过 Hermes 公共合同接入。
 
 唯一运行时上游是 `NousResearch/hermes-agent`，精确版本与封存级必需合同记录在 `tests/upstream-lock.json`。
 
-## 仓库封存形态
+当前状态：**ARCHIVE CANDIDATE**。普通 CI、代码和产品工程闭环不能替代 exact-current 真实目标机证据，也不能替代 required upstream exclusive-shell contract。
 
-长期仓库只保留 **`main`** 作为 canonical branch。工作分支只允许在开发过程中临时存在，进入归档/封存态前必须归并并删除；`main` 可以处于 `ARCHIVE CANDIDATE`，但只有三证据面全部闭合后才允许称为 `SEALED`。
-
-普通 `CI` 的职责是证明当前 `main` 代码、依赖边界、Pinned Hermes 归档基线和产品运行测试健康，因此应保持绿色。尚未进入 pinned Hermes 的未来 seal-required upstream contract 不通过普通 CI 制造永久红灯；它由 `seal_close.py` 的 Gate 0 与最终 evidence verifier 单独硬阻断。
-
-## 最终产品形态
+## 产品形态
 
 ```text
 Hermes Web /
@@ -28,32 +24,20 @@ Hermes Web /
        └─ 高级 · Hermes Dashboard → Hermes 原生 /sessions 壳层
                                       └─ Hermes 自己维护的完整导航与未来新增入口
 
-进入任意原生 Hermes route
-  └─ 恢复完整 Hermes Dashboard shell
-       └─ 官方 Plugin slot → ← Worker Studio
+原生 Hermes route
+  └─ Hermes Dashboard shell
+       └─ official plugin slot → ← Worker Studio
 ```
 
-Supported installer 不复制或维护 Hermes 的二级导航列表。Studio 正常使用时只展示 Worker Studio 自己的产品导航；点击 **高级 · Hermes Dashboard** 后直接进入 Hermes 原生 `/sessions` 壳层，由 Hermes 自己渲染完整侧栏，因此 Hermes 后续新增导航会自动同步到该入口。
+Studio 正常产品首页不复制 Hermes 二级导航。点击 **高级 · Hermes Dashboard** 直接进入 native `/sessions`，由 Hermes 自己渲染完整侧栏和未来新增入口。
 
-### 官方级 Dashboard takeover 的硬门
+Pinned Hermes 0.20.6 还没有 route-scoped exclusive plugin shell 的正式公共合同，因此当前本地产品壳只使用严格限定、可逆的宿主兼容选择器隐藏 `/` 上的外层 Hermes sidebar/header；离开 Studio root 后立即恢复。这个兼容层不 fork、不 patch、不复制导航，也不能冒充最终官方合同。
 
-`tab.override: "/"` 可以通过官方 Plugin API 替换首页内容，但当前锁定的 Hermes 版本还没有“仅在该 override route 隐藏原生 Dashboard shell、离开后自动恢复”的公共 SDK 合同。为满足本地产品体验，Studio 只在自身根页挂载期间通过一组严格限定的宿主层兼容选择器隐藏官方外层侧栏与页头；进入 `/sessions` 后 Studio 卸载，Hermes 原生壳层恢复。该兼容层不复制导航、不修改 Hermes bundle、不 fork Hermes，并继续由 upstream Gate 0 保护，不能冒充官方 exclusive-shell 合同。
+硬封存 blocker：`NousResearch/hermes-agent#100149`（或 pinned revision 中经验证的等价正式 contract）。
 
-该缺口已正式提交 Hermes upstream：`NousResearch/hermes-agent#100149`，提议一个通用 route-scoped exclusive shell contract（例如 `tab.shell: "exclusive"`）。完整规格见 `docs/HERMES_DASHBOARD_EXCLUSIVE_SHELL.md`。
+## Product Chat：Hermes 官方 Gateway
 
-这个合同现在是 **硬封存 blocker**：
-
-- `tests/upstream-lock.json` 标记 `dashboard_route_scoped_exclusive_shell.required_for_seal=true`；
-- `scripts/verify_required_upstream_contracts.py` 要求 pinned Hermes 同时具备 typed API、runtime enforcement、公开文档和 upstream behavior test；
-- 普通 CI 只验证当前可归档的 pinned Hermes 公共基线，不把已知 upstream 缺口伪装成仓库故障；
-- `seal_close.py` 会先跑 upstream gate，合同不存在时连安装/真实模型/browser seal 都不会继续；
-- 最终 verifier 必须同时验证 `.seal/upstream.json`、`.seal/target.json`、`.seal/ui-report.json`。
-
-因此，在 Hermes 官方合同真正落地并更新 pin 前，正确状态是 **main 上的 ARCHIVE CANDIDATE**，绝不宣称 `SEALED`。
-
-## Product chat：Hermes 官方 Gateway
-
-浏览器通过 Dashboard Plugin SDK `buildWsUrl('/api/ws')` 直接使用 Hermes TUI Gateway JSON-RPC：
+浏览器通过 Dashboard Plugin SDK `buildWsUrl('/api/ws')` 使用 Hermes TUI Gateway JSON-RPC：
 
 | Studio 行为 | Hermes 官方合同 |
 |---|---|
@@ -72,11 +56,67 @@ Supported installer 不复制或维护 Hermes 的二级导航列表。Studio 正
 | 官方计划 | `todo.updated` |
 | Worker | `PluginContext.subagent_lifecycle` |
 
-API bearer secret 不进入浏览器。
+API bearer secret 不进入浏览器。`/v1/runs` 保留为 Hermes 官方探测、CI、无人值守验证 rail，不是 Studio 的第二聊天 runtime。
+
+## New API：模型读取与 Chat/Responses 动态路由
+
+Custom Endpoint inventory 仍以 Hermes `/api/model/options` 为唯一事实来源。粘贴 `/v1/responses` 只会规范化到 API root，**不会**被当作“这个 Provider 所有模型都必须走 Responses”的证据。
+
+对一个同时包含 Chat Completions 与 Responses-only 模型的 New API：
+
+```text
+Provider / Model
+      ↓
+Hermes 已声明协议？ ── yes → 直接使用
+      │ no
+      ↓
+已有真实验证 route？ ─ yes → 复用
+      │ no
+      ↓
+第一次实际使用时自动 real probe
+      ├─ Chat only       → chat_completions
+      ├─ Responses only  → codex_responses
+      ├─ both success    → ambiguous / 明确选择
+      └─ both failed     → fail closed
+```
+
+规则：
+
+- 不按 `gpt-*`、模型名或 URL 猜协议；
+- first-use probe 使用真实 Hermes Run；
+- per-model verified route 通过官方 `/api/config` 建立窄 managed alias；
+- 原始 Provider/Model 保持用户可见身份；
+- 并发首次请求共享 probe lock；
+- 最近失败有短暂 cooldown，避免重复计费/错误风暴；
+- **官方探测**按钮用于诊断/主动重试，不是正常使用前置步骤；
+- Product Chat、Worker、Verifier、MOA 共用同一个 execution-route resolver。
+
+Reasoning strength 同样不猜：只有 upstream 明确给出支持档位才出现 slider；否则只有 `Auto`，请求/config 不写 guessed effort。
+
+## Worker / 四模式
+
+| 模式 | Hermes 原生语义 |
+|---|---|
+| `OFFICIAL` | Studio delegation policy 休眠，交回 Hermes native `delegate_task` |
+| `AUTO` | Main 自主决定是否启动 Hermes child agent |
+| `WORKER` | wire=`DELEGATE`，偏向 Main 协调 + Hermes child agent 执行 |
+| `MAIN` | `pre_tool_call` 在执行前阻止新的 `delegate_task` / `worker_delegate` |
+
+Worker 只通过 public `PluginContext.subagent_lifecycle` / `SubagentLaunchRequest`。不存在 sidecar worker service 或第二执行内核。未知 mode fail closed；Studio 方便查找用的 handle map 有界，不是任务数据库。
+
+## 数据、Context、Plan
+
+- 普通对话只加载最近 10 条消息；
+- 完整历史按 30 session/page，详情按 100 message/page；
+- FTS 搜索通过 Hermes 官方服务端结果定位真实消息，不拿最近 10 条冒充完整历史；
+- Context occupancy 只来自 Hermes `session.usage` / `session.context_breakdown` 等正式 telemetry；
+- 不把累计 billing/input tokens 当当前上下文；
+- Studio 没有 planner；官方计划只来自 Hermes `todo.updated` 或允许的官方 Session todo projection；
+- WebSocket 断线只进入 `reconnecting`，fresh auth socket + `session.resume(close_on_disconnect=false)` 恢复 durable Session，不伪造 terminal truth。
 
 ## 任意文件附件
 
-文件选择、Ctrl/Cmd+V 和 drag/drop 共用一条附件管线：
+文件选择、Ctrl/Cmd+V 和 drag/drop 共用一条官方附件管线：
 
 ```text
 image/*          → image.attach_bytes
@@ -88,98 +128,69 @@ other            → file.attach
             回填给同一 Hermes prompt
 ```
 
-普通文件内容不由 Studio 自己解析；文件进入 Hermes Session workspace 后由 Hermes 官方 file tools/context references 使用。
-
-## Durable Session / WebSocket 恢复
-
-WebSocket 只是 transport，durable Hermes Session 才是任务生命周期。
-
-```text
-running
-  ↓ socket loss
-reconnecting
-  ↓ fresh SDK.buildWsUrl('/api/ws')
-session.resume(stored_session_id, close_on_disconnect=false)
-  ↓
-new runtime id rebind
-  ↓
-reconcile running / inflight / todo / pending input / messages
-  ↓
-running 或 Hermes 的真实 terminal truth
-```
-
-网络断线不会被 Studio 人为宣布为 `interrupted`。
+Studio 不自己解析普通文件内容，也不维护第二套 workspace。
 
 ## 完全访问 / Never-Wait unattended
 
-Full Access 只写 Hermes 官方配置并保存恢复快照：
+Full Access 只写 Hermes 官方审批/委派配置并保存恢复快照。Hermes Hardline Blocklist 永久有效。
+
+已知会阻塞执行的人机请求使用 Hermes 官方 response contract 自动解除：approval 自动批准、Clarify 空答案 Skip、MCP setup Decline、无可用 sudo/secret 使用官方取消语义、无 terminal pane 时立即 EOF。
+
+这保证“不等待 Studio/Hermes 自己的审批 UI”，不代表可以凭空获得密码、MFA、CAPTCHA、OAuth 或第三方授权。
+
+## 封存级 build / install parity
+
+Supported installer 在临时目录建立 exact candidate，写入 candidate SHA，然后执行两条 deterministic、exact-count、fail-closed build transform：
+
+- `scripts/stage_product_bundle.py` — 现有附件族 + interaction/accessibility closure；
+- `scripts/stage_mixed_protocol.py` — pinned Hermes mixed Chat/Responses per-model compatibility。
+
+CI 会独立生成**同一份 staged JS/Python**，再执行 `node --check` / Python compile 和关键闭环断言；installer tests 断言最终安装文件集合、candidate SHA 和两条 transform 的最终行为。这样不会出现“源码测试绿，但安装后的代码没人测”。
+
+安装是原子的：staged Plugin Doctor 成功后才替换旧插件，失败会保留上一份 install。
+
+## Desktop / Mobile 产品闭环
+
+最终 CSS 链：
 
 ```text
-approvals.mode = off
-cron_mode = approve
-single_query_mode = approve
-unattended_mode = approve
-mcp_reload_confirm = false
-destructive_slash_confirm = false
-delegation.subagent_auto_approve = true
+product.css
+  → product-sealed.css
+      → product-closure.css
 ```
 
-当前 Hermes Web/Gateway 中已知会阻塞执行的人机输入也由官方 response contract 自动解除：
+`product-closure.css` 不增加功能、不改 teal/cream 视觉语言，只补最后的产品工程边界：
 
-- `approval.request` → 自动批准；
-- `clarify.request` → `clarify.respond(answer="")` Skip；
-- `mcp.setup.request` → Decline；
-- `sudo.request` / `secret.request` → Hermes 官方空值取消语义；
-- `terminal.read.request` → 无 pane 时立即 EOF；
-- WebSocket 断线 → 自动 durable resume。
+- keyboard `:focus-visible`；
+- Modal Escape + focus trap + focus return；
+- menu/disclosure `aria` state；
+- composer/send/file/mobile nav/Full Access accessible names；
+- touch-only session actions 不依赖 hover；
+- safe-area + short viewport bounds；
+- reduced-motion 覆盖 Studio-owned animations/transitions。
 
-**无人值守的保证是“不等待 Studio/Hermes 人工审批或确认 UI”**，不是承诺任何外部授权都能凭空获得。密码、MFA、CAPTCHA、OAuth/第三方授权缺失时，任务可以自主失败或改走可行路径；Hermes Hardline Blocklist 永久有效、不可绕过。
+Real-target Playwright 固定三种产品 viewport：
 
-## Worker / 四模式
+- Desktop Chromium 1440×900；
+- Pixel 7 portrait；
+- compact touch landscape 667×375。
 
-| 模式 | Hermes 原生语义 |
-|---|---|
-| `OFFICIAL` | Studio delegation policy 休眠，交回 Hermes native `delegate_task` |
-| `AUTO` | Main 自主决定是否启动 Hermes child agent |
-| `WORKER` | wire=`DELEGATE`，偏向 Main 协调 + Hermes child agent 执行 |
-| `MAIN` | Hermes `pre_tool_call` 阻止新的 `delegate_task` / `worker_delegate` |
+每个 viewport 都依次访问：**对话 / Worker / 模型 / MOA / 完全访问 / 完整历史**，逐页检查横向溢出与产品根视口边界。桌面再额外验证真实 Gateway context 与 native `/sessions` 返回链。
 
-Worker 只通过公开 `PluginContext.subagent_lifecycle` / `SubagentLaunchRequest`。不存在 Codex Worker、sidecar worker service 或第二执行内核。
-
-## Product UX
-
-Product 3 保留 ChatGPT 式交互逻辑并使用 Hermes 风格视觉：
-
-- 新对话、最近会话、搜索；
-- 完整历史使用 Hermes 官方 FTS 搜索消息内容；点击命中会跨官方消息分页定位并滚动到原消息。普通对话只保留最近 10 条，不提供误导性的局部搜索；
-- 重命名、归档、取消归档、删除；
-- 自动滚动开关、回到底部；
-- Enter 发送 / Shift+Enter 换行；
-- 运行中再次发送 = Steer；
-- Stop；
-- 任意文件 picker / paste / drop；
-- Context meter、Auto Compact 状态；
-- Hermes canonical todo 计划；
-- tool/subagent/skills activity；
-- MOA 是独立侧边栏入口，不嵌入普通模型目录；页面通过 Hermes `/api/model/options` 同步所有已发现的 provider/model（包括 New API Custom Endpoint），并直接读取/保存 Hermes `/api/model/moa`。它是 Reference → Aggregator 的官方执行模式，不是独立 LLM。缺少 provider 凭据时明确显示未就绪和官方配置入口；
-- Custom Endpoint 仍通过 Hermes 官方接口保存凭据、发现模型和基础 URL；表单不再伪造一个 provider-global 协议选择器。Hermes 已声明的协议直接采用；对一个同时包含 Chat Completions 与 Responses 模型的通用 endpoint，只有用户点击“官方探测”或明确选择后才会调用最多两次真实 Hermes `/v1/runs`。解析结果写入受限的 Studio 路由状态，并通过 Hermes 官方 `/api/config` 创建隐藏的、按模型隔离的兼容 Provider；原始 Provider 不被改写，未探测或两种协议都成功时严格拒绝发送，不按模型名或 URL 猜测；
-- desktop/mobile 全链路响应式；
-- supported install 使用项目图标作为 Hermes 官方插件静态资源，不再维护独立 favicon。
+Seal browser 默认不忽略 TLS certificate errors；只有明确的可信本地/测试证书环境才可设置 `HWS_SEAL_IGNORE_HTTPS_ERRORS=1`。
 
 ## 三证据面封存
 
-真正的封存不是“代码看起来完成”，而是三面证据闭环：
-
 ```text
-exact Worker Studio main candidate
+exact Worker Studio candidate
           │
           ├─ ① pinned official Hermes upstream contracts
           │      .seal/upstream.json
           │
-          ├─ ② real Hermes execution/session/todo target
+          ├─ ② real Hermes target/runtime/model evidence
           │      .seal/target.json
           │
-          └─ ③ real desktop + mobile browser product
+          └─ ③ real desktop/mobile browser product evidence
                  .seal/ui-report.json
                  .seal/playwright-artifacts/*
                          ↓
@@ -194,20 +205,30 @@ exact Worker Studio main candidate
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
 
-如果已有 Hermes 源码 checkout：
+如果已有 exact Hermes source checkout：
 
 ```bash
 python scripts/seal_close.py --hermes-root /path/to/hermes-agent --url http://127.0.0.1:19119
 ```
 
-`SEALED.json` 只有在以下全部成立时才可能 `eligible=true`：
+只有 exact-current candidate CI 绿色、required upstream contract 通过、真实目标机/模型/浏览器证据闭合，并且 `.seal/SEALED.json eligible=true` 指向同一 candidate/pin 时，才能称为 `SEALED`。
 
-1. exact `main` candidate 的普通 CI 全绿；
-2. exact Hermes pin 的 seal-required public contracts 全部通过；
-3. 真实 Hermes Run / Session CRUD / canonical todo 通过；
-4. desktop Chromium + Pixel 7 真浏览器通过；
-5. `/` 只显示 Worker Studio 自己的导航，并且只保留一个直达 `/sessions` 的 Hermes 原生入口，不复制原生导航列表；
-6. `/sessions` 等 native route 恢复 Hermes 原生 shell 并可返回 Studio；
-7. 三份证据与 exact candidate/pin 完全一致。
+## 安装
 
-完整规则见 `SEAL_ACCEPTANCE.md`。在 upstream #100149 尚未被官方实现并进入 pinned Hermes revision 前，`main` 必须保持 `ARCHIVE CANDIDATE` 状态；一旦三证据面闭环，仓库仍只保留 `main`，再以 exact main SHA 作为封存身份。
+```bash
+bash scripts/install.sh
+```
+
+安装器通过 Hermes 官方 Plugin 命令启用插件并运行 Plugin Doctor。
+
+## 文档
+
+- [中文项目介绍](docs/PROJECT_INTRODUCTION.zh-CN.md)
+- [English introduction](docs/PROJECT_INTRODUCTION.en-US.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Product engineering closure](docs/PRODUCT_CLOSURE.md)
+- [Security](docs/SECURITY.md)
+- [Automated test matrix](docs/AUTOMATED_TEST_MATRIX.md)
+- [Seal checklist](docs/SEAL_CHECKLIST.md)
+- [Seal status](docs/SEAL_STATUS.md)
+- [Canonical seal acceptance](SEAL_ACCEPTANCE.md)
