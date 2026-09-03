@@ -6,7 +6,6 @@ on:
       pr_number:
         description: Pull request number to seal and finalize
         required: true
-        default: '4'
       candidate_sha:
         description: Exact 40-character PR head SHA already green in CI
         required: true
