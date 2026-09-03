@@ -2,166 +2,114 @@
 
 Status: **ARCHIVE CANDIDATE**
 
-Target: Hermes Worker Studio 2.0 — Hermes-native single-runtime archive baseline.
+Product: **Hermes Worker Studio 3.0** — Hermes-native single-runtime product shell.
 
-## Repository acceptance
+This file intentionally does **not** hard-code a current PR number or treat an older target capture as proof for newer code. Development changes are merged first; the only final seal identity is the exact current **`main` HEAD** supplied to the real-target workflow / `seal_close.py`.
 
-- Pinned Hermes snapshot: `9eb832aad74547aaa0c4e6b4c1fab11f7d6a4bea` (`0.20.6`).
-- PR: `#3` — `feat: seal Hermes-native Worker Studio 2.0`.
-- Accepted PR head: `e943bd64285621858fc3cf14a661201ecf635662`.
-- Final PR CI: Actions run `33406016546` — all four archive jobs passed.
-- Merge commit: `48030e09bb45d8180780897bcc8c07fda2555a23`.
-- Post-merge `main` CI: Actions run `33406204161` — all four archive jobs passed.
-- Pinned Hermes regression seam: **179 passed** across public subagent lifecycle, Runs and approval suites.
-- Hermes Plugin Doctor: runtime discovery/import/registration passed; **3 tools + 1 hook** registered.
-- Production security gate: Bandit, secret rejection and second-runtime residue rejection passed.
-- Studio gate: Python/JS/Shell syntax, archive contract, unit/HTTP/installer tests, jsdom product flow, manifest and high-severity npm audit passed.
+## Current repository engineering state
 
-Repository-level engineering acceptance is therefore complete and this revision family qualifies as an **ARCHIVE CANDIDATE**.
+The repository has reached code-level archive-candidate closure around these invariants:
 
-## Target-machine evidence — 2026-09-01
+- Hermes is the only runtime upstream, pinned in `tests/upstream-lock.json`;
+- product chat uses the official Hermes TUI Gateway WebSocket (`session.resume`, `prompt.submit`, Gateway context/todo/tool/subagent events);
+- official `/v1/runs` remains the probe/acceptance/unattended rail, not a second product chat runtime;
+- Worker uses `PluginContext.subagent_lifecycle`; native `delegate_task` remains Hermes-owned;
+- Main / Worker / Verifier / MOA share Hermes model inventory and the same per-model execution-route resolver;
+- mixed custom endpoints can contain Chat Completions and Responses-only models without a provider-global guess;
+- first unresolved model use performs real Hermes Chat/Responses probes, caches exactly verified routing, deduplicates concurrent first-use probes, and fails closed on ambiguous/both-failed outcomes;
+- reasoning effort is emitted only from explicit upstream capability metadata;
+- Session/history/search/archive, config, Custom Endpoints, MOA, Skills/Plugins/MCP ownership remain on official Hermes surfaces;
+- there is no second model registry, planner, tokenizer, worker daemon, queue or persistence database;
+- candidate installation is atomic and candidate-SHA stamped;
+- deterministic release transforms are exact-count/fail-closed and independently built/syntax-checked in CI;
+- final UI stylesheet is `product-closure.css`, layered over sealed/base CSS without changing the existing visual language;
+- desktop, phone portrait and compact landscape real-target UI projects cover every existing first-level Studio page;
+- keyboard focus, dialog Escape/focus lifecycle, disclosure/menu state, touch-only action discoverability and reduced-motion behavior are contract-tested;
+- target evidence is `hermes-worker-studio.seal-evidence.v2` and includes the actual resolved execution route;
+- final verdict is `hermes-worker-studio.seal-verdict.v2`;
+- each browser project independently reads the running candidate SHA rather than relying on post-test report stamping;
+- final GitHub verification is exact-main and read-only; it cannot merge a PR or mutate repository contents;
+- production security gates reject bearer-secret leaks, second-runtime residue and mutation-capable real-target workflow drift.
 
-Host: `xwz-MS-7D90` (Linux, Asia/Shanghai). Operator: Codex, using the local
-root-owned Hermes installation. Functional Studio source commit at this
-capture: `a63cf83154ce2e627b76d6d7504946e1fc38f685`.
+Repository CI can prove these code and integration contracts, but **CI success alone never changes this status to SEALED**.
 
-### Baseline and installation
+## Historical target evidence — 2026-09-01
 
-- `main` was pinned from `2f9d62f343735f9546acb3da87855d72cfd3b176`; the
-  Hermes-event/approval compatibility fixes were committed as `a63cf83`.
-- Hermes is `/usr/local/lib/hermes-agent`, version `0.20.6`, exact commit
-  `9eb832aad74547aaa0c4e6b4c1fab11f7d6a4bea`.
-- `verify_upstreams.py --hermes-root /usr/local/lib/hermes-agent` and
-  `verify_contract.py` both passed.
-- `bash scripts/install.sh` passed; staged and installed-tree Plugin Doctor
-  both passed; the official plugin is enabled with exactly 3 tools and 1 hook:
-  `worker_delegate`, `worker_status`, and `worker_catalog`.
-- `hermes-gateway.service` and `hermes-dashboard.service` are active on
-  `127.0.0.1:8642` and `127.0.0.1:9119`. No Studio sidecar or `:8788` listener
-  exists.
+A real Hermes target was previously exercised on host `xwz-MS-7D90` against Hermes `0.20.6` at exact upstream commit:
 
-### Host paths exercised
+`9eb832aad74547aaa0c4e6b4c1fab11f7d6a4bea`
 
-- `/health`, `/health/detailed`, `/v1/capabilities`, `/api/status`, plugin
-  health/integration, Skills, Plugins, MCP, model options, Sessions, History,
-  Search, Archive/Unarchive, and model lock all returned successfully.
-- Recent sessions returned at most 10; full session pages and 100-message
-  transcript pages were exercised. A known historical phrase was found by FTS.
-  The 33 acceptance-only sessions were then deleted by their exact IDs, leaving
-  the user history clean.
-- Real Studio Runs used official `POST /v1/runs` plus Hermes SSE. A successful
-  end-to-end response, direct SSE response, elapsed-time terminal state,
-  lifecycle projection, stop, steer, and approval response were observed.
-  The approval test transitioned `running → waiting_for_approval → running →
-  completed` through `/v1/runs/{id}/approval`.
-- Live mode evidence: OFFICIAL blocked `worker_delegate` while native
-  `delegate_task` completed a real child; AUTO launched a real
-  `SubagentHandle` and `worker_status` reached a terminal result; WORKER
-  launched a real child; MAIN blocked both worker and native delegation before
-  child launch; an unknown mode also failed closed as MAIN.
-- The official CLI `/review` path was exercised with a configured
-  `auxiliary.review` route; its dispatch line named the configured reviewer
-  model and the temporary child marker was observed. Worker and Review writes
-  changed only `delegation.*` and `auxiliary.review.*`, respectively.
-- A disposable native Skill was created through `/api/skills`, appeared in the
-  native Skills list/content API, and was removed through Hermes' validated
-  skill-management path. Plugins and MCP remained native surfaces; no Studio
-  management database was created.
-- Unattended settings were written and read back exactly as required; the real
-  marker returned `UNATTENDED_READY` with `marker_verified=true`, and no marker
-  file remained. A safe Hardline Blocklist case was rejected before shell
-  execution. The temporary unattended policy was restored to the prior
-  `smart`/`deny` safety configuration after the test.
-- An invalid model returned a clear Hermes failure (`HTTP 401: ... is not
-  supported`). An invalid custom endpoint failed validation without affecting
-  Hermes health. A local disposable OpenAI-compatible endpoint was saved,
-  discovered, read back without an API key, and removed.
-- Gateway and Dashboard restarts preserved authoritative session/history data.
-  During an active disposable Run, Dashboard restart did not invent a success:
-  the upstream Run remained authoritative and was stopped through the official
-  API. Stopping the Gateway made both local services unavailable; starting them
-  restored health. Staged-doctor failure preserved a sentinel previous install.
-  A reversible swap to the preserved prior Hermes tree started successfully,
-  then the exact pinned tree was restored and rechecked.
-- Browser HTML did not contain `API_SERVER_KEY` or its value; `.env` is mode
-  `600`; `HERMES_WORKER_STUDIO_ALLOW_REMOTE=0`; only Hermes Gateway and
-  Dashboard listen for this deployment. Static contract, unit, frontend,
-  syntax, and secret/second-runtime checks passed.
+The functional Studio source at that historical capture was:
 
-### New API and transport evidence
+`a63cf83154ce2e627b76d6d7504946e1fc38f685`
 
-The operator's New API credential is now present in Hermes' official custom
-provider configuration. The authenticated configuration read-back reported:
+That capture established useful environmental facts, including:
 
-- provider: `worker-studio-new-api`;
-- base URL: `https://api.230385.xyz/v1`;
-- credential present: yes (the key was never displayed, logged, or copied);
-- model discovery: 13 models; and
-- current global model: unchanged OpenRouter/Anthropic selection (the test did
-  not silently replace the user's default).
+- staged/installed Plugin Doctor success with exactly 3 Studio tools + 1 hook;
+- no Studio sidecar / no `:8788` runtime;
+- official Sessions, history/search/archive, model locks, Runs controls, approvals, Skills/Plugins/MCP and unattended configuration paths worked on the target;
+- OFFICIAL/AUTO/WORKER/MAIN delegation semantics were exercised against real Hermes children;
+- browser HTML did not expose the API Server bearer credential;
+- New API custom endpoint discovery returned **13 models** from a `/v1` API root;
+- ordinary dialogue models were verified through Chat Completions;
+- three `gpt-5.6-*` models failed Hermes Chat Completions but direct credentialed New API `/v1/responses` calls returned HTTP 200 and terminal `response.completed`;
+- this proved the pinned Hermes limitation: generic custom-provider transport is provider-global and cannot safely be switched to Responses for the whole mixed provider.
 
-The base URL is correctly a versioned API root. Hermes' OpenAI-compatible
-client appends the transport path: `/v1/chat/completions` for Chat Completions
-and `/v1/responses` for Codex Responses. There is no missing `/v1` rewrite in
-Studio.
+Those observations motivated the current per-model compatibility bridge. They are **historical evidence only**. Their old evidence schema/candidate cannot satisfy the current v2 exact-main verifier.
 
-Authenticated model-probe Runs through the official Hermes `/v1/runs` path
-completed for 7 of the 13 discovered models: `MiniMax-M3`, both `cc-deepseek`
-models, `cc-laguna-s-2.1-free`, `cc-mimo-v2.5`, and both `deepseek-v4` models.
-The three `gpt-5.6-*` models returned Hermes' Chat Completions unsupported
-error. Direct, credentialed SSE requests to New API `/v1/responses` for those
-three models returned HTTP 200 and terminal `response.completed` events. The
-embedding model is not a dialogue model, and `qwen3:4b-instruct` rejected
-Hermes' thinking parameter; those are model compatibility results, not
-credential failures.
+## Current mixed-protocol behavior
 
-The pinned-core limitation is precise: Hermes `0.20.6` resolves a generic named
-custom provider without an explicit provider-level transport to
-`chat_completions`, and does not dynamically select `codex_responses` per
-model. Adding `api_mode: codex_responses` globally would break the verified
-Chat Completions models. The pinned Hermes source also intentionally does not
-apply a generic custom-endpoint GPT-name heuristic.
+The Product 3 compatibility bridge does not infer protocol from `gpt-*`, another model name, or a pasted `/responses` URL.
 
-The current Product 3 bridge closes that limitation without claiming it is an
-upstream capability. A pasted route suffix is normalized only as endpoint
-input; an explicit Hermes capability is authoritative. For a generic mixed
-provider, the operator must click “官方探测” or choose Chat/Responses. Studio
-then makes up to two real Hermes `/v1/runs` calls, records the result in a
-private bounded route state, and materializes a hidden per-model Provider with
-the selected transport through Hermes `/api/config`. The original provider is
-left intact, the hidden aliases are excluded from the Studio catalog, and
-unresolved or ambiguous results fail closed. MOA uses the same resolution
-before handing execution back to Hermes' native `moa` provider.
+For one source Provider/Model:
 
-Reproduce the configuration and transport evidence through an authenticated
-Dashboard session (the session token and API key must remain private):
+1. Hermes model/provider protocol metadata is authoritative when present;
+2. a previously verified route is reused;
+3. otherwise first real use invokes the official Hermes Chat/Responses probe path;
+4. exactly one successful transport becomes a narrow managed alias written through `/api/config`;
+5. both-success => ambiguous / explicit operator choice;
+6. both-failed => fail closed with real results;
+7. the source Provider/Model remains what the UI displays.
+
+The Models **官方探测** action remains available for diagnostics and active retry; it is not required before normal first use. Probe work is never triggered merely by rendering the model catalog.
+
+## Exact-main release lifecycle
+
+A PR head is never the final sealed identity:
 
 ```text
-GET  http://127.0.0.1:9119/api/providers/custom-endpoints
-GET  http://127.0.0.1:9119/api/model/options?refresh=1
-GET  http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/protocols
-POST http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/protocols/probe
-     {"provider":"worker-studio-new-api","model":"gpt-5.6-sol"}
-GET  http://127.0.0.1:9119/api/plugins/hermes-worker-studio/hermes/protocol-route?provider=worker-studio-new-api&model=gpt-5.6-sol
+PR CI green
+  -> merge code into main
+  -> main push CI green
+  -> ARCHIVE CANDIDATE
+  -> seal exact current main on real target
+  -> read-only GitHub exact-main verification
 ```
 
-The probe is an explicit real-Run action and may make billable upstream calls;
-it is never performed as a page-load side effect. The route response names the
-actual execution Provider and protocol, or reports `unresolved`/`ambiguous`
-without guessing. A direct authenticated New API request is still useful as
-operator evidence, but is not substituted for Hermes' official Run probe.
+The manual `Seal Real Hermes Target` workflow verifies `origin/main == candidate_sha` before running, has only `actions: read` / `contents: read`, and performs no PR merge or branch update after evidence capture.
 
-The pinned environment also has no local Bandit executable; the repository's
-previous CI security gate passed, while the post-change local static gates and
-contract checks passed. The compatibility bridge is implemented and covered by
-unit tests, but this document is not a substitute for fresh target-machine
-probe evidence and the pinned upstream exclusive-shell Gate 0. Host acceptance
-therefore remains **NOT YET SEALED**.
+## What remains before SEALED
 
-## Target-machine seal
+`SEALED` requires **fresh evidence for the exact current `main` SHA**, not reuse of the 2026-09-01 capture:
 
-Status: **NOT YET SEALED**.
+- all intended code already merged to `main`;
+- exact-main push CI green;
+- deterministic candidate install and loaded SHA read-back;
+- target evidence v2 with `installed_candidate_verified=true`;
+- current real Hermes target health + Plugin Doctor;
+- real Run with canonical todo and a final execution route matching the requested Provider/Model;
+- automatic Responses route evidence where a selected dialogue model requires Responses;
+- Session cleanup with post-delete 404;
+- Playwright desktop + phone portrait + compact landscape, with each product-shell test explicitly passed and candidate identity read in-browser;
+- desktop native `/sessions` return-path pass;
+- seal-verdict v2 `eligible=true`;
+- read-only finalizer confirms current main has not moved and canonical exact-main push CI is green;
+- required upstream route-scoped exclusive-shell contract (`NousResearch/hermes-agent#100149`, or an equivalent documented replacement in the pinned Hermes revision) passes the upstream gate.
 
-`SEALED` additionally requires the authenticated host evidence in `SEAL_CHECKLIST.md`: real target-machine installation/Plugin Doctor, live Hermes API readiness, real New API credentials/model probes, four-mode live child behavior, unattended config read-back + marker Run, restart/failure injection and security sweep. It also requires successful explicit protocol evidence for every intended mixed-provider dialogue model and the pinned Hermes upstream exclusive-shell contract, followed by final CI.
+The canonical command is:
 
-The repository must never label itself `SEALED` solely because GitHub CI is green.
+```bash
+python scripts/seal_close.py --url http://127.0.0.1:19119
+```
+
+Only when all of those checks close on the same exact current `main` SHA may this project be called `SEALED`.

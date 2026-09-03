@@ -1,8 +1,8 @@
 # Hermes Worker Studio · Project Introduction
 
-Hermes Worker Studio is a product-grade Web workspace for Hermes. It is a product shell implemented as an official Hermes Dashboard Plugin: Studio owns navigation, interaction, and presentation; Hermes continues to own execution, models, sessions, approvals, Skills, Plugins, MCP, and persistence.
+Hermes Worker Studio is a product-grade Web workspace for Hermes. It is an official Hermes Dashboard Plugin product shell: Studio owns navigation, interaction, and presentation; Hermes continues to own execution, models, sessions, approvals, Skills, Plugins, MCP, and persistence.
 
-> Current status: **ARCHIVE CANDIDATE**. Repository engineering acceptance and ordinary CI are closed, but the project must not be called `SEALED` until the missing upstream contract is implemented and pinned.
+> Current status: **ARCHIVE CANDIDATE**. Code/product engineering and ordinary CI are designed to close cleanly, but the project must not be called `SEALED` until exact-current real-target evidence and the required upstream contract close on the same candidate.
 
 ## Positioning
 
@@ -11,74 +11,99 @@ Studio provides one product experience over Hermes' documented Dashboard, Gatewa
 The governing rules are:
 
 - Hermes is the sole upstream for execution, models, context, plans, policy, and persistence.
-- Capabilities that Hermes exposes publicly are called through those public contracts.
+- Public Hermes capabilities are called through public Hermes contracts.
 - No Hermes fork, core patch, or private database access.
 - No second Worker runtime, planner, tokenizer, model catalog, or Provider client.
 - Hermes API bearer secrets never enter the browser.
+- Protocol and reasoning choices require official metadata or real execution evidence; model names are not capability evidence.
 
 ## Product surface
 
-Worker Studio owns the product home route `/` and provides:
+Worker Studio owns the product home route `/` and keeps six first-level product surfaces:
 
 - **Chat** — Hermes Gateway sessions, send, stop, steer, approvals, and live lifecycle.
 - **Worker** — official child-agent behavior through Hermes public `subagent_lifecycle`.
-- **Models** — the Hermes `/api/model/options` inventory and official Custom Endpoint management.
-- **MOA** — a dedicated MOA page and session list backed by Hermes `/api/model/moa`.
-- **Full Access** — Hermes approval/delegation configuration with an authenticated official Run read-back check.
-- **Full History** — server-side search, pagination, message pagination, archive, restore, rename, and delete.
+- **Models** — Hermes `/api/model/options` plus official Custom Endpoint management.
+- **MOA** — a dedicated page/session list backed by Hermes `/api/model/moa`.
+- **Full Access** — official approval/delegation configuration with authenticated Run verification.
+- **Full History** — server-side full-text search, pagination, archive/restore/rename/delete.
 
-The **Advanced · Hermes Dashboard** entry goes directly to Hermes' native `/sessions` route. Hermes renders the complete native navigation itself, so future Hermes navigation additions appear there without a copied Studio submenu. Once a native route is entered, the official Dashboard shell is restored and the official plugin slot provides a return path to Studio.
+**Advanced · Hermes Dashboard** goes directly to native `/sessions`. Hermes renders its own complete native navigation, so future Hermes routes do not require a copied Studio submenu. Native pages restore the official shell and expose `← Worker Studio` through official plugin slots.
 
-## Official interface map
+## Official runtime map
 
 | Product behavior | Hermes official source |
 | --- | --- |
 | Open/resume a session | Gateway WebSocket `session.resume` |
 | Send a prompt | Gateway JSON-RPC `prompt.submit` |
-| Steer/stop a running task | `session.steer` / `session.interrupt` |
-| Approvals and interactive requests | Official responses such as `approval.respond`, `clarify.respond`, and `mcp.setup.respond` |
-| Context and Compact | `session.usage`, `session.context_breakdown`, and `status.update` |
-| Official plan | Hermes `todo.updated` events or official Session API todo results |
-| Tool, Skill, and subagent activity | Hermes Gateway lifecycle events and public `subagent_lifecycle` |
-| Sessions and history | Hermes `/api/sessions/*` and official message full-text search |
-| Models and Providers | Hermes `/api/model/options` and `/api/providers/custom-endpoints` |
-| MOA | Hermes `/api/model/moa` and the native `moa` provider |
-| File attachments | `image.attach_bytes`, `pdf.attach`, and `file.attach` |
+| Steer/stop | `session.steer` / `session.interrupt` |
+| Approvals/input requests | official `approval.respond`, `clarify.respond`, `mcp.setup.respond`, etc. |
+| Context / Compact | `session.usage`, `session.context_breakdown`, `status.update` |
+| Official plan | Hermes `todo.updated` or official Session API todo results |
+| Tool/Skill/subagent activity | Gateway lifecycle + public `subagent_lifecycle` |
+| Sessions/history | Hermes `/api/sessions/*` + official full-text search |
+| Models/Providers | Hermes `/api/model/options`, `/api/providers/custom-endpoints` |
+| MOA | Hermes `/api/model/moa` + native `moa` provider |
+| Attachments | `image.attach_bytes`, `pdf.attach`, `file.attach` |
 
-The browser chat surface uses the official Hermes Gateway. `/v1/runs` remains a probe, CI, and unattended-verification surface, not a second chat execution core.
+Browser chat uses the official Hermes Gateway. `/v1/runs` remains a probe, CI, and unattended-verification surface, not a second chat runtime.
 
-## Conversation behavior and data boundaries
+## New API and per-model protocol routing
 
-- The normal conversation view loads only the latest 10 messages for fast startup.
-- Full History uses Hermes official full-text search. Selecting a result pages through official messages, then locates and scrolls to the matching message instead of pretending that the recent-message window is a complete search index.
-- Full History is paginated at 30 sessions per page; conversation details load up to 100 messages per page.
-- Typing `/` exposes the Hermes command catalog with Chinese explanations. Selecting a command inserts the real command token and sends it through Hermes' official command execution path; it is not emitted as an ordinary chat sentence.
-- Live elapsed time, tool activity, official plans, Compact, and Skill changes are shown only from actual Hermes events or official persisted results. Studio does not invent them when upstream data is absent.
-- When the WebSocket drops, the durable Hermes Session is kept alive. Studio reconnects with `session.resume` and rebinds to official messages and state rather than reporting a disconnect as success or failure.
-- Session titles are derived from the user's prompt and no longer receive a random `· xxxxx` suffix.
+Hermes 0.20.6 gives a generic Custom Endpoint a provider-scoped transport, while one New API inventory can legitimately contain both Chat Completions and Responses-only models. Studio closes that pinned-core gap with a narrow per-model compatibility bridge:
 
-## What MOA means
+1. Explicit Hermes Provider/model protocol metadata wins.
+2. A previously verified route is reused.
+3. First real use of an unresolved model automatically performs real Hermes Chat/Responses probes.
+4. Exactly one successful transport is cached per model and materialized as an isolated compatibility Provider through official `/api/config`.
+5. Both-success remains ambiguous and requires explicit choice.
+6. Both-failed remains fail-closed with the real results.
+7. Studio never chooses transport from a URL, model name, or `gpt-*` label.
 
-MOA (Mixture of Agents) is Hermes' official aggregation mode: several Reference models analyze a prompt, an Aggregator combines their analyses into the final answer, and Hermes still owns the final Run. It is not a second Studio chat model or an independent aggregator runtime.
+Concurrent first use shares one probe lock, and recent failures have a short cooldown to avoid duplicate billable/error storms. **Official probe** remains a diagnostic/retry action rather than a prerequisite for normal use. The original Provider/Model stays user-facing; managed aliases never become a second catalog.
 
-The MOA page reads available Provider/Model entries from Hermes' official inventory and saves the preset back through Hermes `/api/model/moa`. If a Reference or Aggregator lacks official Hermes credentials, the UI shows the specific configuration state instead of claiming that the run is ready. Credentials remain the responsibility of Hermes' official setup/provider configuration.
+Product Chat, independent Worker, Verifier, and MOA all use the same execution-route resolver.
 
-## New API and protocol selection
+## Conversation/data boundaries
 
-Hermes 0.20.6 resolves a generic Custom Endpoint's protocol at Provider scope; it cannot automatically infer Chat Completions versus Responses per model from a model name. Studio therefore follows these rules:
+- Normal Chat loads only the latest 10 messages.
+- Full History uses official Hermes full-text search and pages official messages until a hit is located; it never pretends the latest-10 window is a complete search index.
+- Full History pages 30 sessions at a time and details 100 messages at a time.
+- Slash commands use the official Hermes command catalog/execution path.
+- Timing, tools, plan, Compact, and Skill changes are shown only from actual Hermes events or official persisted results.
+- WebSocket loss keeps the durable Hermes Session alive and resumes over a fresh authenticated socket; a disconnect is never fabricated as terminal success/failure.
+- Context occupancy comes only from Hermes context telemetry, never cumulative billing/input counters.
 
-1. A protocol explicitly declared by Hermes for a Provider/model is authoritative.
-2. For a mixed New API, a real Hermes Run probe happens only after the user explicitly selects a mode or clicks **Official probe**.
-3. The result is stored as bounded per-model route state and an isolated compatibility Provider is materialized through Hermes' official configuration API.
-4. Unresolved or conflicting results fail closed; Studio never guesses from a URL, model name, or GPT-like label.
+## Attachments and unattended operation
 
-The source Provider is not silently rewritten, and page load never triggers a hidden probe.
+Picker, clipboard paste, and drag/drop share one attachment pipeline: images -> `image.attach_bytes`, PDFs -> `pdf.attach`, other files -> `file.attach` and the returned Hermes `@file:` reference.
 
-## Security and unattended operation
+Full Access changes only official Hermes approval/delegation settings, retains a restore snapshot, and verifies them with a real marker Run. It means Studio/Hermes will not wait on its own approval UI; it does not bypass passwords, MFA, CAPTCHA, OAuth, third-party authorization, or the Hermes Hardline Blocklist.
 
-Full Access changes only Hermes' official approval/delegation settings, keeps a restore snapshot, and verifies the result with a real marker Run. It means that Studio/Hermes will not wait for an approval UI; it does not conjure passwords, MFA, CAPTCHA, OAuth, third-party authorization, or bypass Hermes' Hardline Blocklist.
+## Engineering and UI closure
 
-Worker modes use Hermes' public `PluginContext.subagent_lifecycle`. Studio does not start an external Worker service or reproduce Hermes execution logic.
+The supported installer builds an exact candidate in a temporary tree, stamps its candidate SHA, then applies two deterministic exact-count/fail-closed transforms:
+
+- `stage_product_bundle.py` — existing attachment family plus interaction/accessibility closure;
+- `stage_mixed_protocol.py` — pinned-Hermes per-model mixed-protocol compatibility.
+
+CI independently builds the same staged JS/Python and runs `node --check` / Python compile; installer tests assert the final installed file set and transformed behavior. This prevents a green review source from hiding a divergent installed artifact.
+
+Final CSS layering is:
+
+```text
+product.css -> product-sealed.css -> product-closure.css
+```
+
+The closure layer changes no product capability or visual language. It hardens focus visibility, touch-only discoverability, dialog Escape/focus lifecycle, safe areas, short viewports, and reduced-motion behavior.
+
+Real-target Playwright covers:
+
+- desktop 1440×900;
+- Pixel 7 portrait;
+- compact touch landscape 667×375.
+
+All six first-level Studio pages are visited in every product viewport and checked for horizontal overflow and product-root viewport bounds.
 
 ## Archive status
 
@@ -89,39 +114,33 @@ NousResearch/hermes-agent
 9eb832aad74547aaa0c4e6b4c1fab11f7d6a4bea
 ```
 
-Ordinary repository CI verifies code, dependency boundaries, product runtime, the pinned Hermes public baseline, and security contracts. Final sealing additionally requires three target-machine evidence planes:
+Final sealing requires exact-current evidence:
 
 ```text
 .seal/upstream.json
 .seal/target.json
 .seal/ui-report.json
+        ↓
 .seal/SEALED.json
 ```
 
-Until the route-scoped exclusive-shell contract tracked in Hermes upstream issue #100149 is implemented and included in the pinned revision, `seal_close.py` must stop at Gate 0 and must not produce a `SEALED.json` with `eligible: true`.
+The current required upstream blocker is the route-scoped exclusive-shell public contract tracked at `NousResearch/hermes-agent#100149` (or a verified equivalent formal contract in the pinned revision). Green ordinary CI means **ARCHIVE CANDIDATE**, never a substitute for that upstream gate or real-target evidence.
 
 ## Getting started
 
-On a host with Hermes installed, use the repository's atomic installer:
-
 ```bash
 bash scripts/install.sh
-```
-
-The installer enables the plugin through Hermes' official Plugin command and runs Plugin Doctor. The target-machine seal loop is:
-
-```bash
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
 
-If a Hermes source checkout already exists, add `--hermes-root /path/to/hermes-agent`. The seal process never skips the upstream gate and never fabricates target or browser evidence.
+If an exact Hermes source checkout already exists, add `--hermes-root /path/to/hermes-agent`.
 
 ## Related documentation
 
 - [Architecture](ARCHITECTURE.md)
+- [Product engineering closure](PRODUCT_CLOSURE.md)
 - [Official upstream contracts](UPSTREAM_CONTRACTS.md)
 - [Full acceptance rules](../SEAL_ACCEPTANCE.md)
 - [Automated test matrix](AUTOMATED_TEST_MATRIX.md)
 - [Dashboard exclusive-shell contract](HERMES_DASHBOARD_EXCLUSIVE_SHELL.md)
 - [Security boundary](SECURITY.md)
-

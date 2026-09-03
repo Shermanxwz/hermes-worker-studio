@@ -1,0 +1,77 @@
+@import url("./product-sealed.css");
+
+/*
+ * Product-closure layer.
+ *
+ * No feature or visual-language changes live here. This file only hardens the
+ * existing Product 3 surface at the accessibility / viewport / touch boundary
+ * so the same UI remains dependable on desktop keyboards, phones, tablets,
+ * short landscape viewports, and reduced-motion environments.
+ */
+
+.hws3-root :where(button,a,input,textarea,select,summary):focus-visible{
+  outline:2px solid var(--hws3-accent,#15a596);
+  outline-offset:2px;
+}
+.hws3-root :where(input,textarea,select):focus-visible{
+  border-color:var(--hws3-accent,#15a596);
+}
+.hws3-root :where(button,a,summary){touch-action:manipulation}
+
+.hws3-modal-backdrop{
+  padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));
+}
+.hws3-modal{
+  max-height:min(720px,calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+  overflow:auto;
+  overscroll-behavior:contain;
+}
+
+/* A pointer-less hover state must never be the only way to discover actions. */
+@media (hover:none),(pointer:coarse){
+  .hws3-session-more{opacity:1}
+  .hws3-session-more,
+  .hws3-mobile-close,
+  .hws3-mobile-bar>button,
+  .hws3-chat-actions>button,
+  .hws3-plus,
+  .hws3-send,
+  .hws3-stop{
+    min-width:40px;
+    min-height:40px;
+  }
+}
+
+/* Never force a product shell taller than the actual mobile viewport. */
+@media(max-width:820px){
+  .hws3-root{
+    min-height:0;
+    max-height:100dvh;
+  }
+  .hws3-main,
+  .hws3-conversation,
+  .hws3-page{
+    min-height:0;
+  }
+  .hws3-page{
+    padding-bottom:max(18px,env(safe-area-inset-bottom));
+  }
+}
+@media(max-width:520px){
+  .hws3-root{min-height:0}
+}
+
+/* Respect the platform preference across every remaining Product 3 transition,
+ * including the base spinner/sidebar/switch rules that predate sealed polish. */
+@media(prefers-reduced-motion:reduce){
+  .hws3-root,
+  .hws3-root *,
+  .hws3-root *::before,
+  .hws3-root *::after{
+    scroll-behavior:auto!important;
+    animation-duration:.001ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.001ms!important;
+    transition-delay:0s!important;
+  }
+}

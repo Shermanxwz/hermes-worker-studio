@@ -1,37 +1,62 @@
 # Changelog
 
-## Unreleased — Mixed New API protocol closure
+## Unreleased — Product engineering closure
+
+### Mixed New API protocol closure
 
 - Closed the mixed OpenAI-compatible endpoint gap where one New API inventory can contain both Chat Completions and Responses-only models.
 - Added first-use per-model protocol resolution: unresolved custom models run real Hermes Chat/Responses probes automatically, cache the verified result, and continue through the resulting official execution route without requiring a pre-click in Models.
-- Kept routing fail-closed: model names such as `gpt-*` are never treated as protocol evidence; if both transports work the operator must choose, and if neither works the Run fails with both real probe results.
-- Added per-model first-use probe locking plus a short failed-probe cooldown so concurrent sends do not duplicate billable probes and repeated failures do not create a retry storm.
-- Unified product Chat, independent Worker, Verifier, and native MOA around the same per-model execution route. Managed compatibility aliases are written only through Hermes `/api/config`, while the UI continues to show the original source Provider/Model.
-- Kept **官方探测** as an explicit diagnostic/retry action rather than a prerequisite for normal use.
-- Added an exact-count, fail-closed install-stage transform plus regression coverage for transformed Python/JavaScript syntax, Responses route selection, ambiguous-route blocking, and concurrent first-use probe de-duplication.
+- Kept routing fail-closed: model names such as `gpt-*` and pasted URL suffixes are never protocol evidence; both-success requires explicit choice and both-failed returns the real probe failures.
+- Added first-use probe locking plus a short failed-probe cooldown so concurrent sends do not duplicate billable probes and repeated failures do not create a retry storm.
+- Unified Product Chat, independent Worker, Verifier and native MOA around the same per-model execution route. Managed compatibility aliases are written only through Hermes `/api/config`, while the UI continues to show the source Provider/Model.
+- Kept **官方探测** as a diagnostic/retry action rather than a prerequisite for normal use.
+
+### No-feature product / engineering closure
+
+- Added `product-closure.css` as the final Product 3 stylesheet layer for keyboard focus visibility, touch-only action discoverability, safe-area/dialog bounds, short mobile/landscape viewports and complete reduced-motion handling without changing the existing visual language.
+- Closed existing-control accessibility semantics: live error alerts, Modal Escape/focus trap/focus return, menu/disclosure state, accessible names for composer/send/file/mobile/Full Access controls and active navigation state.
+- Strengthened the atomic installer and tests so the exact installed file set includes the closure stylesheet and both deterministic release transforms.
+- Added an explicit **Exact staged release artifact** CI gate that runs both installer transforms, then syntax-checks the final JavaScript and Python bridge and asserts the mixed-protocol/accessibility closure tokens.
+- Strengthened the archive contract around sole-Hermes runtime ownership, bounded Worker convenience state, CSS layering, release-transform capabilities, candidate SHA stamping and second-runtime rejection.
+- Expanded real-target browser coverage to desktop 1440×900, Pixel 7 portrait and compact 667×375 touch landscape. Every existing first-level page — Chat, Worker, Models, MOA, Full Access and History — is checked for horizontal overflow and product viewport bounds.
+- Made Playwright TLS-error ignoring opt-in (`HWS_SEAL_IGNORE_HTTPS_ERRORS=1`) instead of a default weakening.
+- Reconciled architecture, security, test, README, bilingual project introduction and seal documentation so current first-use protocol behavior and exact-current evidence semantics have one consistent source of truth.
+- Reclassified the 2026-09-01 target capture explicitly as historical evidence; it can no longer be read as proof for a newer exact candidate.
+
+### Seal-chain identity closure
+
+- Upgraded real-target evidence to `hermes-worker-studio.seal-evidence.v2`; it now requires exact installed-candidate read-back and records the actual final execution route used by the real Hermes acceptance Run.
+- Upgraded the final verdict to `hermes-worker-studio.seal-verdict.v2` and aligned the verifier/finalizer schema so a green target can no longer fail later because of version drift.
+- Bound each real-browser project directly to the running `product-capabilities.candidate_sha`; post-test report stamping is no longer sufficient evidence of installed identity.
+- Tightened browser verdicts so desktop, portrait mobile and landscape mobile must each contain a real `passed` product-shell result; a configured but skipped project cannot satisfy the seal.
+- Required desktop native Hermes return-path evidence to pass explicitly.
+- Made explicit real-target Provider/Model inputs atomic: both must be supplied together or both omitted, preventing a seal from silently exercising a different route.
+- Corrected the release lifecycle so a PR is merged **before** real-target sealing. The final seal identity is the exact current `main` HEAD, avoiding the impossible old pattern where sealing a PR head and merging afterward created a different canonical SHA.
+- Reworked the self-hosted real-target workflow to fetch and require `origin/main == candidate_sha` and reduced GitHub authority to `actions: read` + `contents: read` only.
+- Replaced mutation-capable PR finalization with a read-only exact-main verifier that checks the repository default branch, current `main` SHA and the exact-candidate `push` CI from `.github/workflows/ci.yml`.
 
 ## 3.0.0 — Product-grade Hermes shell
 
 - Moved Worker Studio to the product home route while keeping the native Hermes `/sessions` Dashboard reachable from **高级**.
-- Added an official Dashboard `header-left` slot that shows **← Worker Studio** on native Hermes pages; no DOM patching or Dashboard fork.
+- Added official Dashboard return slots that show **← Worker Studio** on native Hermes pages; no Dashboard fork.
 - Rebuilt the conversation surface around a ChatGPT-like information hierarchy with Hermes-native teal/cream styling.
 - Added session search and complete official Session CRUD: rename, archive, unarchive, and delete.
-- Removed the fixed `New conversation` title path; sessions are created lazily on first send with collision-resistant prompt-derived titles.
-- Added auto-scroll/follow control, jump-to-bottom, autosizing composer, Enter/Shift+Enter behavior, drag/drop, file picker, and Ctrl/Cmd+V image attachment UX.
-- Added the v3 Runs bridge that preserves structured Hermes `/v1/runs` input instead of flattening multimodal payloads to strings.
+- Removed the fixed `New conversation` title path; sessions are created lazily on first send with prompt-derived titles.
+- Added auto-scroll/follow control, jump-to-bottom, autosizing composer, Enter/Shift+Enter behavior, drag/drop, file picker, and Ctrl/Cmd+V attachment UX.
+- Added the Product 3 Runs probe/compat bridge that preserves structured Hermes `/v1/runs` input instead of flattening multimodal payloads to strings.
 - Added dedicated projection of real Hermes `todo` lifecycle events into an expandable **官方计划** surface while keeping tools/approval/subagent events observable.
-- Added full Custom Endpoint edit/test/save/activate/delete UX on Hermes official provider APIs and user-friendly terminal-path Base URL normalization.
+- Added full Custom Endpoint edit/test/save/activate/delete UX on Hermes official provider APIs and API-root normalization.
 - Replaced ambiguous unattended controls with a single **完全访问** toggle backed by Hermes approvals/delegation config, read-back, real marker probe, and pre-enable config restore.
 - Added mobile drawer navigation, `100dvh`/safe-area handling, responsive composer/chat/history/model surfaces, and touch-friendly controls.
-- Added Hermes-inspired Worker Studio favicon/brand mark and a matching Hermes dashboard theme.
-- Extended CI/archive gates for Product 3.0 assets, structured Run input, session/model lifecycle closure, mobile CSS, and no-second-runtime guarantees.
+- Added the Worker Studio project mark through Hermes official plugin static assets and a matching Hermes dashboard theme; no independent installed favicon is maintained.
+- Extended CI/archive gates for Product 3 assets, structured Run input, session/model lifecycle closure, mobile CSS, and no-second-runtime guarantees.
 
 ## 2.0.0 — Hermes-native archive candidate
 
 - Removed the independent Worker execution/control plane from the Studio runtime.
 - Worker/Verifier delegation now uses Hermes public `PluginContext.subagent_lifecycle`.
 - Added Hermes `pre_tool_call` enforcement for OFFICIAL/MAIN policy semantics.
-- Standardized conversation execution on Hermes native `/v1/runs` with status/events/stop/approval/steer.
+- Standardized probe/CI execution on Hermes native `/v1/runs`; Product 3 later moved live chat to the official TUI Gateway WebSocket.
 - Unified Main/Worker/Review model selection on Hermes `/api/model/options` and official Custom Endpoints.
 - Reasoning UI is fail-closed to `Auto` unless upstream exposes explicit effort metadata.
 - Promoted Unattended to first-level UX and added delegation auto-approval plus real Run marker verification.

@@ -17,6 +17,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "tests" / "upstream-lock.json").read_text(encoding="utf-8"))
+TARGET_EVIDENCE_SCHEMA = "hermes-worker-studio.seal-evidence.v2"
+SEAL_VERDICT_SCHEMA = "hermes-worker-studio.seal-verdict.v2"
+_EXECUTABLE_ROUTE_STATES = {"native", "declared", "resolved", "manual", "native_moa"}
 
 
 class SealEvidenceError(RuntimeError):
@@ -70,26 +73,41 @@ def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
     hermes = integration.get("hermes") if isinstance(integration.get("hermes"), dict) else {}
     caps = checks.get("product_capabilities") if isinstance(checks.get("product_capabilities"), dict) else {}
     plan_caps = caps.get("official_plan") if isinstance(caps.get("official_plan"), dict) else {}
+    protocol_caps = caps.get("model_protocols") if isinstance(caps.get("model_protocols"), dict) else {}
     crud = checks.get("session_crud") if isinstance(checks.get("session_crud"), dict) else {}
     real = checks.get("real_run") if isinstance(checks.get("real_run"), dict) else {}
+    route = real.get("execution_route") if isinstance(real.get("execution_route"), dict) else {}
 
-    _require(target.get("schema") == "hermes-worker-studio.seal-evidence.v1", "target evidence schema mismatch", errors)
+    _require(target.get("schema") == TARGET_EVIDENCE_SCHEMA, "target evidence schema mismatch", errors)
     _require(target.get("candidate_sha") == candidate, "target evidence candidate_sha does not match current candidate", errors)
+    _require(target.get("installed_candidate_verified") is True, "target did not verify the loaded installed candidate", errors)
     _require(target.get("ok") is True, "target acceptance did not finish ok", errors)
     health = checks.get("health") if isinstance(checks.get("health"), dict) else {}
     _require(health.get("ok") is True, "target health is not green", errors)
-    _require(hermes.get("execution_plane") == "official_runs", "target execution plane is not official_runs", errors)
+    _require(hermes.get("execution_plane") == "official_runs", "target probe/acceptance execution plane is not official_runs", errors)
     _require(hermes.get("worker_plane") == "PluginContext.subagent_lifecycle", "target Worker plane is not PluginContext.subagent_lifecycle", errors)
     _require(hermes.get("model_catalog") == "/api/model/options", "target model catalog is not Hermes-owned", errors)
     _require(caps.get("version") == 3, "target Product capability version is not 3", errors)
-    _require(caps.get("execution") == "Hermes official /v1/runs", "target Product execution is not Hermes /v1/runs", errors)
+    _require(caps.get("execution") == "Hermes official /v1/runs", "target Product probe/acceptance execution rail is not Hermes /v1/runs", errors)
     _require(plan_caps.get("source") == "Hermes canonical todo", "target official plan is not Hermes canonical todo", errors)
+    _require(protocol_caps.get("per_model") is True, "target Product does not report per-model protocol routing", errors)
+    _require("first-use" in str(protocol_caps.get("probe") or ""), "target Product does not report first-use real-Run protocol resolution", errors)
+    _require("fail closed" in str(protocol_caps.get("unresolved") or "").lower(), "target Product protocol unresolved policy is not fail-closed", errors)
     _require(crud.get("created") is True and crud.get("renamed") is True, "target session create/rename evidence missing", errors)
     _require(crud.get("archived") is True and crud.get("unarchived") is True, "target session archive round-trip evidence missing", errors)
     _require(crud.get("deleted") is True, "target session delete evidence missing", errors)
 
     _require(str(real.get("status") or "").lower() == "completed", "real Hermes Run did not complete", errors)
     _require(real.get("marker_verified") is True, "real Hermes Run marker was not verified", errors)
+    _require(bool(str(real.get("provider") or "")), "real Hermes Run provider evidence missing", errors)
+    _require(bool(str(real.get("model") or "")), "real Hermes Run model evidence missing", errors)
+    route_status = str(route.get("status") or "").lower()
+    _require(bool(route), "real Hermes Run execution_route evidence missing", errors)
+    _require(route_status in _EXECUTABLE_ROUTE_STATES, f"real Hermes Run route is not final/executable: {route_status or '<missing>'}", errors)
+    _require(str(route.get("provider") or "") == str(real.get("provider") or ""), "real Hermes Run route provider does not match requested provider", errors)
+    _require(str(route.get("model") or "") == str(real.get("model") or ""), "real Hermes Run route model does not match requested model", errors)
+    _require(bool(str(route.get("execution_provider") or "")), "real Hermes Run route has no execution_provider", errors)
+
     revisions = real.get("canonical_revisions") if isinstance(real.get("canonical_revisions"), list) else []
     numeric_revisions = [x for x in revisions if isinstance(x, int) and not isinstance(x, bool)]
     _require(len(numeric_revisions) >= 3, "canonical todo has fewer than three persisted revisions", errors)
@@ -107,6 +125,34 @@ def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
     return errors
 
 
+def _test_statuses_by_project(value: Any, title: str) -> dict[str, set[str]]:
+    """Collect Playwright JSON-reporter result statuses for one exact spec title."""
+    found: dict[str, set[str]] = {}
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if str(node.get("title") or "") == title and isinstance(node.get("tests"), list):
+                for test in node["tests"]:
+                    if not isinstance(test, dict):
+                        continue
+                    project = str(test.get("projectName") or "").strip()
+                    if not project:
+                        continue
+                    statuses = found.setdefault(project, set())
+                    results = test.get("results") if isinstance(test.get("results"), list) else []
+                    for result in results:
+                        if isinstance(result, dict) and isinstance(result.get("status"), str):
+                            statuses.add(result["status"])
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return found
+
+
 def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
     errors: list[str] = []
     _require(ui.get("candidate_sha") == candidate, "browser evidence candidate_sha does not match current candidate", errors)
@@ -115,7 +161,10 @@ def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
     unexpected = stats.get("unexpected")
     expected = stats.get("expected")
     _require(unexpected == 0, f"Playwright has unexpected test results: {unexpected!r}", errors)
-    _require(isinstance(expected, int) and expected >= 3, f"Playwright expected-pass count is too small: {expected!r}", errors)
+    # Product shell passes once in each of three viewport projects, and the
+    # desktop native-return test is the fourth required pass. Mobile native
+    # shell tests are intentionally skipped because that shell is upstream-owned.
+    _require(isinstance(expected, int) and expected >= 4, f"Playwright expected-pass count is too small for the three-viewport seal: {expected!r}", errors)
 
     config = ui.get("config") if isinstance(ui.get("config"), dict) else {}
     projects = config.get("projects") if isinstance(config.get("projects"), list) else []
@@ -124,15 +173,23 @@ def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
         for row in projects
         if isinstance(row, dict)
     }
-    _require("desktop-chromium" in project_names, "desktop Chromium project missing from browser evidence", errors)
-    _require("mobile-chromium" in project_names, "mobile Chromium project missing from browser evidence", errors)
+    required_projects = ("desktop-chromium", "mobile-chromium", "mobile-landscape-chromium")
+    for required_project in required_projects:
+        _require(required_project in project_names, f"{required_project} missing from browser evidence", errors)
 
-    rendered = json.dumps(ui, ensure_ascii=False)
-    for title in (
-        "Worker Studio product shell is usable at the real target",
-        "native Hermes Dashboard keeps the Worker Studio return path",
-    ):
-        _require(title in rendered, f"browser evidence missing test: {title}", errors)
+    product_title = "Worker Studio product shell is usable at the real target"
+    native_title = "native Hermes Dashboard keeps the Worker Studio return path"
+    product_statuses = _test_statuses_by_project(ui, product_title)
+    native_statuses = _test_statuses_by_project(ui, native_title)
+    for required_project in required_projects:
+        statuses = product_statuses.get(required_project, set())
+        _require("passed" in statuses, f"{required_project} product-shell browser test did not pass: {sorted(statuses)}", errors)
+    _require(
+        "passed" in native_statuses.get("desktop-chromium", set()),
+        f"desktop-chromium native-return browser test did not pass: {sorted(native_statuses.get('desktop-chromium', set()))}",
+        errors,
+    )
+
     _require("failed" not in _terminal_statuses(ui), "browser evidence contains a failed result", errors)
     _require("timedOut" not in _terminal_statuses(ui), "browser evidence contains a timed-out result", errors)
     _require("interrupted" not in _terminal_statuses(ui), "browser evidence contains an interrupted result", errors)
@@ -157,7 +214,7 @@ def _terminal_statuses(value: Any) -> set[str]:
 def validate(target: dict[str, Any], ui: dict[str, Any], upstream: dict[str, Any], candidate: str) -> dict[str, Any]:
     errors = [*validate_upstream(upstream), *validate_target(target, candidate), *validate_ui(ui, candidate)]
     return {
-        "schema": "hermes-worker-studio.seal-verdict.v2",
+        "schema": SEAL_VERDICT_SCHEMA,
         "candidate_sha": candidate,
         "eligible": not errors,
         "errors": errors,

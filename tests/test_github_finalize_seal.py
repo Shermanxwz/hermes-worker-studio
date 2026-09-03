@@ -22,12 +22,19 @@ CANDIDATE = "a" * 40
 
 
 class GitHubSealFinalizerTests(unittest.TestCase):
-    def _verdict(self, directory: pathlib.Path, *, eligible: bool = True, candidate: str = CANDIDATE) -> pathlib.Path:
+    def _verdict(
+        self,
+        directory: pathlib.Path,
+        *,
+        eligible: bool = True,
+        candidate: str = CANDIDATE,
+        schema: str = mod.SEAL_VERDICT_SCHEMA,
+    ) -> pathlib.Path:
         path = directory / "SEALED.json"
         path.write_text(
             json.dumps(
                 {
-                    "schema": "hermes-worker-studio.seal-verdict.v1",
+                    "schema": schema,
                     "candidate_sha": candidate,
                     "eligible": eligible,
                 }
@@ -39,77 +46,120 @@ class GitHubSealFinalizerTests(unittest.TestCase):
     def _args(self, evidence: pathlib.Path, **patches):
         values = {
             "repo": "Shermanxwz/hermes-worker-studio",
-            "pr": 4,
             "candidate": CANDIDATE,
             "evidence": evidence,
-            "merge_method": "merge",
             "token": "token",
-            "dry_run": False,
         }
         values.update(patches)
         return argparse.Namespace(**values)
 
-    def test_load_verdict_requires_exact_candidate_and_eligibility(self):
+    def test_load_verdict_requires_current_schema_exact_candidate_and_eligibility(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             with self.assertRaises(mod.FinalizeError):
                 mod._load_verdict(self._verdict(root, eligible=False), CANDIDATE)
             with self.assertRaises(mod.FinalizeError):
                 mod._load_verdict(self._verdict(root, candidate="b" * 40), CANDIDATE)
+            with self.assertRaises(mod.FinalizeError):
+                mod._load_verdict(
+                    self._verdict(root, schema="hermes-worker-studio.seal-verdict.v1"),
+                    CANDIDATE,
+                )
 
-    def test_exact_head_ci_uses_latest_matching_ci_run(self):
+    def test_exact_main_requires_default_main_and_exact_candidate(self):
+        good_repo = {"default_branch": "main"}
+        good_branch = {"name": "main", "commit": {"sha": CANDIDATE}}
+        with patch.object(mod, "_request", side_effect=[good_repo, good_branch]):
+            branch = mod._require_exact_main("owner/repo", CANDIDATE, "token")
+        self.assertEqual(branch["commit"]["sha"], CANDIDATE)
+
+        with patch.object(mod, "_request", return_value={"default_branch": "develop"}), self.assertRaises(mod.FinalizeError):
+            mod._require_exact_main("owner/repo", CANDIDATE, "token")
+
+        with patch.object(
+            mod,
+            "_request",
+            side_effect=[good_repo, {"name": "main", "commit": {"sha": "b" * 40}}],
+        ), self.assertRaises(mod.FinalizeError):
+            mod._require_exact_main("owner/repo", CANDIDATE, "token")
+
+    def test_exact_main_ci_uses_latest_matching_canonical_workflow(self):
         payload = {
             "workflow_runs": [
-                {"id": 1, "name": "CI", "head_sha": CANDIDATE, "run_number": 10, "status": "completed", "conclusion": "failure"},
-                {"id": 2, "name": "Other", "head_sha": CANDIDATE, "run_number": 99, "status": "completed", "conclusion": "success"},
-                {"id": 3, "name": "CI", "head_sha": CANDIDATE, "run_number": 11, "status": "completed", "conclusion": "success"},
+                {
+                    "id": 1,
+                    "name": "CI",
+                    "path": mod.CI_WORKFLOW_PATH,
+                    "head_sha": CANDIDATE,
+                    "head_branch": "main",
+                    "event": "push",
+                    "run_number": 10,
+                    "status": "completed",
+                    "conclusion": "failure",
+                },
+                {
+                    "id": 2,
+                    "name": "CI",
+                    "path": ".github/workflows/lookalike.yml",
+                    "head_sha": CANDIDATE,
+                    "head_branch": "main",
+                    "event": "push",
+                    "run_number": 99,
+                    "status": "completed",
+                    "conclusion": "success",
+                },
+                {
+                    "id": 3,
+                    "name": "CI",
+                    "path": mod.CI_WORKFLOW_PATH,
+                    "head_sha": CANDIDATE,
+                    "head_branch": "main",
+                    "event": "push",
+                    "run_number": 11,
+                    "status": "completed",
+                    "conclusion": "success",
+                },
             ]
         }
         with patch.object(mod, "_request", return_value=payload):
-            row = mod._require_green_exact_head_ci("owner/repo", CANDIDATE, "token")
+            row = mod._require_green_exact_main_ci("owner/repo", CANDIDATE, "token")
         self.assertEqual(row["id"], 3)
 
-    def test_exact_head_ci_fails_when_latest_matching_run_is_not_green(self):
+    def test_exact_main_ci_rejects_pr_or_noncanonical_workflow_results(self):
         payload = {
             "workflow_runs": [
-                {"id": 1, "name": "CI", "head_sha": CANDIDATE, "run_number": 10, "status": "completed", "conclusion": "success"},
-                {"id": 2, "name": "CI", "head_sha": CANDIDATE, "run_number": 11, "status": "in_progress", "conclusion": None},
+                {
+                    "id": 1,
+                    "name": "CI",
+                    "path": mod.CI_WORKFLOW_PATH,
+                    "head_sha": CANDIDATE,
+                    "head_branch": "feature",
+                    "event": "pull_request",
+                    "run_number": 10,
+                    "status": "completed",
+                    "conclusion": "success",
+                }
             ]
         }
         with patch.object(mod, "_request", return_value=payload), self.assertRaises(mod.FinalizeError):
-            mod._require_green_exact_head_ci("owner/repo", CANDIDATE, "token")
+            mod._require_green_exact_main_ci("owner/repo", CANDIDATE, "token")
 
-    def test_finalize_dry_run_never_mutates_pr(self):
+    def test_finalize_is_read_only_and_binds_verdict_main_and_push_ci(self):
         with tempfile.TemporaryDirectory() as tmp:
             evidence = self._verdict(pathlib.Path(tmp))
-            pr = {"state": "open", "draft": True, "head": {"sha": CANDIDATE}, "node_id": "PR_node"}
+            branch = {"name": "main", "commit": {"sha": CANDIDATE}}
             ci = {"id": 42, "run_number": 110, "status": "completed", "conclusion": "success"}
-            with patch.object(mod, "_get_pr", return_value=pr), patch.object(
-                mod, "_require_green_exact_head_ci", return_value=ci
-            ), patch.object(mod, "_mark_ready") as ready, patch.object(mod, "_merge") as merge:
-                result = mod.finalize(self._args(evidence, dry_run=True, token=""))
-            self.assertTrue(result["seal_eligible"])
-            self.assertFalse(result["merged"])
-            ready.assert_not_called()
-            merge.assert_not_called()
-
-    def test_finalize_rechecks_head_after_mark_ready_before_merge(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            evidence = self._verdict(pathlib.Path(tmp))
-            draft = {"state": "open", "draft": True, "head": {"sha": CANDIDATE}, "node_id": "PR_node"}
-            ready = {"state": "open", "draft": False, "head": {"sha": CANDIDATE}, "node_id": "PR_node"}
-            ci = {"id": 42, "run_number": 110, "status": "completed", "conclusion": "success"}
-            with patch.object(mod, "_get_pr", side_effect=[draft, ready]) as get_pr, patch.object(
-                mod, "_require_green_exact_head_ci", return_value=ci
-            ), patch.object(mod, "_mark_ready") as mark_ready, patch.object(
-                mod, "_merge", return_value={"merged": True, "sha": "m" * 40, "message": "ok"}
-            ) as merge:
+            with patch.object(mod, "_require_exact_main", return_value=branch) as main_gate, patch.object(
+                mod, "_require_green_exact_main_ci", return_value=ci
+            ) as ci_gate:
                 result = mod.finalize(self._args(evidence))
-            self.assertEqual(get_pr.call_count, 2)
-            mark_ready.assert_called_once()
-            merge.assert_called_once()
-            self.assertTrue(result["ready_transitioned"])
-            self.assertTrue(result["merged"])
+            main_gate.assert_called_once_with("Shermanxwz/hermes-worker-studio", CANDIDATE, "token")
+            ci_gate.assert_called_once_with("Shermanxwz/hermes-worker-studio", CANDIDATE, "token")
+            self.assertTrue(result["finalized"])
+            self.assertTrue(result["read_only"])
+            self.assertEqual(result["canonical_branch"], "main")
+            self.assertEqual(result["canonical_branch_sha"], CANDIDATE)
+            self.assertEqual(result["seal_schema"], mod.SEAL_VERDICT_SCHEMA)
 
 
 if __name__ == "__main__":

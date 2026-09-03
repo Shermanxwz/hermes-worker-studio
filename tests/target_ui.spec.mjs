@@ -1,5 +1,15 @@
 import { expect, test } from '@playwright/test';
 
+const EXPECTED_CANDIDATE = process.env.HWS_CANDIDATE_SHA || '';
+const PRIMARY_PAGES = [
+  { nav: '对话', heading: null, selector: '.hws3-conversation' },
+  { nav: 'Worker', heading: 'Hermes Worker', selector: '.hws3-page' },
+  { nav: '模型', heading: '模型', selector: '.hws3-page' },
+  { nav: 'MOA', heading: 'MOA', selector: '.hws3-moa-page' },
+  { nav: '完全访问', heading: '完全访问', selector: '.hws3-page' },
+  { nav: '完整历史', heading: '完整历史', selector: '.hws3-page' },
+];
+
 async function assertNoHorizontalOverflow(page) {
   const metrics = await page.evaluate(() => ({
     html: document.documentElement.scrollWidth,
@@ -8,6 +18,21 @@ async function assertNoHorizontalOverflow(page) {
   }));
   expect(metrics.html).toBeLessThanOrEqual(metrics.viewport + 2);
   expect(metrics.body).toBeLessThanOrEqual(metrics.viewport + 2);
+}
+
+async function assertProductViewportBounded(page) {
+  const metrics = await page.evaluate(() => {
+    const root = document.querySelector('.hws3-root');
+    const rect = root?.getBoundingClientRect();
+    return {
+      viewportHeight: window.innerHeight,
+      top: rect?.top ?? 0,
+      bottom: rect?.bottom ?? 0,
+      height: rect?.height ?? 0,
+    };
+  });
+  expect(metrics.height).toBeGreaterThan(0);
+  expect(metrics.bottom).toBeLessThanOrEqual(metrics.viewportHeight + 2);
 }
 
 async function assertExclusiveProductHome(page) {
@@ -29,12 +54,48 @@ async function assertExclusiveProductHome(page) {
   }
 }
 
+async function assertRunningCandidate(page) {
+  expect(EXPECTED_CANDIDATE, 'HWS_CANDIDATE_SHA must identify the exact browser-seal candidate').toMatch(/^[0-9a-f]{40}$/);
+  const caps = await page.evaluate(async () => {
+    const sdk = window.__HERMES_PLUGIN_SDK__;
+    if (!sdk?.fetchJSON) throw new Error('Hermes Dashboard Plugin SDK fetchJSON is unavailable');
+    return sdk.fetchJSON('/api/plugins/hermes-worker-studio/product-capabilities');
+  });
+  expect(caps?.version).toBe(3);
+  expect(caps?.candidate_sha).toBe(EXPECTED_CANDIDATE);
+}
+
+async function openPrimary(page, label, mobile) {
+  if (mobile) {
+    const trigger = page.locator('.hws3-mobile-bar button[aria-label="打开菜单"]');
+    await expect(trigger).toBeVisible();
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('.hws3-mobile-scrim')).toBeVisible();
+  }
+  const item = page.locator('.hws3-nav').getByText(label, { exact: true });
+  await expect(item).toBeVisible();
+  await item.click();
+  await expect(page.locator('.hws3-nav button[aria-current="page"]')).toContainText(label);
+  if (mobile) await expect(page.locator('.hws3-mobile-scrim')).toHaveCount(0);
+}
+
+async function assertPrimaryPage(page, spec) {
+  await expect(page.locator(spec.selector).first()).toBeVisible();
+  if (spec.heading) await expect(page.getByRole('heading', { name: spec.heading, exact: true }).first()).toBeVisible();
+  await assertNoHorizontalOverflow(page);
+  await assertProductViewportBounded(page);
+}
+
 test('Worker Studio product shell is usable at the real target', async ({ page }, testInfo) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveTitle('Hermes Worker Studio');
   await expect(page.locator('.hws3-root')).toBeVisible();
+  await assertRunningCandidate(page);
   await expect(page.getByText('Hermes Worker Studio', { exact: true }).first()).toBeVisible();
   await expect(page.locator('.hws3-composer textarea')).toBeVisible();
+  await expect(page.locator('.hws3-composer textarea')).toHaveAttribute('aria-label', '给 Hermes 发送消息');
+  await expect(page.locator('.hws3-send')).toHaveAttribute('aria-label', '发送消息');
   await assertExclusiveProductHome(page);
 
   const gatewayContract = await page.evaluate(() => window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE__ || null);
@@ -56,6 +117,7 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   await expect(picker).toHaveCount(1);
   await expect(picker).not.toHaveAttribute('accept', /image/i);
   await expect(page.locator('.hws3-plus')).toHaveAttribute('title', '添加文件');
+  await expect(page.locator('.hws3-plus')).toHaveAttribute('aria-label', '添加文件');
 
   const mobile = testInfo.project.name.startsWith('mobile-');
   if (!mobile) {
@@ -84,35 +146,31 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
     expect(gatewayProbe.context.context_max == null || Number.isFinite(Number(gatewayProbe.context.context_max))).toBe(true);
   }
 
-  if (mobile) {
-    const menu = page.locator('.hws3-mobile-bar button[title="菜单"]');
-    await expect(menu).toBeVisible();
-    await menu.click();
-    await expect(page.locator('.hws3-mobile-scrim')).toBeVisible();
-    await expect(page.locator('.hws3-nav').getByText('Worker', { exact: true })).toBeVisible();
-    await expect(page.locator('.hws3-native-dashboard-link')).toContainText('高级 · Hermes Dashboard');
-    await page.locator('.hws3-mobile-scrim').click();
-    await expect(page.locator('.hws3-mobile-scrim')).toHaveCount(0);
-  } else {
-    await expect(page.locator('.hws3-sidebar')).toBeVisible();
-    for (const label of ['对话', 'Worker', '模型', '完全访问', '完整历史']) {
-      await expect(page.locator('.hws3-nav').getByText(label, { exact: true })).toBeVisible();
+  // Every existing first-level product page is part of the seal matrix. This
+  // catches layout regressions that a chat-only screenshot cannot see.
+  for (const spec of PRIMARY_PAGES) {
+    await openPrimary(page, spec.nav, mobile);
+    await assertPrimaryPage(page, spec);
+    if (spec.nav === '完全访问') {
+      await expect(page.getByText(/Clarify 等交互请求自动 Skip\/Decline/)).toBeVisible();
+      await expect(page.getByText(/Hardline Blocklist/)).toBeVisible();
+      await expect(page.locator('.hws3-switch')).toHaveAttribute('aria-label', /完全访问/);
     }
-    await page.locator('.hws3-nav').getByText('完全访问', { exact: true }).click();
-    await expect(page.getByText(/Clarify 等交互请求自动 Skip\/Decline/)).toBeVisible();
-    await expect(page.getByText(/Hardline Blocklist/)).toBeVisible();
-    await page.locator('.hws3-nav').getByText('对话', { exact: true }).click();
   }
 
+  // Return to chat before checking the viewport-bound composer contract.
+  await openPrimary(page, '对话', mobile);
+  await expect(page.locator('.hws3-composer')).toBeVisible();
   const composerBox = await page.locator('.hws3-composer').boundingBox();
   expect(composerBox).not.toBeNull();
   expect(composerBox.y + composerBox.height).toBeLessThanOrEqual((await page.evaluate(() => window.innerHeight)) + 2);
   await assertNoHorizontalOverflow(page);
+  await assertProductViewportBounded(page);
   await page.screenshot({ path: testInfo.outputPath('worker-studio.png'), fullPage: true });
 });
 
 test('native Hermes Dashboard keeps the Worker Studio return path', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name.startsWith('mobile-'), 'desktop navigation contract is sufficient; mobile shell is covered separately');
+  test.skip(testInfo.project.name.startsWith('mobile-'), 'native mobile shell is upstream-owned; product mobile pages are sealed in the primary test');
 
   await page.goto('/sessions', { waitUntil: 'domcontentloaded' });
   const backs = page.getByText('← Worker Studio', { exact: true });
@@ -124,6 +182,8 @@ test('native Hermes Dashboard keeps the Worker Studio return path', async ({ pag
   await back.click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.hws3-root')).toBeVisible();
+  await assertRunningCandidate(page);
   await assertExclusiveProductHome(page);
+  await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('native-return.png'), fullPage: true });
 });
