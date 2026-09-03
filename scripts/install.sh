@@ -25,7 +25,7 @@ for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
   dashboard/dist/gateway-native.js dashboard/dist/index-v3.js \
-  dashboard/dist/project-mark.png dashboard/dist/product.css dashboard/dist/product-sealed.css \
+  dashboard/dist/project-mark.png dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css \
   scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
@@ -38,7 +38,7 @@ rm -rf "$TMP" "$BACKUP"
 mkdir -p "$TMP/dashboard/dist"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
 cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
-cp "$ROOT/dashboard/dist/gateway-native.js" "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/project-mark.png" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$TMP/dashboard/dist/"
+cp "$ROOT/dashboard/dist/gateway-native.js" "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/project-mark.png" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$ROOT/dashboard/dist/product-closure.css" "$TMP/dashboard/dist/"
 
 # Product 3 uses one project mark across its plugin UI. The image
 # is served by Hermes' official plugin static-asset route, so the browser never
@@ -65,17 +65,10 @@ if source.count(old_candidate) != 1:
 bridge.write_text(source.replace(old_candidate, new_candidate), encoding="utf-8")
 PY
 
-# Widen the release Composer to the pinned Hermes Gateway's official attachment
-# family (image.attach_bytes / pdf.attach / file.attach). The transform itself
-# is exact-count checked and fails closed if Product 3 source drifts.
+# Deterministic release transforms are build steps, not alternate runtime
+# implementations. Both are exact-count checked and the installed output is
+# exercised by installer tests and the staged-artifact CI gate.
 python3 "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"
-
-# Close mixed OpenAI-compatible providers without inventing a second model
-# registry or guessing from model names. The staged bridge performs one real
-# Hermes Chat/Responses probe on first unresolved use, caches the per-model
-# route, and writes only narrow managed aliases through Hermes' official config.
-# Worker/Verifier/MOA consume the same resolver. Exact-count transforms make
-# source drift an installation failure rather than a silent partial patch.
 python3 "$ROOT/scripts/stage_mixed_protocol.py" \
   "$TMP/dashboard/dist/index-v3.js" \
   "$TMP/dashboard/plugin_api_v3.py"
