@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+const EXPECTED_CANDIDATE = process.env.HWS_CANDIDATE_SHA || '';
 const PRIMARY_PAGES = [
   { nav: '对话', heading: null, selector: '.hws3-conversation' },
   { nav: 'Worker', heading: 'Hermes Worker', selector: '.hws3-page' },
@@ -53,6 +54,17 @@ async function assertExclusiveProductHome(page) {
   }
 }
 
+async function assertRunningCandidate(page) {
+  expect(EXPECTED_CANDIDATE, 'HWS_CANDIDATE_SHA must identify the exact browser-seal candidate').toMatch(/^[0-9a-f]{40}$/);
+  const caps = await page.evaluate(async () => {
+    const sdk = window.__HERMES_PLUGIN_SDK__;
+    if (!sdk?.fetchJSON) throw new Error('Hermes Dashboard Plugin SDK fetchJSON is unavailable');
+    return sdk.fetchJSON('/api/plugins/hermes-worker-studio/product-capabilities');
+  });
+  expect(caps?.version).toBe(3);
+  expect(caps?.candidate_sha).toBe(EXPECTED_CANDIDATE);
+}
+
 async function openPrimary(page, label, mobile) {
   if (mobile) {
     const trigger = page.locator('.hws3-mobile-bar button[aria-label="打开菜单"]');
@@ -79,6 +91,7 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveTitle('Hermes Worker Studio');
   await expect(page.locator('.hws3-root')).toBeVisible();
+  await assertRunningCandidate(page);
   await expect(page.getByText('Hermes Worker Studio', { exact: true }).first()).toBeVisible();
   await expect(page.locator('.hws3-composer textarea')).toBeVisible();
   await expect(page.locator('.hws3-composer textarea')).toHaveAttribute('aria-label', '给 Hermes 发送消息');
@@ -169,6 +182,7 @@ test('native Hermes Dashboard keeps the Worker Studio return path', async ({ pag
   await back.click();
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.hws3-root')).toBeVisible();
+  await assertRunningCandidate(page);
   await assertExclusiveProductHome(page);
   await assertNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('native-return.png'), fullPage: true });
