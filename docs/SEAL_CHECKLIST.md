@@ -1,12 +1,13 @@
 # Final Seal Checklist — Product 3
 
-`SEAL_ACCEPTANCE.md` is canonical. This checklist is diagnostic only. It must describe the **current exact candidate**, never a historical PR number or an older target capture.
+`SEAL_ACCEPTANCE.md` is canonical. This checklist is diagnostic only. It must describe the **exact current `main` commit**, never a historical PR head or older target capture.
 
-## 1. Exact candidate + official upstream
+## 1. Canonical candidate + official upstream
 
-- [ ] tracked working tree is clean;
-- [ ] current SHA is the intended seal candidate;
-- [ ] CI for that exact SHA is green;
+- [ ] all intended development/closure changes are already merged into `main`;
+- [ ] current `main` HEAD is the intended seal candidate;
+- [ ] push CI from `.github/workflows/ci.yml` for that exact `main` SHA is green;
+- [ ] tracked working tree on the target checkout is clean;
 - [ ] `tests/upstream-lock.json` contains only Hermes as runtime upstream;
 - [ ] pinned-upstream verification passes;
 - [ ] `dashboard_route_scoped_exclusive_shell.required_for_seal=true` remains pinned;
@@ -26,13 +27,15 @@ Repository gates must prove the same build path that the target installer uses:
 - [ ] staged `index-v3.js` passes `node --check`;
 - [ ] staged `plugin_api_v3.py` passes Python compile;
 - [ ] installer tests verify the exact installed file set and staged behavior;
-- [ ] candidate SHA stamping is the only candidate-specific mutation.
+- [ ] candidate SHA stamping is the only candidate-specific runtime mutation.
 
 ## 3. One-command real-target closure
 
 ```bash
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
+
+When selecting a specific real-Run route, provide `--provider` and `--model` together. The command must never silently substitute a different route.
 
 The command must produce:
 
@@ -54,22 +57,27 @@ There is no upstream-contract skip flag.
 
 ## 5. target.json
 
-- [ ] running Product 3 reports the exact candidate SHA;
-- [ ] product chat Gateway contract reports `tui_gateway_jsonrpc_websocket` + `prompt.submit`;
-- [ ] official Runs probe/CI plane remains available;
+- [ ] schema is `hermes-worker-studio.seal-evidence.v2`;
+- [ ] `candidate_sha` equals exact current `main` HEAD;
+- [ ] `installed_candidate_verified=true`;
+- [ ] running Product 3 reports that exact candidate SHA through `product-capabilities`;
+- [ ] official Runs probe/acceptance plane is available;
 - [ ] Worker plane is `PluginContext.subagent_lifecycle`;
 - [ ] model catalog is `/api/model/options`;
-- [ ] Session create -> rename -> archive -> unarchive -> delete completes;
+- [ ] installed product reports per-model protocol routing, first-use real-Run resolution and fail-closed unresolved behavior;
+- [ ] Session create -> rename -> archive -> unarchive -> delete completes and post-delete read returns 404;
 - [ ] real model Run completes and marker verifies;
+- [ ] `real_run.execution_route` names the requested source Provider/Model, a final executable status and nonempty execution Provider;
+- [ ] a Responses-resolved model records `codex_responses`/the corresponding managed execution Provider rather than silently falling back to Chat;
+- [ ] unresolved/ambiguous routes cannot satisfy target evidence;
 - [ ] canonical todo has >=3 monotonic persisted revisions, an in-progress phase and all-final-completed state;
-- [ ] Studio projection contains canonical todo evidence;
-- [ ] a mixed custom endpoint never selects Chat/Responses from a model name or pasted URL;
-- [ ] unresolved per-model transport resolves through a real first-use/explicit Hermes probe, with ambiguous/both-failed outcomes remaining fail-closed.
+- [ ] Studio projection contains canonical todo evidence.
 
 ## 6. ui-report.json — product takeover and viewport closure
 
 On `/`:
 
+- [ ] every browser project reads running `product-capabilities.candidate_sha` and requires exact candidate equality;
 - [ ] only Worker Studio product navigation is visible normally;
 - [ ] Studio contains no copied Hermes navigation list; Advanced links directly to native `/sessions`;
 - [ ] native Hermes routes remain under `高级 · Hermes Dashboard`, not duplicated in the Studio rail;
@@ -79,12 +87,13 @@ On `/`:
 - [ ] **对话 / Worker / 模型 / MOA / 完全访问 / 完整历史** all render successfully in every product viewport project;
 - [ ] touch-only projects do not require hover to discover session actions;
 - [ ] Gateway marker reports arbitrary attachments, durable resume and no-wait input responders;
-- [ ] `desktop-chromium`, `mobile-chromium`, and `mobile-landscape-chromium` pass.
+- [ ] `desktop-chromium`, `mobile-chromium`, and `mobile-landscape-chromium` each have a `passed` product-shell result; configured/skipped is not enough.
 
 On native `/sessions` (desktop upstream shell contract):
 
 - [ ] normal Hermes shell/navigation returns;
-- [ ] at least one `← Worker Studio` official slot is visible and works back to `/`.
+- [ ] at least one `← Worker Studio` official slot is visible and works back to `/`;
+- [ ] desktop native-return result is explicitly `passed`.
 
 ## 7. Runtime closure
 
@@ -120,13 +129,23 @@ On native `/sessions` (desktop upstream shell contract):
 - [ ] no browser bearer secret;
 - [ ] no Hermes core patch, copied native navigation, or fork;
 - [ ] local host-shell compatibility selectors remain narrow/reversible; the official exclusive-shell contract is still required for final sealing;
-- [ ] the project mark is served through Hermes' official plugin static-asset route;
-- [ ] release transforms have no network/process/runtime ownership.
+- [ ] project mark is served through Hermes' official plugin static-asset route;
+- [ ] release transforms have no network/process/runtime ownership;
+- [ ] real-target workflow is manual-only with `actions: read` + `contents: read` and no PR/repository write permission.
 
 ## 10. Final decision
 
 ```bash
 python scripts/verify_seal_evidence.py
+python scripts/github_finalize_seal.py --repo Shermanxwz/hermes-worker-studio --candidate <exact-main-sha>
 ```
 
-`.seal/SEALED.json` must have `eligible=true`, name the **exact current Worker Studio candidate**, and record the exact verified Hermes upstream commit. Only then may that exact candidate be called `SEALED` or finalized as a sealed release.
+`.seal/SEALED.json` must use `hermes-worker-studio.seal-verdict.v2`, have `eligible=true`, name the exact current `main` SHA, and record the exact verified Hermes upstream commit.
+
+The GitHub finalizer is read-only and must confirm:
+
+- repository default branch is `main`;
+- current `main` HEAD still equals that exact SHA;
+- the latest exact-main **push** CI from `.github/workflows/ci.yml` is completed/success.
+
+No code merge or branch mutation is permitted after target/browser evidence capture. Only then may that exact `main` commit be called `SEALED`.
