@@ -3,51 +3,33 @@ name: Seal Real Hermes Target
 on:
   workflow_dispatch:
     inputs:
-      pr_number:
-        description: Pull request number to seal and finalize
-        required: true
       candidate_sha:
-        description: Exact 40-character PR head SHA already green in CI
+        description: Exact 40-character current main HEAD SHA already green in push CI
         required: true
       dashboard_url:
         description: Hermes Dashboard URL reachable from the self-hosted target runner
         required: true
         default: http://127.0.0.1:19119
       provider:
-        description: Optional Hermes provider override for the real Run
+        description: Optional explicit Hermes provider for the real Run; provide together with model
         required: false
         default: ''
       model:
-        description: Optional Hermes model override for the real Run
+        description: Optional explicit Hermes model for the real Run; provide together with provider
         required: false
         default: ''
-      merge_method:
-        description: Merge method after the exact candidate is sealed
-        required: true
-        type: choice
-        options:
-          - merge
-          - squash
-          - rebase
-        default: merge
-      finalize:
-        description: Mark Ready and merge after every seal gate passes
-        required: true
-        type: boolean
-        default: true
 
 permissions:
   actions: read
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
-  group: hws-real-target-seal-${{ inputs.pr_number }}
+  group: hws-real-target-seal-${{ inputs.candidate_sha }}
   cancel-in-progress: false
 
 jobs:
   seal:
-    name: Real Hermes target seal + exact-head finalize
+    name: Real Hermes target seal + exact-main verification
     runs-on: [self-hosted, hermes-seal]
     timeout-minutes: 60
     env:
@@ -73,23 +55,22 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Reject wrong checkout or dirty candidate
+      - name: Reject non-main, wrong or dirty candidate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ inputs.candidate_sha }}"
           test -z "$(git status --porcelain --untracked-files=no)"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "${{ inputs.candidate_sha }}"
 
       - name: Close real target seal
         shell: bash
         run: |
           set -euo pipefail
           args=(--url "$HWS_DASHBOARD_URL")
-          if [[ -n "${HWS_SEAL_PROVIDER:-}" ]]; then
-            args+=(--provider "$HWS_SEAL_PROVIDER")
-          fi
-          if [[ -n "${HWS_SEAL_MODEL:-}" ]]; then
-            args+=(--model "$HWS_SEAL_MODEL")
+          if [[ -n "${HWS_SEAL_PROVIDER:-}" || -n "${HWS_SEAL_MODEL:-}" ]]; then
+            args+=(--provider "$HWS_SEAL_PROVIDER" --model "$HWS_SEAL_MODEL")
           fi
           python scripts/seal_close.py "${args[@]}"
 
@@ -106,13 +87,15 @@ jobs:
 
           verdict = json.loads(Path('.seal/SEALED.json').read_text(encoding='utf-8'))
           candidate = os.environ['CANDIDATE_SHA']
+          if verdict.get('schema') != 'hermes-worker-studio.seal-verdict.v2':
+              raise SystemExit(f"unexpected seal verdict schema: {verdict.get('schema')!r}")
           if verdict.get('eligible') is not True:
               raise SystemExit(f'seal verdict not eligible: {verdict}')
           if verdict.get('candidate_sha') != candidate:
               raise SystemExit(
                   f"seal candidate mismatch: expected {candidate}, got {verdict.get('candidate_sha')}"
               )
-          print(f'SEALED evidence closed for {candidate}')
+          print(f'SEALED evidence closed for exact main {candidate}')
           PY
 
       - name: Upload seal evidence
@@ -124,6 +107,5 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Final exact-head GitHub gate
-        if: ${{ inputs.finalize }}
-        run: python scripts/github_finalize_seal.py --repo "$GITHUB_REPOSITORY" --pr "${{ inputs.pr_number }}" --candidate "${{ inputs.candidate_sha }}" --merge-method "${{ inputs.merge_method }}"
+      - name: Final exact-main GitHub gate
+        run: python scripts/github_finalize_seal.py --repo "$GITHUB_REPOSITORY" --candidate "${{ inputs.candidate_sha }}"
