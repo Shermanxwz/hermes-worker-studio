@@ -22,12 +22,19 @@ CANDIDATE = "a" * 40
 
 
 class GitHubSealFinalizerTests(unittest.TestCase):
-    def _verdict(self, directory: pathlib.Path, *, eligible: bool = True, candidate: str = CANDIDATE) -> pathlib.Path:
+    def _verdict(
+        self,
+        directory: pathlib.Path,
+        *,
+        eligible: bool = True,
+        candidate: str = CANDIDATE,
+        schema: str = mod.SEAL_VERDICT_SCHEMA,
+    ) -> pathlib.Path:
         path = directory / "SEALED.json"
         path.write_text(
             json.dumps(
                 {
-                    "schema": "hermes-worker-studio.seal-verdict.v1",
+                    "schema": schema,
                     "candidate_sha": candidate,
                     "eligible": eligible,
                 }
@@ -39,7 +46,7 @@ class GitHubSealFinalizerTests(unittest.TestCase):
     def _args(self, evidence: pathlib.Path, **patches):
         values = {
             "repo": "Shermanxwz/hermes-worker-studio",
-            "pr": 4,
+            "pr": 1,
             "candidate": CANDIDATE,
             "evidence": evidence,
             "merge_method": "merge",
@@ -49,13 +56,18 @@ class GitHubSealFinalizerTests(unittest.TestCase):
         values.update(patches)
         return argparse.Namespace(**values)
 
-    def test_load_verdict_requires_exact_candidate_and_eligibility(self):
+    def test_load_verdict_requires_current_schema_exact_candidate_and_eligibility(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             with self.assertRaises(mod.FinalizeError):
                 mod._load_verdict(self._verdict(root, eligible=False), CANDIDATE)
             with self.assertRaises(mod.FinalizeError):
                 mod._load_verdict(self._verdict(root, candidate="b" * 40), CANDIDATE)
+            with self.assertRaises(mod.FinalizeError):
+                mod._load_verdict(
+                    self._verdict(root, schema="hermes-worker-studio.seal-verdict.v1"),
+                    CANDIDATE,
+                )
 
     def test_exact_head_ci_uses_latest_matching_ci_run(self):
         payload = {
@@ -90,6 +102,7 @@ class GitHubSealFinalizerTests(unittest.TestCase):
                 result = mod.finalize(self._args(evidence, dry_run=True, token=""))
             self.assertTrue(result["seal_eligible"])
             self.assertFalse(result["merged"])
+            self.assertEqual(result.get("seal_schema"), None)
             ready.assert_not_called()
             merge.assert_not_called()
 
@@ -110,6 +123,7 @@ class GitHubSealFinalizerTests(unittest.TestCase):
             merge.assert_called_once()
             self.assertTrue(result["ready_transitioned"])
             self.assertTrue(result["merged"])
+            self.assertEqual(result["seal_schema"], mod.SEAL_VERDICT_SCHEMA)
 
 
 if __name__ == "__main__":
