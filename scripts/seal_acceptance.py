@@ -9,9 +9,9 @@ and a complete ephemeral session CRUD lifecycle.
 Optional real model execution is enabled with ``--run``. The real-run gate is
 intentionally stronger than a plain echo: it requires Hermes' own ``todo`` tool
 to evolve a three-step canonical plan through multiple revisions, requires the
-Studio Run projection to surface a real todo event, and verifies a final marker.
-Nothing changes approval policy; the harness never enables Full Access on its
-own.
+Studio Run projection to surface a real todo event, verifies the actual resolved
+execution route, and verifies a final marker. Nothing changes approval policy;
+the harness never enables Full Access on its own.
 """
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ from typing import Any
 
 TERMINAL = {"completed", "failed", "cancelled", "canceled", "stopped", "incomplete", "interrupted"}
 PLUGIN = "/api/plugins/hermes-worker-studio"
+TARGET_EVIDENCE_SCHEMA = "hermes-worker-studio.seal-evidence.v2"
+_EXECUTABLE_ROUTE_STATES = {"native", "declared", "resolved", "manual"}
 
 
 class AcceptanceError(RuntimeError):
@@ -165,11 +167,14 @@ def pick_route(model_options: dict[str, Any], provider: str, model: str) -> tupl
     rows = rows if isinstance(rows, list) else []
     if provider and model:
         return provider, model
+    explicit_moa = provider.strip().lower() == "moa"
     wanted_provider = provider or str(model_options.get("provider") or "")
     for row in rows:
         if not isinstance(row, dict):
             continue
         slug = str(row.get("slug") or "")
+        if slug == "moa" and not explicit_moa:
+            continue
         models = row.get("models") if isinstance(row.get("models"), list) else []
         if wanted_provider and slug != wanted_provider and wanted_provider not in (row.get("aliases") or []):
             continue
@@ -181,10 +186,43 @@ def pick_route(model_options: dict[str, Any], provider: str, model: str) -> tupl
     for row in rows:
         if not isinstance(row, dict) or row.get("authenticated") is False:
             continue
+        slug = str(row.get("slug") or "")
+        if not slug or slug == "moa":
+            continue
         models = row.get("models") if isinstance(row.get("models"), list) else []
-        if row.get("slug") and models:
-            return str(row["slug"]), str(models[0])
-    raise AcceptanceError("No usable provider/model found in Hermes /api/model/options")
+        if models:
+            return slug, str(models[0])
+    raise AcceptanceError("No usable non-MOA provider/model found in Hermes /api/model/options")
+
+
+def validate_started_route(started: Any, provider: str, model: str) -> dict[str, Any]:
+    """Prove that the real Run start resolved the requested source route safely."""
+    if provider.strip().lower() == "moa":
+        return {
+            "provider": provider,
+            "model": model,
+            "mode": "",
+            "status": "native_moa",
+            "execution_provider": "moa",
+            "source": "hermes_native_moa",
+        }
+    require(isinstance(started, dict), f"Run start is not an object: {started}")
+    raw = started.get("source_route")
+    require(isinstance(raw, dict), f"Run start did not expose resolved source_route: {started}")
+    source_provider = str(raw.get("provider") or "")
+    source_model = str(raw.get("model") or "")
+    status = str(raw.get("status") or "").lower()
+    execution_provider = str(raw.get("execution_provider") or "")
+    require(source_provider == provider, f"Run route provider mismatch: expected {provider}, got {source_provider or '<missing>'}")
+    require(source_model == model, f"Run route model mismatch: expected {model}, got {source_model or '<missing>'}")
+    require(raw.get("requires_probe") is not True, f"Run route remained unresolved at execution time: {raw}")
+    require(status in _EXECUTABLE_ROUTE_STATES, f"Run route is not executable/final: {raw}")
+    require(bool(execution_provider), f"Run route has no execution_provider: {raw}")
+    return {
+        key: raw.get(key)
+        for key in ("provider", "model", "mode", "status", "execution_provider", "source", "probed_at")
+        if key in raw
+    }
 
 
 def wait_run(client: Client, run_id: str, timeout: float) -> dict[str, Any]:
@@ -269,7 +307,7 @@ def _validate_real_plan(
 def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
     client = Client(args.url, args.api_key, args.http_timeout)
     evidence: dict[str, Any] = {
-        "schema": "hermes-worker-studio.seal-evidence.v1",
+        "schema": TARGET_EVIDENCE_SCHEMA,
         "started_at": time.time(),
         "dashboard_url": args.url,
         "checks": {},
@@ -293,6 +331,10 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
     plan_caps = product_caps.get("official_plan") if isinstance(product_caps.get("official_plan"), dict) else {}
     require(plan_caps.get("source") == "Hermes canonical todo", f"Official plan is not Hermes-owned: {plan_caps}")
     require("/api/sessions" in str(plan_caps.get("fallback") or ""), f"Canonical todo fallback missing: {plan_caps}")
+    protocol_caps = product_caps.get("model_protocols") if isinstance(product_caps.get("model_protocols"), dict) else {}
+    require(protocol_caps.get("per_model") is True, f"Per-model protocol routing capability is missing: {protocol_caps}")
+    require("first-use" in str(protocol_caps.get("probe") or ""), f"Installed product does not report first-use real-Run protocol resolution: {protocol_caps}")
+    require("fail closed" in str(protocol_caps.get("unresolved") or "").lower(), f"Protocol unresolved policy is not fail-closed: {protocol_caps}")
     evidence["checks"]["product_capabilities"] = product_caps
 
     _, model_options = client.request("/api/model/options")
@@ -358,8 +400,9 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                 body={"session_id": created_id, "input": prompt, "provider": provider, "model": model},
                 expected=(200, 202),
             )
-            run_id = str(started.get("id") or started.get("run_id") or "")
+            run_id = str(started.get("id") or started.get("run_id") or "") if isinstance(started, dict) else ""
             require(run_id, f"Run start did not return an id: {started}")
+            execution_route = validate_started_route(started, provider, model)
             final = wait_run(client, run_id, args.run_timeout)
             require(str(final.get("status") or "").lower() == "completed", f"Real Hermes Run did not complete: {final}")
             plan_evidence = _validate_real_plan(client=client, session_id=created_id, final=final, marker=marker)
@@ -368,6 +411,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                 "provider": provider,
                 "model": model,
                 "status": final.get("status"),
+                "execution_route": execution_route,
                 "event_names": sorted({str(x.get("event")) for x in (final.get("events") or []) if isinstance(x, dict)}),
                 **plan_evidence,
             }
