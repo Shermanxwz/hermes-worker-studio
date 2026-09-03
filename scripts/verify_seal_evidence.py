@@ -17,7 +17,9 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "tests" / "upstream-lock.json").read_text(encoding="utf-8"))
+TARGET_EVIDENCE_SCHEMA = "hermes-worker-studio.seal-evidence.v2"
 SEAL_VERDICT_SCHEMA = "hermes-worker-studio.seal-verdict.v2"
+_EXECUTABLE_ROUTE_STATES = {"native", "declared", "resolved", "manual", "native_moa"}
 
 
 class SealEvidenceError(RuntimeError):
@@ -71,11 +73,14 @@ def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
     hermes = integration.get("hermes") if isinstance(integration.get("hermes"), dict) else {}
     caps = checks.get("product_capabilities") if isinstance(checks.get("product_capabilities"), dict) else {}
     plan_caps = caps.get("official_plan") if isinstance(caps.get("official_plan"), dict) else {}
+    protocol_caps = caps.get("model_protocols") if isinstance(caps.get("model_protocols"), dict) else {}
     crud = checks.get("session_crud") if isinstance(checks.get("session_crud"), dict) else {}
     real = checks.get("real_run") if isinstance(checks.get("real_run"), dict) else {}
+    route = real.get("execution_route") if isinstance(real.get("execution_route"), dict) else {}
 
-    _require(target.get("schema") == "hermes-worker-studio.seal-evidence.v1", "target evidence schema mismatch", errors)
+    _require(target.get("schema") == TARGET_EVIDENCE_SCHEMA, "target evidence schema mismatch", errors)
     _require(target.get("candidate_sha") == candidate, "target evidence candidate_sha does not match current candidate", errors)
+    _require(target.get("installed_candidate_verified") is True, "target did not verify the loaded installed candidate", errors)
     _require(target.get("ok") is True, "target acceptance did not finish ok", errors)
     health = checks.get("health") if isinstance(checks.get("health"), dict) else {}
     _require(health.get("ok") is True, "target health is not green", errors)
@@ -85,12 +90,24 @@ def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
     _require(caps.get("version") == 3, "target Product capability version is not 3", errors)
     _require(caps.get("execution") == "Hermes official /v1/runs", "target Product probe/acceptance execution rail is not Hermes /v1/runs", errors)
     _require(plan_caps.get("source") == "Hermes canonical todo", "target official plan is not Hermes canonical todo", errors)
+    _require(protocol_caps.get("per_model") is True, "target Product does not report per-model protocol routing", errors)
+    _require("first-use" in str(protocol_caps.get("probe") or ""), "target Product does not report first-use real-Run protocol resolution", errors)
+    _require("fail closed" in str(protocol_caps.get("unresolved") or "").lower(), "target Product protocol unresolved policy is not fail-closed", errors)
     _require(crud.get("created") is True and crud.get("renamed") is True, "target session create/rename evidence missing", errors)
     _require(crud.get("archived") is True and crud.get("unarchived") is True, "target session archive round-trip evidence missing", errors)
     _require(crud.get("deleted") is True, "target session delete evidence missing", errors)
 
     _require(str(real.get("status") or "").lower() == "completed", "real Hermes Run did not complete", errors)
     _require(real.get("marker_verified") is True, "real Hermes Run marker was not verified", errors)
+    _require(bool(str(real.get("provider") or "")), "real Hermes Run provider evidence missing", errors)
+    _require(bool(str(real.get("model") or "")), "real Hermes Run model evidence missing", errors)
+    route_status = str(route.get("status") or "").lower()
+    _require(bool(route), "real Hermes Run execution_route evidence missing", errors)
+    _require(route_status in _EXECUTABLE_ROUTE_STATES, f"real Hermes Run route is not final/executable: {route_status or '<missing>'}", errors)
+    _require(str(route.get("provider") or "") == str(real.get("provider") or ""), "real Hermes Run route provider does not match requested provider", errors)
+    _require(str(route.get("model") or "") == str(real.get("model") or ""), "real Hermes Run route model does not match requested model", errors)
+    _require(bool(str(route.get("execution_provider") or "")), "real Hermes Run route has no execution_provider", errors)
+
     revisions = real.get("canonical_revisions") if isinstance(real.get("canonical_revisions"), list) else []
     numeric_revisions = [x for x in revisions if isinstance(x, int) and not isinstance(x, bool)]
     _require(len(numeric_revisions) >= 3, "canonical todo has fewer than three persisted revisions", errors)
