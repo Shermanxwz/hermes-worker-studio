@@ -85,6 +85,7 @@ class InstallScriptTests(unittest.TestCase):
             "dashboard/dist/project-mark.png",
             "dashboard/dist/product.css",
             "dashboard/dist/product-sealed.css",
+            "dashboard/dist/product-closure.css",
         }
         actual = {
             str(path.relative_to(dest))
@@ -96,7 +97,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertNotIn("dashboard/dist/style.css", actual)
         manifest = json.loads((dest / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["entry"], "dist/gateway-native.js")
-        self.assertEqual(manifest["css"], "dist/product-sealed.css")
+        self.assertEqual(manifest["css"], "dist/product-closure.css")
         self.assertEqual(set(manifest["slots"]), {"header-left", "sidebar"})
         gateway_js = (dest / "dashboard" / "dist" / "gateway-native.js").read_text(encoding="utf-8")
         for token in (
@@ -120,24 +121,45 @@ class InstallScriptTests(unittest.TestCase):
             "transport.reconnected",
         ):
             self.assertIn(token, gateway_js)
+        closure_css = (dest / "dashboard" / "dist" / "product-closure.css").read_text(encoding="utf-8")
+        for token in (
+            '@import url("./product-sealed.css");',
+            ":focus-visible",
+            "@media (hover:none),(pointer:coarse)",
+            "max-height:100dvh",
+            "prefers-reduced-motion:reduce",
+        ):
+            self.assertIn(token, closure_css)
         sealed_css = (dest / "dashboard" / "dist" / "product-sealed.css").read_text(encoding="utf-8")
         self.assertIn('@import url("./product.css");', sealed_css)
         self.assertIn("hws3-context-meter", sealed_css)
         self.assertIn("hws3-file-icon", sealed_css)
-        self.assertIn("prefers-reduced-motion", sealed_css)
         installed_js = (dest / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
-        self.assertIn("PROJECT_MARK_PATH", installed_js)
-        self.assertIn("project-mark.png", installed_js)
-        self.assertNotIn("const href = `data:image/svg+xml,${encodeURIComponent(ICON_SVG)}`;", installed_js)
-        self.assertIn("const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;", installed_js)
-        self.assertIn("title: '添加文件'", installed_js)
-        self.assertIn("Ctrl/Cmd+V 粘贴文件", installed_js)
-        self.assertIn("type: 'file_url'", installed_js)
-        self.assertIn("kind: item.kind || 'file'", installed_js)
+        for token in (
+            "PROJECT_MARK_PATH",
+            "project-mark.png",
+            "const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;",
+            "title: '添加文件'",
+            "type: 'file_url'",
+            "kind: item.kind || 'file'",
+            "resolveProtocolExecutionRoute",
+            "'/hermes/protocols/resolve'",
+            "sourceFacingProtocolRoute",
+            "role: 'alert'",
+            "event.key === 'Escape'",
+            "'aria-haspopup': 'menu'",
+            "'aria-label': '给 Hermes 发送消息'",
+            "'aria-label': '打开菜单'",
+        ):
+            self.assertIn(token, installed_js)
         self.assertNotIn("accept: 'image/png,image/jpeg,image/webp,image/gif,image/bmp'", installed_js)
+        self.assertNotIn("请先进入“模型”页面点击“官方探测”", installed_js)
         installed_bridge = (dest / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
         self.assertNotIn('BUILD_CANDIDATE_SHA = "source-tree"', installed_bridge)
         self.assertRegex(installed_bridge, r"BUILD_CANDIDATE_SHA = ['\"][0-9a-f]{40}['\"]")
+        self.assertIn('@router.post("/hermes/protocols/resolve")', installed_bridge)
+        self.assertIn("_AUTO_PROTOCOL_PROBE_LOCKS", installed_bridge)
+        self.assertIn("first-use or explicit real Hermes /v1/runs", installed_bridge)
         self.assertTrue(re.search(r"Candidate:\s+[0-9a-f]{40}", result.stdout))
         self.assertTrue((self.hermes_home / "dashboard-themes" / "hermes-worker-studio.yaml").is_file())
         log = self.log.read_text(encoding="utf-8")
@@ -176,10 +198,11 @@ class InstallScriptTests(unittest.TestCase):
         self.assertTrue(self._dest().is_dir())
         self.assertTrue((self._dest() / "dashboard" / "plugin_api_v3.py").is_file())
         self.assertTrue((self._dest() / "dashboard" / "dist" / "gateway-native.js").is_file())
-        self.assertTrue((self._dest() / "dashboard" / "dist" / "product-sealed.css").is_file())
+        self.assertTrue((self._dest() / "dashboard" / "dist" / "product-closure.css").is_file())
         installed_js = (self._dest() / "dashboard" / "dist" / "index-v3.js").read_text(encoding="utf-8")
         self.assertIn("PROJECT_MARK_PATH", installed_js)
         self.assertIn("type: 'file_url'", installed_js)
+        self.assertIn("resolveProtocolExecutionRoute", installed_js)
         installed_bridge = (self._dest() / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
         self.assertNotIn('BUILD_CANDIDATE_SHA = "source-tree"', installed_bridge)
         self.assertIn("hermes command not found", result.stderr)
