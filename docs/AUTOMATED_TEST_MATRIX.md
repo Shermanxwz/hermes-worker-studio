@@ -1,6 +1,6 @@
 # Automated Test Matrix — Product 3
 
-A green GitHub workflow proves an exact commit is a repository-level **ARCHIVE CANDIDATE** against the pinned Hermes snapshot. Real target credentials/services, exact installed identity and browser layout are closed separately by `scripts/seal_close.py`.
+A green GitHub workflow proves an exact commit is a repository-level **ARCHIVE CANDIDATE** against the pinned Hermes snapshot. Final `SEALED` evidence is captured only after the intended changes are merged and the exact current `main` HEAD has a green push CI.
 
 ## Job: Studio static + unit + UI runtime
 
@@ -17,25 +17,26 @@ A green GitHub workflow proves an exact commit is a repository-level **ARCHIVE C
 | Manifest | JSON parser |
 | Frontend dependencies | high-severity `npm audit` |
 
-The exact staged-artifact gate is intentional: checked-in review source is not accepted as proof of the installed candidate. CI reproduces the installer build path (`stage_product_bundle.py` then `stage_mixed_protocol.py`) and validates the resulting JS/Python.
+The staged-artifact gate is intentional: checked-in review source is not accepted as proof of the installed candidate. CI reproduces the installer build path (`stage_product_bundle.py` then `stage_mixed_protocol.py`) and validates the resulting JS/Python.
 
-Mounted Product 3 tests cover, among other existing behavior:
+Mounted/unit coverage includes:
 
 - official Dashboard plugin registration and `/` product ownership;
-- official native return slots;
-- recent/session/history/search contracts;
-- lazy new-session creation + Session CRUD;
-- arbitrary attachment conversion and structured Run input;
-- Run polling, canonical plan/context projection and completion;
-- Stop / Steer / approval control wiring;
-- Full Access enable/readback/real-probe wiring/restore;
-- Custom Endpoint validate/edit/activate/delete and API-root normalization;
-- real model-probe route wiring;
+- Gateway durable resume/input/attachment behavior;
+- Session CRUD/search/history boundaries;
+- structured arbitrary attachment input;
+- canonical todo/context projection;
+- Stop / Steer / approval wiring;
+- Full Access config round-trip/restore;
+- Custom Endpoint lifecycle and API-root normalization;
 - Worker / Verifier route persistence;
 - mixed Chat/Responses first-use resolution, non-heuristic behavior, ambiguity fail-closed and concurrent-probe de-duplication;
-- project mark through official Hermes plugin static assets;
 - candidate-SHA installation contract;
-- staged dialog/menu/disclosure/composer/mobile accessibility semantics and JS syntax.
+- final CSS/a11y/touch/short-viewport contract;
+- target evidence v2 and seal verdict v2 schema compatibility;
+- provider/model pair requirement for a specific real-target route;
+- browser evidence requiring three actual passed viewport projects;
+- exact-main read-only GitHub finalization and canonical workflow-path verification.
 
 ## Job: Pinned Hermes public contracts
 
@@ -45,12 +46,7 @@ Contract families include Dashboard Plugin SDK/slots, `PluginContext`, subagent 
 
 ## Job: Hermes lifecycle + Gateway attachments + Runs + approvals + Plugin Doctor
 
-Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suites covering public subagent lifecycle, API Server Runs, approvals, Gateway todo/attachments and context. Hermes Plugin Doctor must then discover exactly:
-
-- `worker_delegate`
-- `worker_status`
-- `worker_catalog`
-- one `pre_tool_call` hook
+Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suites covering public subagent lifecycle, API Server Runs, approvals, Gateway todo/attachments and context. Hermes Plugin Doctor must discover exactly the three Studio tools plus one `pre_tool_call` hook.
 
 ## Job: Production security + dependency boundary
 
@@ -58,23 +54,25 @@ Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suite
 - committed-secret rejection;
 - second-runtime sentinel rejection across runtime, CSS, installer and transform files.
 
-`verify_contract.py` additionally rejects private Hermes delegation imports, direct SQLite persistence, browser bearer-secret use, hard-coded reasoning ladders, obsolete sidecar launchers and independent installed branding. It also locks the final CSS chain, bounded Worker convenience state, mixed-protocol transform and installer staging contract.
+`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, evidence schemas and read-only exact-main target workflow.
 
 ## Real-target machine gate
 
-`python scripts/seal_close.py --url <Dashboard>` produces evidence GitHub-hosted runners cannot manufacture:
+`python scripts/seal_close.py --url <Dashboard>` runs only for the exact current `main` candidate and produces evidence GitHub-hosted runners cannot manufacture:
 
-1. exact candidate installation and running `/product-capabilities.candidate_sha` read-back;
-2. real Hermes Session lifecycle;
-3. real Gateway/product context and official Runs probe evidence;
-4. canonical todo evolution and Studio projection evidence;
-5. real mixed-provider protocol evidence where applicable;
-6. desktop Chromium product acceptance;
-7. phone portrait Chromium acceptance;
-8. compact 667×375 landscape/touch acceptance;
-9. every existing first-level Studio page checked in every product viewport for horizontal overflow and viewport-bound layout;
-10. desktop native `/sessions` return path;
-11. independent cross-evidence verdict.
+1. upstream required-contract evidence;
+2. target evidence schema `hermes-worker-studio.seal-evidence.v2`;
+3. exact candidate installation and running `product-capabilities.candidate_sha` read-back;
+4. real Hermes Session create/rename/archive/unarchive/delete + post-delete 404;
+5. real Hermes Run, canonical todo evolution and marker proof;
+6. final resolved execution route evidence, including the actual execution Provider and protocol mode where applicable;
+7. desktop Chromium product acceptance;
+8. Pixel 7 portrait acceptance;
+9. compact 667×375 landscape/touch acceptance;
+10. each product viewport independently reads and verifies the running candidate SHA;
+11. every existing first-level Studio page is checked for overflow/viewport bounds;
+12. desktop native `/sessions` return path;
+13. seal verdict schema `hermes-worker-studio.seal-verdict.v2`.
 
 Machine outputs:
 
@@ -84,15 +82,29 @@ Machine outputs:
 - `.seal/playwright-artifacts/`
 - `.seal/SEALED.json`
 
+## GitHub exact-main gate
+
+The manual self-hosted workflow is read-only (`actions: read`, `contents: read`). Before running the target seal it fetches `origin/main` and requires that `origin/main` equals the requested candidate SHA.
+
+After real-target evidence closes, `github_finalize_seal.py` performs no mutation. It requires:
+
+- repository default branch is `main`;
+- current `main` commit still equals the sealed candidate;
+- the latest exact-candidate `push` run named `CI` comes from `.github/workflows/ci.yml` and is completed/success;
+- `.seal/SEALED.json` is verdict v2, eligible and names the same SHA.
+
+A PR-head CI, a same-name workflow at another path, a skipped viewport test, or a post-evidence branch change cannot satisfy the final gate.
+
 ## Failure policy
 
-No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A failed selected Hermes upstream test blocks the candidate. A staged-transform source-anchor drift blocks before install. A target candidate mismatch blocks evidence closure. A failed/timed-out/interrupted Playwright project blocks the final verifier.
+No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, or non-green exact-main push CI blocks sealing.
 
-HTTPS certificate errors are **not ignored by default** in the seal browser. An operator may opt in only with `HWS_SEAL_IGNORE_HTTPS_ERRORS=1` for a deliberately trusted local/test certificate environment; that choice is explicit rather than silently weakening every run.
+HTTPS certificate errors are not ignored by default. `HWS_SEAL_IGNORE_HTTPS_ERRORS=1` is an explicit trusted local/test override only.
 
 ## Definition
 
-- exact candidate CI all green: **ARCHIVE CANDIDATE**;
-- exact same SHA + real-target `seal_close.py` exit 0 + `.seal/SEALED.json eligible=true` + required upstream exclusive-shell gate: **technically SEALED**.
+- PR/exact commit CI green: candidate is healthy enough to merge as **ARCHIVE CANDIDATE**;
+- exact current `main` push CI green: canonical repository remains **ARCHIVE CANDIDATE**;
+- exact same `main` SHA + required upstream gate + real-target v2 evidence + three passed browser projects + verdict v2 + read-only exact-main GitHub verification: **SEALED**.
 
 `SEAL_ACCEPTANCE.md` remains the canonical release contract.
