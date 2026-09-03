@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Finalize a sealed Hermes Worker Studio pull request on GitHub.
+"""Finalize an exact-main Hermes Worker Studio seal on GitHub.
 
-This command is intentionally strict. It only transitions/merges a PR when:
-- the local seal verdict says eligible=true for the exact candidate SHA;
-- the open PR head still equals that candidate SHA;
-- an exact-head pull_request CI run named ``CI`` completed successfully.
+This command is intentionally read-only. A candidate is finalizable only when:
+- the local real-target verdict says eligible=true for the exact candidate SHA;
+- the repository canonical branch is ``main`` and still points at that SHA;
+- the exact-main push CI run named ``CI`` from ``.github/workflows/ci.yml`` is green.
 
-It never generates seal evidence and cannot substitute for the real-target
-``scripts/seal_close.py`` gate.
+Development PRs are merged before real-target sealing while the repository is
+still an ARCHIVE CANDIDATE. The seal workflow never merges code after evidence
+capture, because doing so would create a different main commit than the one the
+target and browsers actually tested.
 """
 from __future__ import annotations
 
@@ -22,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 SEAL_VERDICT_SCHEMA = "hermes-worker-studio.seal-verdict.v2"
+CANONICAL_BRANCH = "main"
+CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 
 
 class FinalizeError(RuntimeError):
@@ -88,27 +92,28 @@ def _api_base(repo: str) -> str:
     return f"https://api.github.com/repos/{repo}"
 
 
-def _get_pr(repo: str, pr_number: int, token: str) -> dict[str, Any]:
-    payload = _request(f"{_api_base(repo)}/pulls/{pr_number}", token=token)
-    if not isinstance(payload, dict):
-        raise FinalizeError("GitHub PR response is not an object")
-    return payload
-
-
-def _require_exact_open_pr(pr: dict[str, Any], candidate: str) -> None:
-    if str(pr.get("state") or "") != "open":
-        raise FinalizeError(f"PR is not open: state={pr.get('state')!r}")
-    head = pr.get("head") if isinstance(pr.get("head"), dict) else {}
-    if str(head.get("sha") or "") != candidate:
+def _require_exact_main(repo: str, candidate: str, token: str) -> dict[str, Any]:
+    repository = _request(_api_base(repo), token=token)
+    if not isinstance(repository, dict):
+        raise FinalizeError("GitHub repository response is not an object")
+    default_branch = str(repository.get("default_branch") or "")
+    if default_branch != CANONICAL_BRANCH:
         raise FinalizeError(
-            "PR head moved after sealing: "
-            f"expected {candidate}, found {head.get('sha') or '<missing>'}"
+            f"repository default branch must remain {CANONICAL_BRANCH!r}, got {default_branch or '<missing>'!r}"
         )
+    branch = _request(f"{_api_base(repo)}/branches/{urllib.parse.quote(CANONICAL_BRANCH, safe='')}", token=token)
+    commit = branch.get("commit") if isinstance(branch, dict) and isinstance(branch.get("commit"), dict) else {}
+    actual = str(commit.get("sha") or "")
+    if actual != candidate:
+        raise FinalizeError(
+            f"canonical {CANONICAL_BRANCH} moved or was never the sealed candidate: expected {candidate}, found {actual or '<missing>'}"
+        )
+    return branch if isinstance(branch, dict) else {}
 
 
-def _require_green_exact_head_ci(repo: str, candidate: str, token: str) -> dict[str, Any]:
+def _require_green_exact_main_ci(repo: str, candidate: str, token: str) -> dict[str, Any]:
     query = urllib.parse.urlencode(
-        {"head_sha": candidate, "event": "pull_request", "per_page": "100"}
+        {"head_sha": candidate, "event": "push", "branch": CANONICAL_BRANCH, "per_page": "100"}
     )
     payload = _request(f"{_api_base(repo)}/actions/runs?{query}", token=token)
     rows = payload.get("workflow_runs") if isinstance(payload, dict) else None
@@ -117,69 +122,20 @@ def _require_green_exact_head_ci(repo: str, candidate: str, token: str) -> dict[
         row for row in rows
         if isinstance(row, dict)
         and str(row.get("name") or "") == "CI"
+        and str(row.get("path") or "") == CI_WORKFLOW_PATH
         and str(row.get("head_sha") or "") == candidate
+        and str(row.get("head_branch") or "") == CANONICAL_BRANCH
+        and str(row.get("event") or "") == "push"
     ]
     if not matches:
-        raise FinalizeError(f"no exact-head pull_request CI run found for {candidate}")
+        raise FinalizeError(f"no exact-main push CI run found for {candidate}")
     latest = max(matches, key=lambda row: int(row.get("run_number") or 0))
     if str(latest.get("status") or "") != "completed" or str(latest.get("conclusion") or "") != "success":
         raise FinalizeError(
-            "latest exact-head CI is not green: "
+            "latest exact-main CI is not green: "
             f"status={latest.get('status')!r} conclusion={latest.get('conclusion')!r}"
         )
     return latest
-
-
-def _mark_ready(pr: dict[str, Any], token: str) -> None:
-    if pr.get("draft") is not True:
-        return
-    node_id = str(pr.get("node_id") or "")
-    if not node_id:
-        raise FinalizeError("draft PR is missing node_id required for mark-ready mutation")
-    query = """
-mutation MarkReady($id: ID!) {
-  markPullRequestReadyForReview(input: {pullRequestId: $id}) {
-    pullRequest { isDraft }
-  }
-}
-""".strip()
-    payload = _request(
-        "https://api.github.com/graphql",
-        token=token,
-        method="POST",
-        body={"query": query, "variables": {"id": node_id}},
-    )
-    if not isinstance(payload, dict):
-        raise FinalizeError("GitHub GraphQL response is not an object")
-    if payload.get("errors"):
-        raise FinalizeError(f"GitHub mark-ready mutation failed: {payload['errors']}")
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    ready = data.get("markPullRequestReadyForReview")
-    ready = ready if isinstance(ready, dict) else {}
-    ready_pr = ready.get("pullRequest") if isinstance(ready.get("pullRequest"), dict) else {}
-    if ready_pr.get("isDraft") is not False:
-        raise FinalizeError(f"GitHub did not transition PR to ready: {payload}")
-
-
-def _merge(repo: str, pr_number: int, candidate: str, token: str, merge_method: str) -> dict[str, Any]:
-    payload = _request(
-        f"{_api_base(repo)}/pulls/{pr_number}/merge",
-        token=token,
-        method="PUT",
-        body={
-            "sha": candidate,
-            "merge_method": merge_method,
-            "commit_title": "Product 3.0: Hermes-native sealed release",
-            "commit_message": (
-                f"SEALED candidate {candidate}. "
-                "Merged only after exact-head CI and real-target cross-evidence verification."
-            ),
-        },
-        expected=(200,),
-    )
-    if not isinstance(payload, dict) or payload.get("merged") is not True:
-        raise FinalizeError(f"GitHub merge did not complete: {payload}")
-    return payload
 
 
 def finalize(args: argparse.Namespace) -> dict[str, Any]:
@@ -187,54 +143,30 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
     if len(candidate) != 40 or any(ch not in "0123456789abcdef" for ch in candidate):
         raise FinalizeError(f"candidate must be a full 40-character SHA, got {args.candidate!r}")
     token = args.token.strip()
-    if not token and not args.dry_run:
-        raise FinalizeError("GITHUB_TOKEN is required unless --dry-run is used")
-
     verdict = _load_verdict(args.evidence, candidate)
-    pr = _get_pr(args.repo, args.pr, token)
-    _require_exact_open_pr(pr, candidate)
-    ci = _require_green_exact_head_ci(args.repo, candidate, token)
-
-    result: dict[str, Any] = {
+    branch = _require_exact_main(args.repo, candidate, token)
+    ci = _require_green_exact_main_ci(args.repo, candidate, token)
+    return {
+        "schema": "hermes-worker-studio.github-finalization.v2",
         "candidate_sha": candidate,
-        "pr": args.pr,
         "repo": args.repo,
+        "canonical_branch": CANONICAL_BRANCH,
+        "canonical_branch_sha": ((branch.get("commit") or {}).get("sha") if isinstance(branch, dict) else None),
         "seal_eligible": True,
+        "seal_schema": verdict.get("schema"),
         "ci_run_id": ci.get("id"),
         "ci_run_number": ci.get("run_number"),
-        "dry_run": bool(args.dry_run),
-        "ready_transitioned": False,
-        "merged": False,
+        "finalized": True,
+        "read_only": True,
     }
-    if args.dry_run:
-        return result
-
-    if pr.get("draft") is True:
-        _mark_ready(pr, token)
-        result["ready_transitioned"] = True
-
-    pr = _get_pr(args.repo, args.pr, token)
-    _require_exact_open_pr(pr, candidate)
-    if pr.get("draft") is True:
-        raise FinalizeError("PR is still draft immediately before merge")
-
-    merged = _merge(args.repo, args.pr, candidate, token, args.merge_method)
-    result["merged"] = True
-    result["merge_sha"] = merged.get("sha")
-    result["message"] = merged.get("message")
-    result["seal_schema"] = verdict.get("schema")
-    return result
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Finalize a real-target-sealed Hermes Worker Studio pull request")
+    parser = argparse.ArgumentParser(description="Finalize a real-target seal for the exact current main commit")
     parser.add_argument("--repo", default=os.getenv("GITHUB_REPOSITORY", ""))
-    parser.add_argument("--pr", type=int, required=True)
     parser.add_argument("--candidate", required=True)
     parser.add_argument("--evidence", type=Path, default=Path(".seal/SEALED.json"))
-    parser.add_argument("--merge-method", choices=("merge", "squash", "rebase"), default="merge")
     parser.add_argument("--token", default=os.getenv("GITHUB_TOKEN", ""))
-    parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args(argv)
 
 
