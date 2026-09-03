@@ -107,6 +107,34 @@ def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
     return errors
 
 
+def _test_statuses_by_project(value: Any, title: str) -> dict[str, set[str]]:
+    """Collect Playwright JSON-reporter result statuses for one exact spec title."""
+    found: dict[str, set[str]] = {}
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if str(node.get("title") or "") == title and isinstance(node.get("tests"), list):
+                for test in node["tests"]:
+                    if not isinstance(test, dict):
+                        continue
+                    project = str(test.get("projectName") or "").strip()
+                    if not project:
+                        continue
+                    statuses = found.setdefault(project, set())
+                    results = test.get("results") if isinstance(test.get("results"), list) else []
+                    for result in results:
+                        if isinstance(result, dict) and isinstance(result.get("status"), str):
+                            statuses.add(result["status"])
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(value)
+    return found
+
+
 def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
     errors: list[str] = []
     _require(ui.get("candidate_sha") == candidate, "browser evidence candidate_sha does not match current candidate", errors)
@@ -127,15 +155,23 @@ def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
         for row in projects
         if isinstance(row, dict)
     }
-    for required_project in ("desktop-chromium", "mobile-chromium", "mobile-landscape-chromium"):
+    required_projects = ("desktop-chromium", "mobile-chromium", "mobile-landscape-chromium")
+    for required_project in required_projects:
         _require(required_project in project_names, f"{required_project} missing from browser evidence", errors)
 
-    rendered = json.dumps(ui, ensure_ascii=False)
-    for title in (
-        "Worker Studio product shell is usable at the real target",
-        "native Hermes Dashboard keeps the Worker Studio return path",
-    ):
-        _require(title in rendered, f"browser evidence missing test: {title}", errors)
+    product_title = "Worker Studio product shell is usable at the real target"
+    native_title = "native Hermes Dashboard keeps the Worker Studio return path"
+    product_statuses = _test_statuses_by_project(ui, product_title)
+    native_statuses = _test_statuses_by_project(ui, native_title)
+    for required_project in required_projects:
+        statuses = product_statuses.get(required_project, set())
+        _require("passed" in statuses, f"{required_project} product-shell browser test did not pass: {sorted(statuses)}", errors)
+    _require(
+        "passed" in native_statuses.get("desktop-chromium", set()),
+        f"desktop-chromium native-return browser test did not pass: {sorted(native_statuses.get('desktop-chromium', set()))}",
+        errors,
+    )
+
     _require("failed" not in _terminal_statuses(ui), "browser evidence contains a failed result", errors)
     _require("timedOut" not in _terminal_statuses(ui), "browser evidence contains a timed-out result", errors)
     _require("interrupted" not in _terminal_statuses(ui), "browser evidence contains an interrupted result", errors)
