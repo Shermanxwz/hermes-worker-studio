@@ -4,9 +4,9 @@
 Run this from the exact candidate checkout on the Hermes target machine. It
 verifies the exact pinned official Hermes public contracts, atomically installs
 that commit (unless explicitly skipped), runs the real Hermes execution/todo
-acceptance, runs desktop + mobile Playwright acceptance, stamps the exact
-candidate commit, and invokes the independent three-plane evidence verifier. It
-never changes PR state or merges code.
+acceptance, runs desktop + portrait-mobile + compact-landscape Playwright
+acceptance, stamps the exact candidate commit, and invokes the independent
+three-plane evidence verifier. It never changes PR state or merges code.
 """
 from __future__ import annotations
 
@@ -17,6 +17,9 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+SEAL_VERDICT_SCHEMA = "hermes-worker-studio.seal-verdict.v2"
+TARGET_EVIDENCE_SCHEMA = "hermes-worker-studio.seal-evidence.v2"
 
 
 class SealCloseError(RuntimeError):
@@ -86,6 +89,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def close(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
     candidate = require_clean_candidate(root)
+    provider = str(args.provider or "").strip()
+    model = str(args.model or "").strip()
+    if bool(provider) != bool(model):
+        raise SealCloseError("--provider and --model must be supplied together, or both omitted, so the seal cannot silently test a different route")
+
     evidence_dir = args.evidence_dir if args.evidence_dir.is_absolute() else root / args.evidence_dir
     upstream_path = evidence_dir / "upstream.json"
     target_path = evidence_dir / "target.json"
@@ -98,10 +106,9 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
     env["HWS_CANDIDATE_SHA"] = candidate
     if args.api_key:
         env["API_SERVER_KEY"] = args.api_key
-    if args.provider:
-        env["HWS_SEAL_PROVIDER"] = args.provider
-    if args.model:
-        env["HWS_SEAL_MODEL"] = args.model
+    if provider:
+        env["HWS_SEAL_PROVIDER"] = provider
+        env["HWS_SEAL_MODEL"] = model
 
     # Gate 0: official upstream semantics. No install/browser/model work should
     # happen if the pinned Hermes revision still lacks a release-blocking SDK
@@ -137,13 +144,13 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
         "--evidence",
         str(target_path),
     ]
-    if args.provider:
-        acceptance.extend(["--provider", args.provider])
-    if args.model:
-        acceptance.extend(["--model", args.model])
+    if provider:
+        acceptance.extend(["--provider", provider, "--model", model])
     run(acceptance, cwd=root, env=env)
 
     target = load_json(target_path)
+    if target.get("schema") != TARGET_EVIDENCE_SCHEMA:
+        raise SealCloseError(f"target evidence schema drifted: {target.get('schema')!r}")
     caps = ((target.get("checks") or {}).get("product_capabilities") or {}) if isinstance(target.get("checks"), dict) else {}
     loaded_candidate = str(caps.get("candidate_sha") or "") if isinstance(caps, dict) else ""
     if loaded_candidate != candidate:
@@ -187,6 +194,10 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
         env=env,
     )
     verdict = load_json(verdict_path)
+    if verdict.get("schema") != SEAL_VERDICT_SCHEMA:
+        raise SealCloseError(f"final seal verdict schema drifted: {verdict.get('schema')!r}")
+    if verdict.get("candidate_sha") != candidate:
+        raise SealCloseError("final seal verdict candidate_sha does not match the exact checked-out candidate")
     if verdict.get("eligible") is not True:
         raise SealCloseError(f"final evidence verifier did not close candidate {candidate}")
     return verdict
