@@ -74,16 +74,23 @@ def good_target():
 
 
 def good_ui():
+    product_title = "Worker Studio product shell is usable at the real target"
     return {
         "candidate_sha": CANDIDATE,
-        "config": {"projects": [{"name": "desktop-chromium"}, {"name": "mobile-chromium"}]},
-        "stats": {"expected": 3, "skipped": 1, "unexpected": 0, "flaky": 0, "startTime": "now"},
+        "config": {
+            "projects": [
+                {"name": "desktop-chromium"},
+                {"name": "mobile-chromium"},
+                {"name": "mobile-landscape-chromium"},
+            ]
+        },
+        "stats": {"expected": 4, "skipped": 2, "unexpected": 0, "flaky": 0, "startTime": "now"},
         "suites": [
             {
                 "title": "target_ui.spec.mjs",
                 "specs": [
                     {
-                        "title": "Worker Studio product shell is usable at the real target",
+                        "title": product_title,
                         "tests": [{"projectName": "desktop-chromium", "results": [{"status": "passed"}]}],
                     },
                     {
@@ -91,8 +98,12 @@ def good_ui():
                         "tests": [{"projectName": "desktop-chromium", "results": [{"status": "passed"}]}],
                     },
                     {
-                        "title": "Worker Studio product shell is usable at the real target",
+                        "title": product_title,
                         "tests": [{"projectName": "mobile-chromium", "results": [{"status": "passed"}]}],
+                    },
+                    {
+                        "title": product_title,
+                        "tests": [{"projectName": "mobile-landscape-chromium", "results": [{"status": "passed"}]}],
                     },
                 ],
             }
@@ -128,6 +139,15 @@ class SealEvidenceVerifierTests(unittest.TestCase):
         self.assertTrue(any("not fully completed" in error for error in verdict["errors"]))
         self.assertTrue(any("unexpected" in error for error in verdict["errors"]))
         self.assertTrue(any("failed result" in error for error in verdict["errors"]))
+
+    def test_missing_landscape_browser_project_blocks_seal(self):
+        ui = good_ui()
+        ui["config"]["projects"] = [
+            row for row in ui["config"]["projects"] if row["name"] != "mobile-landscape-chromium"
+        ]
+        verdict = seal.validate(good_target(), ui, good_upstream(), CANDIDATE)
+        self.assertFalse(verdict["eligible"])
+        self.assertTrue(any("mobile-landscape-chromium" in error for error in verdict["errors"]))
 
     def test_missing_official_exclusive_shell_contract_blocks_seal(self):
         upstream = good_upstream()
