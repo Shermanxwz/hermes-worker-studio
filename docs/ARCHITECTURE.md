@@ -34,7 +34,7 @@ Official Hermes Web Dashboard
                                                ├─ session.steer / interrupt
                                                └─ approval / unattended input replies
 
-Hermes probe / CI / unattended surface
+Hermes probe / acceptance surface
   └─ Hermes official /v1/runs
       └─ protocol probes, marker probes and compatibility verification
 
@@ -44,7 +44,7 @@ Hermes Main Agent
   └─ verifier route -> auxiliary.review.*
 ```
 
-There is no execution hop outside Hermes. Product chat does **not** use a second REST runtime: its live transport is the official Hermes Gateway; `/v1/runs` remains an official Hermes probe/CI/unattended rail.
+There is no execution hop outside Hermes. Product chat does **not** use a second REST runtime: its live transport is the official Hermes Gateway; `/v1/runs` remains an official Hermes probe/acceptance/unattended rail.
 
 ## 3. Dashboard ownership
 
@@ -64,11 +64,7 @@ The closure layer does not introduce a new visual language. It only hardens focu
 
 ## 4. Worker tools and modes
 
-`__init__.py` receives Hermes `PluginContext`, binds it to `tools.py`, and registers exactly:
-
-- `worker_delegate`
-- `worker_status`
-- `worker_catalog`
+`__init__.py` receives Hermes `PluginContext`, binds it to `tools.py`, and registers exactly `worker_delegate`, `worker_status`, and `worker_catalog` plus the `pre_tool_call` policy hook.
 
 `worker_delegate` constructs public `SubagentLaunchRequest` and calls `ctx.subagent_lifecycle.launch()`. Studio retains only a bounded convenience handle map; Hermes owns lifecycle truth.
 
@@ -99,15 +95,7 @@ Hermes 0.20.6 keeps transport at generic-provider scope, while one compatible en
 
 Concurrent first use of one provider/model shares one probe lock, and a recent failed probe has a short retry cooldown. The **官方探测** button remains a diagnostic/manual-retry action, not a prerequisite for normal use.
 
-The same execution-route resolver is used by:
-
-- Product Chat session model selection;
-- Worker `delegation.*` pins;
-- Verifier `auxiliary.review.*` pins;
-- native Hermes MOA slots;
-- real model/protocol diagnostics.
-
-Managed compatibility aliases remain implementation details. Studio reverses them to the original source Provider/Model for normal UI display.
+The same execution-route resolver is used by Product Chat, Worker `delegation.*` pins, Verifier `auxiliary.review.*` pins, native Hermes MOA slots and real model/protocol diagnostics. Managed compatibility aliases remain implementation details and are reversed to the original source Provider/Model for normal UI display.
 
 Reasoning controls consume explicit upstream metadata only; missing metadata => `Auto` and the request/config omits a guessed effort.
 
@@ -146,13 +134,7 @@ Hermes Hardline Blocklist remains authoritative and non-bypassable. No browser s
 
 ## 10. Attachments / controls / accessibility
 
-The product composer stages images, PDFs and ordinary files only through official Gateway attachment methods:
-
-- `image.attach_bytes`
-- `pdf.attach`
-- `file.attach`
-
-Ordinary files use the `@file:` reference returned by Hermes. The browser has no independent file runtime.
+The product composer stages images, PDFs and ordinary files only through official Gateway attachment methods: `image.attach_bytes`, `pdf.attach`, and `file.attach`. Ordinary files use the `@file:` reference returned by Hermes. The browser has no independent file runtime.
 
 Stop, Steer, Approval and unattended input responses are Gateway-native. Dialogs, menus, disclosures, composer controls and mobile navigation have explicit accessible names/state; dialogs close on Escape, trap focus while open and return focus when closed. Touch-only devices never depend on hover to discover session actions.
 
@@ -165,24 +147,45 @@ The checked-in browser/backend source remains reviewable. The supported atomic i
 
 These transforms have no network/process/runtime ownership and fail closed if their source anchors drift. CI independently builds this same staged JS/Python and syntax-checks it; installer tests assert the exact installed file set and final behavior. The only intentional candidate-specific mutation is the exact SHA stamp.
 
-`/product-capabilities` exposes the loaded candidate identity so real-target evidence can prove it is testing the same code whose CI is green.
+`/product-capabilities` exposes the loaded candidate identity so target/browser evidence can prove the running product is the same code whose canonical CI is green.
 
-## 12. Seal closure
+## 12. Seal identity and evidence topology
 
-`tests/upstream-lock.json` contains exactly one runtime upstream: Hermes. Repository gates reject second-runtime/private-state/model-registry drift and validate the final staged artifact.
-
-On the real target, `scripts/seal_close.py` closes the evidence loop:
+The final sealed identity is the exact current **`main` HEAD**, never a PR head that will later be merged. Code lifecycle and evidence lifecycle are therefore separated:
 
 ```text
-exact clean git SHA
-  -> deterministic staged artifact + atomic install + SHA stamp
-  -> running Dashboard SHA read-back
-  -> real Hermes Run / protocol / canonical plan evidence
-  -> Session cleanup
-  -> desktop + phone portrait + compact landscape Playwright
-     -> every first-level Studio page checked for viewport/overflow regressions
-  -> independent evidence verifier
-  -> .seal/SEALED.json
+PR CI green
+  -> merge changes into main
+  -> exact-main push CI green
+  -> ARCHIVE CANDIDATE
+  -> manual real-target seal of that exact main SHA
 ```
 
-Only exact-current candidate CI green + real-target `eligible: true` for the same SHA qualifies Product 3 for `SEALED`. The separate upstream exclusive-shell issue remains a hard gate where the project checklist requires it; repository CI alone never upgrades `ARCHIVE CANDIDATE` to `SEALED`.
+`seal_close.py` produces three evidence planes plus the final verdict:
+
+```text
+exact clean main SHA
+  -> upstream required-contract evidence
+  -> deterministic staged artifact + atomic install + SHA stamp
+  -> running Dashboard SHA read-back
+  -> target evidence v2
+       -> real Hermes Run
+       -> requested source Provider/Model
+       -> final resolved execution route / execution Provider
+       -> canonical todo
+       -> Session cleanup + post-delete 404
+  -> browser evidence
+       -> desktop 1440×900
+       -> Pixel 7 portrait
+       -> compact touch landscape 667×375
+       -> each project reads running candidate SHA
+       -> every first-level page viewport/overflow closure
+       -> desktop native return
+  -> seal-verdict v2
+```
+
+The manual target workflow fetches `origin/main` and refuses to proceed unless it equals the candidate. It has only `actions: read` and `contents: read`; no repository mutation occurs after evidence capture.
+
+`github_finalize_seal.py` is a read-only final identity gate. It requires repository default branch `main`, current main SHA equal to the candidate, and an exact-candidate `push` CI named `CI` from `.github/workflows/ci.yml` with `completed/success`.
+
+Only exact-current **main** push CI green + required upstream contract + target evidence v2 + three required browser passes + seal-verdict v2 + read-only exact-main verification qualify Product 3 for `SEALED`. Repository CI alone never upgrades `ARCHIVE CANDIDATE`, and the official exclusive-shell issue remains a hard gate while absent from the pinned Hermes revision.
