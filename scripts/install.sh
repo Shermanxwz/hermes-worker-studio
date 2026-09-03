@@ -24,8 +24,9 @@ trap cleanup EXIT
 for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
-  dashboard/dist/gateway-native.js dashboard/dist/index-v3.js \
-  dashboard/dist/project-mark.png dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css \
+  dashboard/dist/gateway-native.js dashboard/dist/gateway-native-core.js \
+  dashboard/dist/model-capability-core.js dashboard/dist/model-capability-bridge.js dashboard/dist/model-capability-dom.js \
+  dashboard/dist/index-v3.js dashboard/dist/project-mark.png dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css \
   scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
@@ -38,7 +39,18 @@ rm -rf "$TMP" "$BACKUP"
 mkdir -p "$TMP/dashboard/dist"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
 cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
-cp "$ROOT/dashboard/dist/gateway-native.js" "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/project-mark.png" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$ROOT/dashboard/dist/product-closure.css" "$TMP/dashboard/dist/"
+cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/project-mark.png" "$ROOT/dashboard/dist/product.css" "$ROOT/dashboard/dist/product-sealed.css" "$ROOT/dashboard/dist/product-closure.css" "$TMP/dashboard/dist/"
+
+# Source stays split for maintainability, but the one supported installed
+# artifact keeps the historical single Gateway-native browser entry. Compose
+# capability semantics ahead of the byte-stable native Gateway implementation
+# so the installed plugin needs no secondary script files or runtime loader.
+cat \
+  "$ROOT/dashboard/dist/model-capability-core.js" \
+  "$ROOT/dashboard/dist/model-capability-bridge.js" \
+  "$ROOT/dashboard/dist/model-capability-dom.js" \
+  "$ROOT/dashboard/dist/gateway-native-core.js" \
+  > "$TMP/dashboard/dist/gateway-native.js"
 
 # Product 3 uses one project mark across its plugin UI. The image
 # is served by Hermes' official plugin static-asset route, so the browser never
@@ -116,6 +128,11 @@ Runtime contract:
   Product chat: Hermes official TUI Gateway JSON-RPC over Dashboard WebSocket (/api/ws)
   Probe/CI:     HERMES_WORKER_STUDIO_API_URL=http://127.0.0.1:8642
                 HERMES_WORKER_STUDIO_API_KEY=<same value as API_SERVER_KEY>
+
+Model capabilities are normalized from Hermes' official model inventory inside
+the single staged gateway-native.js artifact. Non-Auto reasoning overrides are
+validated against the exact Provider+Model capability and fail closed before
+Gateway config.set/prompt submission; no model-name capability registry exists.
 
 Chat/session runtime state, Context usage, Auto Compact lifecycle, canonical todo,
 steer/interrupt, no-wait Full Access input handling, and arbitrary attachments are

@@ -3,11 +3,11 @@
 
 The historical Product 3 verifier remains byte-stable in verify_contract_core.py.
 The public manifest still enters through dashboard/dist/gateway-native.js; that
-file is now a deterministic loader whose final layer is the unchanged native
-Gateway implementation in gateway-native-core.js.  For the historical checks,
-project the core implementation onto the entry path temporarily, run every old
-assertion, then restore the loader.  New capability-layer invariants are checked
-here before that projection.
+file is now a deterministic source loader whose final layer is the unchanged
+native Gateway implementation in gateway-native-core.js.  The supported install
+artifact composes the same ordered layers into one staged gateway-native.js.
+For historical checks, project the core implementation onto the entry path
+temporarily, run every old assertion, then restore the loader.
 """
 from __future__ import annotations
 
@@ -50,10 +50,10 @@ expected_layers = [
 ]
 positions = [loader.find(name) for name in expected_layers]
 if any(pos < 0 for pos in positions) or positions != sorted(positions):
-    fail("Gateway-native loader must install capability core/bridge/DOM before the native Gateway core")
+    fail("Gateway-native source loader must install capability core/bridge/DOM before the native Gateway core")
 for token in ("script.async = false", "script.onload = () => load(index + 1)"):
     if token not in loader:
-        fail(f"Gateway-native loader lost deterministic sequencing token: {token}")
+        fail(f"Gateway-native source loader lost deterministic sequencing token: {token}")
 
 capability_core = read("dashboard/dist/model-capability-core.js")
 capability_bridge = read("dashboard/dist/model-capability-bridge.js")
@@ -85,6 +85,16 @@ for forbidden in ("API_SERVER_KEY", "HERMES_WORKER_STUDIO_API_KEY", "new AIAgent
     if forbidden in capability_core + capability_bridge + capability_dom + loader:
         fail(f"model capability layer crossed sealed runtime/secret boundary: {forbidden}")
 
+# The source loader is a maintainability seam only. The one supported installed
+# artifact remains a single manifest entry, assembled deterministically in the
+# same order so no extra browser dependency can be omitted by install/release.
+installer = read("scripts/install.sh")
+install_positions = [installer.find(f'"$ROOT/dashboard/dist/{name}"') for name in expected_layers]
+if any(pos < 0 for pos in install_positions) or install_positions != sorted(install_positions):
+    fail("installer must compose capability core/bridge/DOM before native Gateway core")
+if '> "$TMP/dashboard/dist/gateway-native.js"' not in installer:
+    fail("installer must stage the capability/native composition into the single gateway-native.js artifact")
+
 if errors:
     print("Model capability architecture verification FAILED:")
     for error in errors:
@@ -105,4 +115,4 @@ try:
 finally:
     ENTRY.write_bytes(loader_bytes)
 
-print("Model capability loader architecture verification passed.")
+print("Model capability loader/install architecture verification passed.")
