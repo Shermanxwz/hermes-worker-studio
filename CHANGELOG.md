@@ -23,6 +23,18 @@
 - Reconciled architecture, security, test, README, bilingual project introduction and seal documentation so current first-use protocol behavior and exact-current evidence semantics have one consistent source of truth.
 - Reclassified the 2026-09-01 target capture explicitly as historical evidence; it can no longer be read as proof for a newer exact candidate.
 
+### Seal-chain identity closure
+
+- Upgraded real-target evidence to `hermes-worker-studio.seal-evidence.v2`; it now requires exact installed-candidate read-back and records the actual final execution route used by the real Hermes acceptance Run.
+- Upgraded the final verdict to `hermes-worker-studio.seal-verdict.v2` and aligned the verifier/finalizer schema so a green target can no longer fail later because of version drift.
+- Bound each real-browser project directly to the running `product-capabilities.candidate_sha`; post-test report stamping is no longer sufficient evidence of installed identity.
+- Tightened browser verdicts so desktop, portrait mobile and landscape mobile must each contain a real `passed` product-shell result; a configured but skipped project cannot satisfy the seal.
+- Required desktop native Hermes return-path evidence to pass explicitly.
+- Made explicit real-target Provider/Model inputs atomic: both must be supplied together or both omitted, preventing a seal from silently exercising a different route.
+- Corrected the release lifecycle so a PR is merged **before** real-target sealing. The final seal identity is the exact current `main` HEAD, avoiding the impossible old pattern where sealing a PR head and merging afterward created a different canonical SHA.
+- Reworked the self-hosted real-target workflow to fetch and require `origin/main == candidate_sha` and reduced GitHub authority to `actions: read` + `contents: read` only.
+- Replaced mutation-capable PR finalization with a read-only exact-main verifier that checks the repository default branch, current `main` SHA and the exact-candidate `push` CI from `.github/workflows/ci.yml`.
+
 ## 3.0.0 — Product-grade Hermes shell
 
 - Moved Worker Studio to the product home route while keeping the native Hermes `/sessions` Dashboard reachable from **高级**.
