@@ -3,7 +3,7 @@
   "label": "Worker Studio",
   "description": "Product-grade Hermes-native conversation, Worker, models, session lifecycle and full-access control surface built only on official Hermes contracts.",
   "icon": "MessageSquare",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "tab": {
     "path": "/worker-studio",
     "override": "/",
