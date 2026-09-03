@@ -1,7 +1,7 @@
 manifest_version: 2
 api_version: 1
 name: hermes-worker-studio
-version: 3.0.1
+version: 3.0.0
 description: Product-grade Hermes-native worker studio built only on documented Hermes plugin, dashboard, Runs, model, approvals, session, and subagent lifecycle contracts.
 provides_tools:
   - worker_delegate
