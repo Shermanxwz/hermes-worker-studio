@@ -17,6 +17,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "tests" / "upstream-lock.json").read_text(encoding="utf-8"))
+SEAL_VERDICT_SCHEMA = "hermes-worker-studio.seal-verdict.v2"
 
 
 class SealEvidenceError(RuntimeError):
@@ -196,7 +197,7 @@ def _terminal_statuses(value: Any) -> set[str]:
 def validate(target: dict[str, Any], ui: dict[str, Any], upstream: dict[str, Any], candidate: str) -> dict[str, Any]:
     errors = [*validate_upstream(upstream), *validate_target(target, candidate), *validate_ui(ui, candidate)]
     return {
-        "schema": "hermes-worker-studio.seal-verdict.v2",
+        "schema": SEAL_VERDICT_SCHEMA,
         "candidate_sha": candidate,
         "eligible": not errors,
         "errors": errors,
