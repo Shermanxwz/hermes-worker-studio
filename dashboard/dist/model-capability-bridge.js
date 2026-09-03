@@ -1,0 +1,127 @@
+(function () {
+  'use strict';
+  const SDK = window.__HERMES_PLUGIN_SDK__;
+  const API = window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITIES__;
+  if (!SDK || !API?._internal) return;
+  const { clone } = API._internal;
+  const PLUGIN = '/api/plugins/hermes-worker-studio';
+  const RUNS = `${PLUGIN}/hermes/runs-v3`;
+  const RUN_RE = new RegExp(`^${PLUGIN.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/hermes/runs/([^/?]+)`);
+  const MOA_PLUGIN = `${PLUGIN}/hermes/moa-config`;
+  const MOA_OFFICIAL = '/api/model/moa';
+  const moaOverrides = new Map();
+  const runRoutes = new Map();
+  let modelOptions = null;
+  let moaConfig = null;
+
+  const parseBody = (init) => { try { return init?.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : init.body) : null; } catch (_) { return null; } };
+  const withBody = (init, body) => ({ ...(init || {}), headers: { ...((init || {}).headers || {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  class GatewayRpc {
+    constructor() { this.ws = null; this.opening = null; this.pending = new Map(); this.seq = 0; }
+    async connect() {
+      if (this.ws?.readyState === 1) return;
+      if (this.opening) return this.opening;
+      this.opening = (async () => {
+        const raw = await SDK.buildWsUrl('/api/ws');
+        const url = typeof raw === 'string' ? raw : raw?.url;
+        if (!url) throw new Error('Hermes Gateway WebSocket URL unavailable');
+        await new Promise((resolve, reject) => {
+          const ws = new WebSocket(url);
+          const timer = setTimeout(() => { try { ws.close(); } catch (_) {} reject(new Error('Hermes Gateway reasoning preflight timed out')); }, 12000);
+          ws.onopen = () => { clearTimeout(timer); this.ws = ws; resolve(); };
+          ws.onerror = () => { clearTimeout(timer); reject(new Error('Hermes Gateway reasoning preflight connection failed')); };
+          ws.onclose = () => { if (this.ws === ws) this.ws = null; for (const p of this.pending.values()) p.reject(new Error('Hermes Gateway connection closed')); this.pending.clear(); };
+          ws.onmessage = (event) => { let msg; try { msg = JSON.parse(event.data); } catch (_) { return; } const p = this.pending.get(msg?.id); if (!p) return; this.pending.delete(msg.id); msg.error ? p.reject(new Error(msg.error.message || JSON.stringify(msg.error))) : p.resolve(msg.result ?? {}); };
+        });
+      })();
+      try { await this.opening; } finally { this.opening = null; }
+    }
+    async request(method, params, timeout = 30000) {
+      await this.connect();
+      const id = `hws-reasoning-${Date.now()}-${++this.seq}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { this.pending.delete(id); reject(new Error(`Hermes Gateway ${method} timed out`)); }, timeout);
+        this.pending.set(id, { resolve: (v) => { clearTimeout(timer); resolve(v); }, reject: (e) => { clearTimeout(timer); reject(e); } });
+        this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: params || {} }));
+      });
+    }
+  }
+  const gateway = new GatewayRpc();
+
+  async function applyReasoning(storedId, value) {
+    if (!storedId || !value) return null;
+    const resumed = await gateway.request('session.resume', { session_id: String(storedId), source: 'hermes_browser', omit_messages: true, close_on_disconnect: false, eager_build: true });
+    const runtimeId = String(resumed?.session_id || resumed?.session?.id || resumed?.id || storedId);
+    const result = await gateway.request('config.set', { key: 'reasoning', session_id: runtimeId, value });
+    return { runtime_id: runtimeId, value: String(result?.value || value) };
+  }
+
+  const moaKey = (preset, kind, index) => `${preset}|${kind}|${kind === 'reference' ? index : ''}`;
+  function applyMoaOverrides(body) {
+    if (!body?.presets || typeof body.presets !== 'object') return body;
+    const next = clone(body);
+    for (const [key, effort] of moaOverrides) {
+      const [preset, kind, rawIndex] = key.split('|');
+      const row = next.presets?.[preset];
+      const slot = kind === 'aggregator' ? row?.aggregator : row?.reference_models?.[Number(rawIndex)];
+      if (!slot || typeof slot !== 'object') continue;
+      if (!effort || effort === 'auto') delete slot.reasoning_effort; else slot.reasoning_effort = effort;
+    }
+    return next;
+  }
+
+  function sourceRoute(body) {
+    return { provider: String(body?.provider || '').trim() || null, model: String(body?.model || '').trim() || null, reasoning: API.reasoningValueFromModelOptions(body?.model_options) || 'auto', source: 'hermes.model_options+gateway.config.set' };
+  }
+  const attachRoute = (result, meta) => meta && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, source_route: clone(meta) } : result;
+
+  const base = SDK.fetchJSON.bind(SDK);
+  let downstream = null;
+  let depth = 0;
+  async function fetchJSON(path, init) {
+    const top = depth === 0;
+    depth += 1;
+    try {
+      let nextInit = init;
+      let pending = null;
+      const method = String(init?.method || 'GET').toUpperCase();
+      if (top && path === RUNS && method === 'POST') {
+        const body = parseBody(init) || {};
+        pending = sourceRoute(body);
+        if (pending.reasoning !== 'auto') await applyReasoning(body.session_id, pending.reasoning);
+      }
+      if (top && (path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'PUT') {
+        const body = parseBody(init);
+        if (body) nextInit = withBody(init, applyMoaOverrides(body));
+      }
+      const target = top && downstream ? downstream : base;
+      let result = await target(path, nextInit);
+      if (!top) return result;
+      if (pending) {
+        const id = String(result?.id || result?.run_id || '').trim();
+        if (id) runRoutes.set(id, pending);
+        result = attachRoute(result, pending);
+      } else {
+        const match = String(path || '').match(RUN_RE);
+        if (match) result = attachRoute(result, runRoutes.get(decodeURIComponent(match[1])));
+      }
+      if (path === '/api/model/options' || String(path).startsWith('/api/model/options?')) {
+        modelOptions = API.enrichModelOptions(result);
+        queueMicrotask(() => window.__HWS_MODEL_CAPABILITY_DOM_REFRESH__?.());
+        return modelOptions;
+      }
+      if ((path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'GET') moaConfig = clone(result);
+      if ((path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'PUT') { moaConfig = clone(result); moaOverrides.clear(); }
+      if (path === MOA_PLUGIN || path === MOA_OFFICIAL) queueMicrotask(() => window.__HWS_MODEL_CAPABILITY_DOM_REFRESH__?.());
+      return result;
+    } finally { depth -= 1; }
+  }
+  Object.defineProperty(SDK, 'fetchJSON', { configurable: true, enumerable: true, get: () => fetchJSON, set: (fn) => { downstream = typeof fn === 'function' ? fn.bind(SDK) : null; } });
+
+  API.applyMoaOverrides = applyMoaOverrides;
+  API._runtime = {
+    get modelOptions() { return modelOptions; }, get moaConfig() { return moaConfig; }, moaOverrides, runRoutes,
+    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute,
+  };
+})();
