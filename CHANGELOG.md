@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.1 — Mixed New API protocol closure
+
+- Closed the mixed OpenAI-compatible endpoint gap where one New API inventory can contain both Chat Completions and Responses-only models.
+- Added first-use per-model protocol resolution: unresolved custom models run real Hermes Chat/Responses probes automatically, cache the verified result, and continue through the resulting official execution route without requiring a pre-click in Models.
+- Kept routing fail-closed: model names such as `gpt-*` are never treated as protocol evidence; if both transports work the operator must choose, and if neither works the Run fails with both real probe results.
+- Added per-model first-use probe locking plus a short failed-probe cooldown so concurrent sends do not duplicate billable probes and repeated failures do not create a retry storm.
+- Unified product Chat, independent Worker, Verifier, and native MOA around the same per-model execution route. Managed compatibility aliases are written only through Hermes `/api/config`, while the UI continues to show the original source Provider/Model.
+- Kept **官方探测** as an explicit diagnostic/retry action rather than a prerequisite for normal use.
+- Added an exact-count, fail-closed install-stage transform plus regression coverage for transformed Python/JavaScript syntax, Responses route selection, ambiguous-route blocking, and concurrent first-use probe de-duplication.
+
 ## 3.0.0 — Product-grade Hermes shell
 
 - Moved Worker Studio to the product home route while keeping the native Hermes `/sessions` Dashboard reachable from **高级**.
