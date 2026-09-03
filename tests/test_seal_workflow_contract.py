@@ -54,6 +54,24 @@ class RealTargetSealWorkflowContractTests(unittest.TestCase):
             self.assertIn(project, playwright)
             self.assertIn(project, verifier)
 
+    def test_browser_seal_reads_running_candidate_instead_of_only_stamping_report(self) -> None:
+        spec = (ROOT / "tests" / "target_ui.spec.mjs").read_text(encoding="utf-8")
+        for token in (
+            "HWS_CANDIDATE_SHA",
+            "assertRunningCandidate",
+            "/api/plugins/hermes-worker-studio/product-capabilities",
+            "caps?.candidate_sha",
+        ):
+            self.assertIn(token, spec)
+
+    def test_verifier_and_github_finalizer_require_the_same_current_verdict_schema(self) -> None:
+        schema = 'hermes-worker-studio.seal-verdict.v2'
+        verifier = (ROOT / "scripts" / "verify_seal_evidence.py").read_text(encoding="utf-8")
+        finalizer = (ROOT / "scripts" / "github_finalize_seal.py").read_text(encoding="utf-8")
+        self.assertIn(f'SEAL_VERDICT_SCHEMA = "{schema}"', verifier)
+        self.assertIn(f'SEAL_VERDICT_SCHEMA = "{schema}"', finalizer)
+        self.assertNotIn('seal-verdict.v1', finalizer)
+
 
 if __name__ == "__main__":
     unittest.main()
