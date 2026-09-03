@@ -78,11 +78,11 @@ def validate_target(target: dict[str, Any], candidate: str) -> list[str]:
     _require(target.get("ok") is True, "target acceptance did not finish ok", errors)
     health = checks.get("health") if isinstance(checks.get("health"), dict) else {}
     _require(health.get("ok") is True, "target health is not green", errors)
-    _require(hermes.get("execution_plane") == "official_runs", "target execution plane is not official_runs", errors)
+    _require(hermes.get("execution_plane") == "official_runs", "target probe/acceptance execution plane is not official_runs", errors)
     _require(hermes.get("worker_plane") == "PluginContext.subagent_lifecycle", "target Worker plane is not PluginContext.subagent_lifecycle", errors)
     _require(hermes.get("model_catalog") == "/api/model/options", "target model catalog is not Hermes-owned", errors)
     _require(caps.get("version") == 3, "target Product capability version is not 3", errors)
-    _require(caps.get("execution") == "Hermes official /v1/runs", "target Product execution is not Hermes /v1/runs", errors)
+    _require(caps.get("execution") == "Hermes official /v1/runs", "target Product probe/acceptance execution rail is not Hermes /v1/runs", errors)
     _require(plan_caps.get("source") == "Hermes canonical todo", "target official plan is not Hermes canonical todo", errors)
     _require(crud.get("created") is True and crud.get("renamed") is True, "target session create/rename evidence missing", errors)
     _require(crud.get("archived") is True and crud.get("unarchived") is True, "target session archive round-trip evidence missing", errors)
@@ -115,7 +115,10 @@ def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
     unexpected = stats.get("unexpected")
     expected = stats.get("expected")
     _require(unexpected == 0, f"Playwright has unexpected test results: {unexpected!r}", errors)
-    _require(isinstance(expected, int) and expected >= 3, f"Playwright expected-pass count is too small: {expected!r}", errors)
+    # Product shell passes once in each of three viewport projects, and the
+    # desktop native-return test is the fourth required pass. Mobile native
+    # shell tests are intentionally skipped because that shell is upstream-owned.
+    _require(isinstance(expected, int) and expected >= 4, f"Playwright expected-pass count is too small for the three-viewport seal: {expected!r}", errors)
 
     config = ui.get("config") if isinstance(ui.get("config"), dict) else {}
     projects = config.get("projects") if isinstance(config.get("projects"), list) else []
@@ -124,8 +127,8 @@ def validate_ui(ui: dict[str, Any], candidate: str) -> list[str]:
         for row in projects
         if isinstance(row, dict)
     }
-    _require("desktop-chromium" in project_names, "desktop Chromium project missing from browser evidence", errors)
-    _require("mobile-chromium" in project_names, "mobile Chromium project missing from browser evidence", errors)
+    for required_project in ("desktop-chromium", "mobile-chromium", "mobile-landscape-chromium"):
+        _require(required_project in project_names, f"{required_project} missing from browser evidence", errors)
 
     rendered = json.dumps(ui, ensure_ascii=False)
     for title in (
