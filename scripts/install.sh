@@ -26,7 +26,7 @@ for file in \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
   dashboard/dist/gateway-native.js dashboard/dist/index-v3.js \
   dashboard/dist/project-mark.png dashboard/dist/product.css dashboard/dist/product-sealed.css \
-  scripts/stage_product_bundle.py; do
+  scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py; do
   if [[ ! -f "$ROOT/$file" ]]; then
     echo "missing required file: $file" >&2
     exit 1
@@ -69,6 +69,16 @@ PY
 # family (image.attach_bytes / pdf.attach / file.attach). The transform itself
 # is exact-count checked and fails closed if Product 3 source drifts.
 python3 "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"
+
+# Close mixed OpenAI-compatible providers without inventing a second model
+# registry or guessing from model names. The staged bridge performs one real
+# Hermes Chat/Responses probe on first unresolved use, caches the per-model
+# route, and writes only narrow managed aliases through Hermes' official config.
+# Worker/Verifier/MOA consume the same resolver. Exact-count transforms make
+# source drift an installation failure rather than a silent partial patch.
+python3 "$ROOT/scripts/stage_mixed_protocol.py" \
+  "$TMP/dashboard/dist/index-v3.js" \
+  "$TMP/dashboard/plugin_api_v3.py"
 
 if command -v hermes >/dev/null 2>&1; then
   echo "[1/4] Hermes plugin doctor (staged tree)"
@@ -120,11 +130,14 @@ consumed from official Hermes Gateway methods/events. Attachments use
 image.attach_bytes / pdf.attach / file.attach; ordinary files use Hermes-returned
 @file: references. WebSocket reconnects resume durable Hermes Sessions instead of
 terminating work. /v1/runs remains a probe/CI/unattended surface rather than the
-product chat transport.
+product chat transport. Mixed custom endpoints are resolved per model on first
+real use by Hermes Runs; Chat/Responses decisions are cached and never guessed
+from model names.
 
 Worker/Verifier execution stays inside Hermes through the public
-PluginContext.subagent_lifecycle contract. No external worker service or second
-execution runtime is required.
+PluginContext.subagent_lifecycle contract. Independent Worker/Verifier routes and
+native MOA slots resolve through the same per-model execution route as product
+chat. No external worker service or second execution runtime is required.
 
 Refresh/restart the official Hermes dashboard. Worker Studio owns the product
 home route through official Dashboard tab.override="/". The Studio Advanced
