@@ -46,6 +46,61 @@ class SealAcceptanceParsingTests(unittest.TestCase):
         self.assertTrue(seal._session_has_marker(messages, "HWS_SEAL_RUN_OK_X"))
         self.assertFalse(seal._session_has_marker(messages[:1], "HWS_SEAL_RUN_OK_X"))
 
+    def test_pick_route_avoids_virtual_moa_unless_explicitly_requested(self):
+        options = {
+            "provider": "moa",
+            "model": "default",
+            "providers": [
+                {"slug": "moa", "authenticated": True, "models": ["default"]},
+                {"slug": "official", "authenticated": True, "models": ["main-model"]},
+            ],
+        }
+        self.assertEqual(seal.pick_route(options, "", ""), ("official", "main-model"))
+        self.assertEqual(seal.pick_route(options, "moa", "default"), ("moa", "default"))
+
+    def test_validate_started_route_records_responses_execution_alias(self):
+        started = {
+            "id": "run-1",
+            "source_route": {
+                "provider": "custom",
+                "model": "gpt-responses",
+                "mode": "codex_responses",
+                "status": "resolved",
+                "requires_probe": False,
+                "execution_provider": "hws-protocol-abc-responses",
+                "source": "hermes-worker-studio-real-run-probe",
+                "probed_at": 123.0,
+            },
+        }
+        route = seal.validate_started_route(started, "custom", "gpt-responses")
+        self.assertEqual(route["mode"], "codex_responses")
+        self.assertEqual(route["status"], "resolved")
+        self.assertEqual(route["execution_provider"], "hws-protocol-abc-responses")
+
+    def test_validate_started_route_rejects_unresolved_or_mismatched_route(self):
+        unresolved = {
+            "source_route": {
+                "provider": "custom",
+                "model": "m",
+                "status": "unresolved",
+                "requires_probe": True,
+                "execution_provider": "",
+            }
+        }
+        with self.assertRaises(seal.AcceptanceError):
+            seal.validate_started_route(unresolved, "custom", "m")
+        resolved_wrong_model = {
+            "source_route": {
+                "provider": "custom",
+                "model": "other",
+                "status": "resolved",
+                "requires_probe": False,
+                "execution_provider": "alias",
+            }
+        }
+        with self.assertRaises(seal.AcceptanceError):
+            seal.validate_started_route(resolved_wrong_model, "custom", "m")
+
 
 if __name__ == "__main__":
     unittest.main()
