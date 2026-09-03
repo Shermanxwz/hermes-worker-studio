@@ -61,6 +61,24 @@ jobs:
       - name: Python unit + HTTP integration + installer tests
         run: python -m unittest discover -s tests -p 'test_*.py' -v
 
+      - name: Exact staged release artifact gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          cp dashboard/dist/index-v3.js "$tmp/index-v3.js"
+          cp dashboard/plugin_api_v3.py "$tmp/plugin_api_v3.py"
+          python scripts/stage_product_bundle.py "$tmp/index-v3.js"
+          python scripts/stage_mixed_protocol.py "$tmp/index-v3.js" "$tmp/plugin_api_v3.py"
+          node --check "$tmp/index-v3.js"
+          python -m py_compile "$tmp/plugin_api_v3.py"
+          grep -Fq "resolveProtocolExecutionRoute" "$tmp/index-v3.js"
+          grep -Fq "role: 'alert'" "$tmp/index-v3.js"
+          grep -Fq "event.key === 'Escape'" "$tmp/index-v3.js"
+          grep -Fq "@router.post(\"/hermes/protocols/resolve\")" "$tmp/plugin_api_v3.py"
+          ! grep -Fq "请先进入“模型”页面点击“官方探测”" "$tmp/index-v3.js"
+
       - name: Dashboard product-flow runtime integration
         run: npm run test:frontend
 
@@ -179,7 +197,7 @@ jobs:
           legacy_repo='codex-worker-delegation'
           legacy_port=':8788'
           legacy_env='CWD_'
-          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py dashboard/dist/gateway-native.js dashboard/dist/index-v3.js scripts/install.sh scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py deploy/worker-studio.env.example)
+          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py dashboard/dist/gateway-native.js dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css scripts/install.sh scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py deploy/worker-studio.env.example)
           for token in "$legacy_repo" "$legacy_port" "$legacy_env"; do
             if grep -FIn -- "$token" "${files[@]}"; then
               echo "forbidden parallel-runtime token found: $token" >&2
