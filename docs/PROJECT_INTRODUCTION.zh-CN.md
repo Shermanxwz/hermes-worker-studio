@@ -1,8 +1,8 @@
 # Hermes Worker Studio · 项目介绍
 
-Hermes Worker Studio 是一个面向 Hermes 的产品级 Web 工作台。它是 Hermes 官方 Dashboard Plugin 的产品壳：负责导航、交互和信息呈现；执行、模型、会话、审批、Skills、Plugins、MCP 与持久化仍由 Hermes 官方运行时负责。
+Hermes Worker Studio 是一个面向 Hermes 的产品级 Web 工作台。它作为 Hermes 官方 Dashboard Plugin 的产品壳，负责导航、交互和信息呈现；执行、模型、会话、审批、Skills、Plugins、MCP 与持久化仍由 Hermes 官方运行时负责。
 
-> 当前状态：**ARCHIVE CANDIDATE**。仓库工程验收与普通 CI 已闭合，但在 Hermes 官方实现并进入 pinned revision 之前，不能称为 `SEALED`。
+> 当前状态：**ARCHIVE CANDIDATE**。代码级、产品级和普通 CI 工程闭环持续收紧，但只有 exact-current 真实目标机证据与 required upstream contract 同时闭合后才允许称为 `SEALED`。
 
 ## 项目定位
 
@@ -11,117 +11,136 @@ Studio 只维护一套产品体验，不维护第二套 Agent 内核。它通过
 核心原则：
 
 - Hermes 是唯一的执行、模型、上下文、计划、策略和持久化上游。
-- 能由 Hermes 公共接口完成的动作，直接调用 Hermes 公共接口。
+- 能由 Hermes 公共接口完成的动作，只调用 Hermes 公共接口。
 - 不 fork Hermes，不修改 Hermes core，不读取私有数据库。
 - 不创建第二个 Worker runtime、planner、tokenizer、模型目录或 Provider 客户端。
 - 浏览器不接触 Hermes API bearer secret。
+- 模型协议与 reasoning strength 都必须来自官方声明或真实执行证据，不靠名称猜测。
 
 ## 产品界面
 
-产品首页 `/` 由 Worker Studio 接管，提供：
+产品首页 `/` 由 Worker Studio 接管，保留六个一级产品面：
 
 - **对话**：Hermes 原生 Gateway 会话、发送、停止、Steer、审批和实时生命周期。
 - **Worker**：通过 Hermes 公共 `subagent_lifecycle` 使用官方子代理能力。
 - **模型**：直接读取 Hermes `/api/model/options`；Custom Endpoint 通过 Hermes 官方接口管理。
-- **MOA**：独立的 MOA 页面和专属会话列表，直接读取/保存 Hermes `/api/model/moa`。
+- **MOA**：独立页面和专属会话列表，直接读取/保存 Hermes `/api/model/moa`。
 - **完全访问**：读写 Hermes 官方审批/委派配置，并用真实官方 Run 验证回读结果。
 - **完整历史**：服务端全文搜索、会话分页、消息分页、归档、恢复、重命名和删除。
 
-点击 **高级 · Hermes Dashboard** 会直接进入 Hermes 原生 `/sessions`。原生 Hermes 自己渲染完整导航，因此 Hermes 后续新增导航会自然出现在该入口，不需要 Studio 维护复制的二级菜单。进入原生页面后，官方 Dashboard 壳层恢复，并通过官方 slot 提供返回 Studio 的入口。
+点击 **高级 · Hermes Dashboard** 直接进入 Hermes 原生 `/sessions`。原生 Hermes 自己渲染完整导航，因此未来 Hermes 新入口无需 Studio 复制维护。进入原生页面后，官方 Dashboard 壳层恢复，并通过官方 slot 提供 `← Worker Studio` 返回路径。
 
-## 官方接口映射
+## 官方运行映射
 
 | 产品行为 | Hermes 官方来源 |
 | --- | --- |
-| 打开/恢复会话 | Dashboard Gateway WebSocket 的 `session.resume` |
+| 打开/恢复会话 | Gateway WebSocket `session.resume` |
 | 发送消息 | Gateway JSON-RPC `prompt.submit` |
 | 运行中调整/停止 | `session.steer` / `session.interrupt` |
-| 审批与交互请求 | `approval.respond`、`clarify.respond`、`mcp.setup.respond` 等官方响应 |
-| 上下文与 Compact | `session.usage`、`session.context_breakdown`、`status.update` |
-| 官方计划 | Hermes `todo.updated` 事件或官方 Session API 中的 todo 结果 |
-| 工具、Skills、子代理活动 | Hermes Gateway lifecycle 事件和公共 `subagent_lifecycle` |
-| 会话与历史 | Hermes `/api/sessions/*` 与官方消息全文搜索 |
-| 模型和 Provider | Hermes `/api/model/options`、`/api/providers/custom-endpoints` |
-| MOA | Hermes `/api/model/moa` 与原生 `moa` provider |
-| 文件附件 | `image.attach_bytes`、`pdf.attach`、`file.attach` |
+| 审批和交互请求 | `approval.respond`、`clarify.respond`、`mcp.setup.respond` 等 |
+| Context / Compact | `session.usage`、`session.context_breakdown`、`status.update` |
+| 官方计划 | Hermes `todo.updated` 或官方 Session API todo 结果 |
+| 工具/Skills/子代理活动 | Hermes Gateway lifecycle + public `subagent_lifecycle` |
+| 会话与历史 | Hermes `/api/sessions/*` + 官方全文搜索 |
+| 模型/Provider | Hermes `/api/model/options`、`/api/providers/custom-endpoints` |
+| MOA | Hermes `/api/model/moa` + native `moa` provider |
+| 附件 | `image.attach_bytes`、`pdf.attach`、`file.attach` |
 
-Studio 的浏览器对话使用 Hermes 官方 Gateway；`/v1/runs` 仍是探测、CI 和无人值守验证面，不是另一套聊天执行内核。
+浏览器对话使用 Hermes 官方 Gateway；`/v1/runs` 是探测、CI 和无人值守验证面，不是另一套聊天执行内核。
 
-## 对话体验和数据边界
+## New API 与每模型协议
 
-- 普通对话首屏只加载最近 10 条消息，保证打开速度。
-- 完整历史使用 Hermes 官方全文搜索；点击结果后，Studio 会分页读取官方消息并定位、滚动到命中消息，而不是在最近 10 条里假装搜索完整会话。
-- 完整历史按会话分页，每页最多 30 个会话；详情消息按页加载，每页最多 100 条。
-- 输入 `/` 显示 Hermes 官方命令目录和中文解释；点击命令会写入真实命令 token，并通过 Hermes 官方命令执行路径发送，不是普通聊天文本。
-- 实时工作时间、工具调用、官方计划、Compact 和 Skills 变化只展示 Hermes 实际事件或官方持久化结果；没有事件时不会猜测或伪造。
-- WebSocket 断线时保留 durable Hermes Session，通过 `session.resume` 和官方消息/状态重新绑定，不把网络断开误报成任务完成或失败。
-- 会话标题使用用户提示词生成；不会再追加随机的 `· xxxxx` 后缀。
+Hermes 0.20.6 对通用 Custom Endpoint 的 transport 是 Provider 级能力，但一个 New API inventory 可以同时存在 Chat Completions 与 Responses-only 模型。Studio 通过一个受限的 per-model compatibility bridge 解决这个 pinned-core 缺口：
 
-## MOA 是什么
+1. Hermes 已声明的 Provider/model 协议优先。
+2. 已有真实验证路由直接复用。
+3. 第一次真正使用 unresolved 模型时，自动执行真实 Hermes Chat/Responses probe。
+4. 只有一个 transport 成功时，结果按模型缓存，并通过 Hermes 官方 `/api/config` 建立隔离兼容 Provider。
+5. 两种都成功时保持 ambiguous，要求明确选择。
+6. 两种都失败时 fail closed，并展示真实结果。
+7. 不按 URL、模型名或 `gpt-*` 字样猜测协议。
 
-MOA（Mixture of Agents）是 Hermes 的官方聚合执行模式：多个 Reference 模型先分别分析，再由 Aggregator 汇总为最终回答，最终仍由 Hermes Run 执行。它不是 Studio 自己实现的第二个聊天模型，也不是一个可以脱离 Hermes 配置直接运行的模型。
+并发首次请求共享一个 probe lock，最近失败有短暂 cooldown，避免重复计费/错误风暴。**官方探测**按钮保留用于诊断和主动重试，不再是正常使用前置步骤。原始 Provider/Model 始终是 UI 展示身份，内部 managed alias 不泄漏为第二模型目录。
 
-MOA 页面只从 Hermes 官方模型 inventory 读取可用 Provider/Model，并把配置保存回 Hermes `/api/model/moa`。Reference 或 Aggregator 缺少 Hermes 官方凭据时，页面显示具体的待配置状态，不强行显示“未就绪”或假装可以运行；凭据仍应通过 Hermes 官方 setup/provider 配置完成。
+Product Chat、独立 Worker、Verifier 与 MOA 使用同一 execution-route resolver。
 
-## New API 与协议选择
+## 对话体验与数据边界
 
-Hermes 0.20.6 对通用 Custom Endpoint 的协议解析是 Provider 级能力，不能自动根据模型名称猜测每个模型使用 Chat Completions 还是 Responses。Studio 因此遵循以下规则：
+- 普通对话首屏只加载最近 10 条消息。
+- 完整历史通过 Hermes 官方全文搜索跨消息分页定位命中；不会拿最近 10 条冒充完整搜索。
+- 完整历史每页最多 30 个会话，详情每页最多 100 条消息。
+- `/` 命令使用 Hermes 官方命令目录和执行路径。
+- 时间、工具、计划、Compact、Skills 变化只展示真实 Hermes 事件或官方持久化结果。
+- WebSocket 断线保留 durable Hermes Session，通过 fresh authenticated socket + `session.resume` 恢复，不把断线误判成 terminal。
+- Context occupancy 只来自 Hermes 官方 context telemetry，不把累计 billing/input tokens 当当前上下文。
 
-1. Hermes 已声明的模型/Provider 协议优先使用官方声明。
-2. 对混合 New API，只有用户主动选择或点击“官方探测”才执行真实 Hermes Run 探测。
-3. 探测结果按模型保存为受限路由状态，并通过 Hermes 官方配置创建隔离的兼容 Provider。
-4. 未解析或结果冲突时 fail closed，不按 URL、模型名或 GPT 字样猜测。
+## 附件与无人值守
 
-原始 Provider 不被静默改写，探测也不会在页面加载时偷偷发起。
+选择文件、Ctrl/Cmd+V、drag/drop 共用一条附件管线：图片 → `image.attach_bytes`，PDF → `pdf.attach`，其他文件 → `file.attach` 并使用 Hermes 返回的 `@file:` ref。
 
-## 安全与无人值守
+完全访问只操作 Hermes 官方审批/委派配置，保留恢复快照，并用真实 marker Run 验证。它保证“不让 Studio/Hermes 卡在人工审批 UI”，但不绕过密码、MFA、CAPTCHA、OAuth 或 Hermes Hardline Blocklist。
 
-完全访问只操作 Hermes 官方审批/委派设置，保留恢复快照，并用真实 marker Run 验证配置。它的含义是“不让 Studio 或 Hermes 等待人工审批 UI”，不是绕过密码、MFA、CAPTCHA、OAuth 或 Hermes Hardline Blocklist。
+## 工程与 UI 封口
 
-Worker 模式只通过 Hermes 的公共 `PluginContext.subagent_lifecycle`；Studio 不启动外部 Worker 服务，也不复制 Hermes 的执行逻辑。
+Supported installer 在临时目录创建 exact candidate，写入 candidate SHA，再执行两条 deterministic、exact-count、fail-closed build transform：
+
+- `stage_product_bundle.py`：现有附件族 + 交互/可访问性收口；
+- `stage_mixed_protocol.py`：pinned Hermes 的 per-model mixed-protocol compatibility。
+
+CI 会独立生成同一 staged JS/Python，并做 `node --check` / Python compile；installer tests 再断言最终文件集合与实际 staged 行为，避免“源码绿、安装产物是另一套代码”。
+
+最终 CSS 链为：
+
+```text
+product.css -> product-sealed.css -> product-closure.css
+```
+
+closure 层只收紧 focus、触屏可发现性、Modal focus/Escape、安全区、短视口和 reduced motion，不改变现有视觉语言或增加功能。
+
+Real-target Playwright 同时覆盖：
+
+- desktop 1440×900；
+- Pixel 7 竖屏；
+- 667×375 小屏触控横屏。
+
+六个一级页面都会逐页检查横向溢出和产品根视口边界。
 
 ## 封存状态
 
-当前唯一运行时上游是 pinned Hermes：
+唯一运行时上游是 pinned Hermes：
 
 ```text
 NousResearch/hermes-agent
 9eb832aad74547aaa0c4e6b4c1fab11f7d6a4bea
 ```
 
-仓库普通 CI 验证代码、依赖边界、产品运行时、Pinned Hermes 公共基线和安全合同。真正封存还需要目标机器上的三份证据：
+真正封存需要 exact-current 三证据面：
 
 ```text
 .seal/upstream.json
 .seal/target.json
 .seal/ui-report.json
+        ↓
 .seal/SEALED.json
 ```
 
-在 Hermes upstream #100149 的 route-scoped exclusive-shell 公共合同落地并进入 pinned revision 之前，`seal_close.py` 必须停在 Gate 0，不能生成 `eligible: true` 的 `SEALED.json`。
+当前 required upstream blocker 是 `NousResearch/hermes-agent#100149` 的 route-scoped exclusive-shell 公共合同（或 pinned revision 中经验证的等价正式合同）。普通 CI 绿色只代表 **ARCHIVE CANDIDATE**，不能替代该 upstream gate 或真实目标机证据。
 
 ## 开始使用
 
-在已安装 Hermes 的主机上，使用仓库提供的原子安装器：
-
 ```bash
 bash scripts/install.sh
-```
-
-安装器会通过 Hermes 官方 Plugin 命令启用插件，并运行 Plugin Doctor。目标机封存闭环：
-
-```bash
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
 
-如果 Hermes 源码 checkout 已存在，可追加 `--hermes-root /path/to/hermes-agent`。封存脚本不会跳过 upstream gate，也不会伪造目标或浏览器证据。
+若已有 exact Hermes checkout，可追加 `--hermes-root /path/to/hermes-agent`。
 
 ## 相关文档
 
 - [架构说明](ARCHITECTURE.md)
+- [产品工程收口](PRODUCT_CLOSURE.md)
 - [官方上游合同](UPSTREAM_CONTRACTS.md)
 - [完整验收规则](../SEAL_ACCEPTANCE.md)
 - [自动化测试矩阵](AUTOMATED_TEST_MATRIX.md)
 - [Dashboard exclusive shell 合同](HERMES_DASHBOARD_EXCLUSIVE_SHELL.md)
 - [安全边界](SECURITY.md)
-
