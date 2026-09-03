@@ -50,7 +50,7 @@
   const gateway = new GatewayRpc();
 
   async function applyReasoning(storedId, value) {
-    if (!storedId || !value) return null;
+    if (!storedId || !value || value === 'auto') return null;
     const resumed = await gateway.request('session.resume', { session_id: String(storedId), source: 'hermes_browser', omit_messages: true, close_on_disconnect: false, eager_build: true });
     const runtimeId = String(resumed?.session_id || resumed?.session?.id || resumed?.id || storedId);
     const result = await gateway.request('config.set', { key: 'reasoning', session_id: runtimeId, value });
@@ -58,6 +58,15 @@
   }
 
   const moaKey = (preset, kind, index) => `${preset}|${kind}|${kind === 'reference' ? index : ''}`;
+
+  const base = SDK.fetchJSON.bind(SDK);
+  async function ensureModelOptions() {
+    if (modelOptions) return modelOptions;
+    const raw = await base('/api/model/options');
+    modelOptions = API.enrichModelOptions(raw);
+    return modelOptions;
+  }
+
   function applyMoaOverrides(body) {
     if (!body?.presets || typeof body.presets !== 'object') return body;
     const next = clone(body);
@@ -66,17 +75,37 @@
       const row = next.presets?.[preset];
       const slot = kind === 'aggregator' ? row?.aggregator : row?.reference_models?.[Number(rawIndex)];
       if (!slot || typeof slot !== 'object') continue;
-      if (!effort || effort === 'auto') delete slot.reasoning_effort; else slot.reasoning_effort = effort;
+      const requested = String(effort || 'auto');
+      if (requested !== 'auto') API.validateReasoning(modelOptions, String(slot.provider || ''), String(slot.model || ''), requested);
+      if (requested === 'auto') delete slot.reasoning_effort; else slot.reasoning_effort = requested;
     }
     return next;
   }
 
-  function sourceRoute(body) {
-    return { provider: String(body?.provider || '').trim() || null, model: String(body?.model || '').trim() || null, reasoning: API.reasoningValueFromModelOptions(body?.model_options) || 'auto', source: 'hermes.model_options+gateway.config.set' };
+  async function sourceRoute(body) {
+    const provider = String(body?.provider || '').trim();
+    const model = String(body?.model || '').trim();
+    let requested = API.reasoningValueFromModelOptions(body?.model_options) || 'auto';
+    let checked = null;
+    if (requested !== 'auto') {
+      const options = await ensureModelOptions();
+      const d = API._internal.descriptor(options, provider, model);
+      requested = API.reasoningValueFromModelOptions(body?.model_options, d) || requested;
+      checked = API.validateReasoning(options, provider, model, requested);
+    } else if (modelOptions && provider && model) {
+      checked = API.validateReasoning(modelOptions, provider, model, 'auto');
+    }
+    return {
+      provider: provider || null,
+      model: model || null,
+      reasoning: checked?.value || 'auto',
+      reasoning_semantic: checked?.semantic || 'auto',
+      reasoning_control: checked?.descriptor?.control || 'auto',
+      source: 'hermes.model_options+gateway.config.set',
+    };
   }
   const attachRoute = (result, meta) => meta && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, source_route: clone(meta) } : result;
 
-  const base = SDK.fetchJSON.bind(SDK);
   let downstream = null;
   let depth = 0;
   async function fetchJSON(path, init) {
@@ -88,12 +117,15 @@
       const method = String(init?.method || 'GET').toUpperCase();
       if (top && path === RUNS && method === 'POST') {
         const body = parseBody(init) || {};
-        pending = sourceRoute(body);
+        pending = await sourceRoute(body);
         if (pending.reasoning !== 'auto') await applyReasoning(body.session_id, pending.reasoning);
       }
       if (top && (path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'PUT') {
         const body = parseBody(init);
-        if (body) nextInit = withBody(init, applyMoaOverrides(body));
+        if (body) {
+          if (moaOverrides.size && !modelOptions) await ensureModelOptions();
+          nextInit = withBody(init, applyMoaOverrides(body));
+        }
       }
       const target = top && downstream ? downstream : base;
       let result = await target(path, nextInit);
@@ -122,6 +154,6 @@
   API.applyMoaOverrides = applyMoaOverrides;
   API._runtime = {
     get modelOptions() { return modelOptions; }, get moaConfig() { return moaConfig; }, moaOverrides, runRoutes,
-    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute,
+    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute, ensureModelOptions,
   };
 })();

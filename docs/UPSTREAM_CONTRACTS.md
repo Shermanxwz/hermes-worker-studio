@@ -50,7 +50,7 @@ Required contracts:
 
 - `GET /api/model/options` and `?refresh=1`;
 - Hermes model/session assignment API;
-- Hermes Gateway session-scoped `config.set` for live reasoning state (`none` = thinking disabled, concrete effort = thinking enabled at that effort);
+- Hermes Gateway session-scoped `config.set` for live reasoning state (`none` = thinking disabled, concrete accepted value = thinking enabled according to Hermes/provider semantics);
 - `GET/POST /api/providers/custom-endpoints`;
 - custom endpoint validation;
 - request-scoped `provider`, `model`, `model_options` on `/v1/runs`;
@@ -60,9 +60,11 @@ Required contracts:
 
 Studio must never ship a second model registry. Model capability is resolved from Provider + Model + effective Hermes route/protocol, never from a model-name heuristic.
 
-Reasoning is treated as a capability descriptor, not merely a strength slider. Studio consumes additive public metadata when present (for example `reasoning.supported`, `reasoning.control`, `reasoning.can_disable`, `reasoning.options`/`efforts`, and compatible existing aliases). The normalized controls are unsupported, toggle-only, effort-only, toggle+effort, fixed/mandatory, or Auto.
+Reasoning is treated as a capability descriptor, not merely a strength slider. Studio consumes additive public metadata when present (for example `reasoning.supported`, `reasoning.control`, `reasoning.can_disable`, `reasoning.options`/`efforts`, `can_disable_reasoning`, and compatible existing aliases). The normalized controls are unsupported, toggle-only, effort-only, toggle+effort, fixed/mandatory, or Auto.
 
-Missing effort metadata does **not** authorize Studio to invent `low`/`medium`/`high` levels. On the pinned Hermes picker contract, `reasoning: true` with no explicit effort vocabulary is represented by the canonical thinking on/off state; a strength selector appears only when an upstream public field supplies that vocabulary. `none` is an off state, not a strength.
+Missing metadata does **not** authorize Studio to invent either a control or a strength vocabulary. Bare `reasoning: true` proves support only and remains Auto/read-only. A Thinking toggle requires an explicit public disable capability (`can_disable_reasoning=true` or equivalent explicit control). A strength selector appears only when an upstream public field supplies the accepted effort vocabulary. `none` is an off state, not a strength.
+
+Every non-Auto Main or locally changed MOA reasoning override must be validated against the current normalized Hermes capability before it reaches Gateway `config.set` or `/api/model/moa`. Invalid off/effort values fail closed. Existing official MoA preset values are preserved unless the user changes them through Studio.
 
 If one execution plane lacks a public write contract, Studio renders the capability read-only rather than persisting an inert value. The pinned `/review` resolver currently has this boundary for independent reasoning configuration. See `MODEL_CAPABILITY_SEAL.md`.
 

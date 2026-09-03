@@ -11,7 +11,7 @@
     "hidden": false
   },
   "slots": ["header-left", "sidebar"],
-  "entry": "dist/model-capability-entry.js",
+  "entry": "dist/gateway-native.js",
   "css": "dist/product-closure.css",
   "api": "plugin_api_v3.py"
 }
