@@ -952,6 +952,15 @@
     if (runMatch) return handleRunRoute(url, init, runMatch);
     return originalFetchJSON(path, init);
   };
+  // Product 3 may already be registered before this native layer finishes
+  // loading. Publish readiness only after the SDK setter has installed the
+  // Gateway-native downstream, so the first model request cannot bypass the
+  // capability bridge during dynamic loading.
+  window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE_READY__ = true;
+  if (typeof window.dispatchEvent === 'function') {
+    const event = typeof window.Event === 'function' ? new window.Event('hws-gateway-native-ready') : { type: 'hws-gateway-native-ready' };
+    window.dispatchEvent(event);
+  }
 
   function baseHref(path) {
     const base = String(window.__HERMES_BASE_PATH__ || '').replace(/\/$/, '');

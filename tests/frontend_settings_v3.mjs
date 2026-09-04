@@ -20,6 +20,7 @@ window.__HERMES_BASE_PATH__ = '';
 // This isolated settings harness intentionally omits the dynamic capability
 // layer; do not wait for a bridge that is not part of this fixture.
 window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ = true;
+window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE_READY__ = true;
 window.requestAnimationFrame = (fn) => { fn(Date.now()); return 1; };
 globalThis.requestAnimationFrame = window.requestAnimationFrame;
 window.HTMLElement.prototype.scrollTo = function scrollTo() {};

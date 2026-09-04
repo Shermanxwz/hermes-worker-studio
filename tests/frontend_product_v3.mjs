@@ -155,6 +155,7 @@ assert.ok(js.includes('function fetchJSON(path, init) { return SDK.fetchJSON(pat
 assert.ok(!js.includes('const fetchJSON = SDK.fetchJSON;'), 'Product 3 must not capture the pre-bridge SDK fetch layer');
 assert.ok(js.includes('waitForCapabilityBridge();'), 'Product 3 must wait for the capability bridge before its first model inventory request');
 assert.ok(js.includes("hws-model-capability-ready"), 'Product 3 must have an explicit capability bridge readiness signal');
+assert.ok(js.includes("hws-gateway-native-ready"), 'Product 3 must wait for the Gateway-native downstream before its first model inventory request');
 
 for (const token of [
   'MAX_ATTACHMENT_BYTES',

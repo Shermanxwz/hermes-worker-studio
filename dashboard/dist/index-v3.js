@@ -18,13 +18,22 @@
   // on that first render.
   function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }
   function waitForCapabilityBridge() {
-    if (window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ === true || typeof window.addEventListener !== 'function') return Promise.resolve();
+    const runtimeReady = () => window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ === true
+      && window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE_READY__ === true;
+    if (runtimeReady() || typeof window.addEventListener !== 'function') return Promise.resolve();
     return new Promise((resolve) => {
       let timer;
-      const done = () => { if (timer) clearTimeout(timer); window.removeEventListener?.('hws-model-capability-ready', done); resolve(); };
-      window.addEventListener('hws-model-capability-ready', done, { once: true });
-      if (window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ === true) done();
-      else timer = setTimeout(done, 1500);
+      const done = () => {
+        if (timer) clearTimeout(timer);
+        window.removeEventListener?.('hws-model-capability-ready', check);
+        window.removeEventListener?.('hws-gateway-native-ready', check);
+        resolve();
+      };
+      const check = () => { if (runtimeReady()) done(); };
+      window.addEventListener('hws-model-capability-ready', check);
+      window.addEventListener('hws-gateway-native-ready', check);
+      check();
+      if (!runtimeReady()) timer = setTimeout(done, 1500);
     });
   }
   const PLUGIN = '/api/plugins/hermes-worker-studio';
