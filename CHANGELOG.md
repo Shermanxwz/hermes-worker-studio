@@ -2,6 +2,15 @@
 
 ## Unreleased — Product engineering closure
 
+### Seal-grade local engineering closure
+
+- Reworked the installer into an explicit transaction: existing installs prefer Linux `renameat2(RENAME_EXCHANGE)`, otherwise retain a rollback tree; the previous plugin/theme is not discarded until the exact installed path passes Plugin Doctor and official enable succeeds.
+- Added regression coverage proving installed-tree Doctor and enable failures restore the prior plugin/theme and leave no staging/backup residue.
+- Added `stage_security_closure.py`, an exact-count/fail-closed staged transform that creates private protocol/projection state with mode `0600` + exclusive/no-follow temporary files before rename and maps malformed JSON mutation bodies to HTTP 400.
+- Added a dedicated high-severity `npm audit` gate against the exact frontend test-harness lockfile; the previous documentation claim is now backed by canonical CI.
+- Extended architecture/security/acceptance gates so installer transaction ordering, staged security closure and npm audit cannot silently drift out of the release pipeline.
+- Clarified that Git tags and GitHub Releases are optional distribution metadata; exact `main` SHA + three-plane evidence remain the only seal identity.
+
 ### Mixed New API protocol closure
 
 - Closed the mixed OpenAI-compatible endpoint gap where one New API inventory can contain both Chat Completions and Responses-only models.
@@ -15,8 +24,8 @@
 
 - Added `product-closure.css` as the final Product 3 stylesheet layer for keyboard focus visibility, touch-only action discoverability, safe-area/dialog bounds, short mobile/landscape viewports and complete reduced-motion handling without changing the existing visual language.
 - Closed existing-control accessibility semantics: live error alerts, Modal Escape/focus trap/focus return, menu/disclosure state, accessible names for composer/send/file/mobile/Full Access controls and active navigation state.
-- Strengthened the atomic installer and tests so the exact installed file set includes the closure stylesheet and both deterministic release transforms.
-- Added an explicit **Exact staged release artifact** CI gate that runs both installer transforms, then syntax-checks the final JavaScript and Python bridge and asserts the mixed-protocol/accessibility closure tokens.
+- Strengthened the installer and tests so the exact installed file set includes the closure stylesheet and every deterministic release transform.
+- Added an explicit **Exact staged release artifact** CI gate that runs installer transforms, then syntax-checks the final JavaScript and Python bridge and asserts mixed-protocol/accessibility/security closure tokens.
 - Strengthened the archive contract around sole-Hermes runtime ownership, bounded Worker convenience state, CSS layering, release-transform capabilities, candidate SHA stamping and second-runtime rejection.
 - Expanded real-target browser coverage to desktop 1440×900, Pixel 7 portrait and compact 667×375 touch landscape. Every existing first-level page — Chat, Worker, Models, MOA, Full Access and History — is checked for horizontal overflow and product viewport bounds.
 - Made Playwright TLS-error ignoring opt-in (`HWS_SEAL_IGNORE_HTTPS_ERRORS=1`) instead of a default weakening.
