@@ -26,7 +26,7 @@ The repository has reached code-level archive-candidate closure around these inv
 - the exact installed path must pass Plugin Doctor before official enable, and post-swap Doctor/enable failure restores the previous plugin/theme without transaction residue;
 - deterministic release transforms are exact-count/fail-closed and independently built/syntax-checked in CI;
 - staged private protocol/projection state uses exclusive/no-follow mode-`0600` temporary files before rename; malformed JSON mutation bodies fail closed as HTTP 400;
-- the exact npm lockfile has an explicit high-severity `npm audit` gate rather than a documentation-only claim;
+- npm is a private test-only harness boundary: production dependency fields are forbidden, devDependencies are exact-pinned, package/lock roots must match, and CI installs with lifecycle scripts disabled; canonical seal CI does not depend on a live npm advisory endpoint;
 - final UI stylesheet is `product-closure.css`, layered over sealed/base CSS without changing the existing visual language;
 - desktop, phone portrait and compact landscape real-target UI projects cover every existing first-level Studio page;
 - keyboard focus, dialog Escape/focus lifecycle, disclosure/menu state, touch-only action discoverability and reduced-motion behavior are contract-tested;
