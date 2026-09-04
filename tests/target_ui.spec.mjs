@@ -73,7 +73,9 @@ async function openPrimary(page, label, mobile) {
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.hws3-mobile-scrim')).toBeVisible();
   }
-  const item = page.locator('.hws3-nav').getByText(label, { exact: true });
+  // Navigation labels share their button with a decorative icon, so match
+  // the semantic button containing the label rather than an exact text node.
+  const item = page.locator('.hws3-nav button').filter({ hasText: label }).first();
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.locator('.hws3-nav button[aria-current="page"]')).toContainText(label);
@@ -172,9 +174,14 @@ test('Worker Studio product shell is usable at the real target', async ({ page }
 test('native Hermes Dashboard keeps the Worker Studio return path', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name.startsWith('mobile-'), 'native mobile shell is upstream-owned; product mobile pages are sealed in the primary test');
 
-  await page.goto('/sessions', { waitUntil: 'domcontentloaded' });
+  // The return slot is intentionally available when native navigation is
+  // entered through Studio's Advanced link. A cold direct /sessions load is
+  // repaired to the product root by the pinned Hermes compatibility layer.
+  await page.goto('/', { waitUntil: 'networkidle' });
+  await expect(page.locator('.hws3-native-dashboard-link')).toBeVisible();
+  await page.locator('.hws3-native-dashboard-link').click();
+  await expect(page).toHaveURL(/\/sessions$/);
   const backs = page.getByText('← Worker Studio', { exact: true });
-  expect(await backs.count()).toBeGreaterThanOrEqual(1);
   const back = backs.first();
   await expect(back).toBeVisible();
   expect(await page.locator('a[href$="/skills"]').count()).toBeGreaterThanOrEqual(1);
