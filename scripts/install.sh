@@ -54,38 +54,68 @@ rollback_install() {
           return 1
         fi
       fi
-      rm -rf "$TMP"
+      if ! rm -rf "$TMP"; then
+        echo "FATAL: restored plugin but could not remove failed replacement at $TMP" >&2
+        return 1
+      fi
       ;;
     rollback-safe)
-      rm -rf "$DEST"
+      if ! rm -rf "$DEST"; then
+        echo "FATAL: could not remove failed installed tree at $DEST" >&2
+        return 1
+      fi
       if (( HAD_PREVIOUS )) && [[ -e "$BACKUP" ]]; then
-        mv "$BACKUP" "$DEST"
+        if ! mv "$BACKUP" "$DEST"; then
+          echo "FATAL: could not restore previous plugin from $BACKUP" >&2
+          return 1
+        fi
       fi
       ;;
     new-install)
-      rm -rf "$DEST"
+      if ! rm -rf "$DEST"; then
+        echo "FATAL: could not remove failed new install at $DEST" >&2
+        return 1
+      fi
       ;;
   esac
 
   if (( THEME_CHANGED )); then
     if (( THEME_HAD_PREVIOUS )) && [[ -f "$THEME_BACKUP" ]]; then
-      install -m 0644 "$THEME_BACKUP" "$THEME_DEST"
+      if ! install -m 0644 "$THEME_BACKUP" "$THEME_DEST"; then
+        echo "FATAL: could not restore previous theme from $THEME_BACKUP" >&2
+        return 1
+      fi
     else
-      rm -f "$THEME_DEST"
+      if ! rm -f "$THEME_DEST"; then
+        echo "FATAL: could not remove failed-install theme at $THEME_DEST" >&2
+        return 1
+      fi
     fi
   fi
+  return 0
 }
 
 cleanup() {
   status=$?
   trap - EXIT
+  rollback_failed=0
   if (( status != 0 && ROLLBACK_ARMED )); then
     echo "Install failed after replacement; restoring previous Worker Studio state" >&2
-    rollback_install || status=70
+    if ! rollback_install; then
+      status=70
+      rollback_failed=1
+    fi
   fi
-  rm -rf "$TMP"
-  rm -rf "$BACKUP"
-  rm -f "$THEME_BACKUP"
+  if (( rollback_failed == 0 )); then
+    rm -rf "$TMP"
+    rm -rf "$BACKUP"
+    rm -f "$THEME_BACKUP"
+  else
+    echo "FATAL: rollback incomplete; recovery artifacts were preserved for manual recovery:" >&2
+    [[ -e "$TMP" ]] && echo "  transaction tree: $TMP" >&2
+    [[ -e "$BACKUP" ]] && echo "  previous plugin backup: $BACKUP" >&2
+    [[ -e "$THEME_BACKUP" ]] && echo "  previous theme backup: $THEME_BACKUP" >&2
+  fi
   exit "$status"
 }
 trap cleanup EXIT
