@@ -49,11 +49,12 @@ expected_layers = [
     "model-capability-core.js",
     "model-capability-bridge.js",
     "model-capability-dom.js",
+    "protocol-runtime.js",
     "gateway-native-core.js",
 ]
 positions = [loader.find(name) for name in expected_layers]
 if any(pos < 0 for pos in positions) or positions != sorted(positions):
-    fail("Gateway-native source loader must install capability core/bridge/DOM before the native Gateway core")
+    fail("Gateway-native source loader must install capability core/bridge/DOM and protocol runtime before the native Gateway core")
 for token in ("script.async = false", "script.onload = () => load(index + 1)"):
     if token not in loader:
         fail(f"Gateway-native source loader lost deterministic sequencing token: {token}")
@@ -61,6 +62,7 @@ for token in ("script.async = false", "script.onload = () => load(index + 1)"):
 capability_core = read("dashboard/dist/model-capability-core.js")
 capability_bridge = read("dashboard/dist/model-capability-bridge.js")
 capability_dom = read("dashboard/dist/model-capability-dom.js")
+protocol_runtime = read("dashboard/dist/protocol-runtime.js")
 for token in (
     "explicitDisable",
     "supported === true && canDisable === true",
@@ -78,15 +80,28 @@ for token in ("ensureModelOptions", "API.validateReasoning", "config.set", "sess
 for token in ("VERIFIER", "未公开独立 reasoning 写入契约", "hws3-moa-reasoning-capability"):
     if token not in capability_dom:
         fail(f"model capability DOM layer lost execution-plane closure token: {token}")
+for token in (
+    "/hermes/protocol-route",
+    "/hermes/protocols/resolve",
+    "/hermes/protocols/probe",
+    "/hermes/model-probe",
+    "requires_probe",
+    "execution_provider",
+    "heuristic: false",
+    "first_use: true",
+):
+    if token not in protocol_runtime:
+        fail(f"protocol runtime lost per-model dynamic routing contract token: {token}")
 
-# Capability logic must stay generic. Provider/model names belong to Hermes'
-# inventory payload, never Studio branching logic.
+# Capability/protocol logic must stay generic. Provider/model names belong to
+# Hermes' inventory payload and test fixtures, never production branching logic.
+runtime_logic = capability_core + capability_bridge + capability_dom + protocol_runtime
 for forbidden in ("minimax", "claude", "gemini", "gpt-", "grok", "deepseek", "kimi", "glm-"):
-    if forbidden in (capability_core + capability_bridge + capability_dom).lower():
-        fail(f"model capability layer reintroduced provider/model-name heuristic: {forbidden}")
+    if forbidden in runtime_logic.lower():
+        fail(f"model capability/protocol layer reintroduced provider/model-name heuristic: {forbidden}")
 for forbidden in ("API_SERVER_KEY", "HERMES_WORKER_STUDIO_API_KEY", "new AIAgent"):
-    if forbidden in capability_core + capability_bridge + capability_dom + loader:
-        fail(f"model capability layer crossed sealed runtime/secret boundary: {forbidden}")
+    if forbidden in runtime_logic + loader:
+        fail(f"model capability/protocol layer crossed sealed runtime/secret boundary: {forbidden}")
 
 # The source loader is a maintainability seam only. The one supported installed
 # artifact remains a single manifest entry, assembled deterministically in the
@@ -94,9 +109,9 @@ for forbidden in ("API_SERVER_KEY", "HERMES_WORKER_STUDIO_API_KEY", "new AIAgent
 installer = read("scripts/install.sh")
 install_positions = [installer.find(f'"$ROOT/dashboard/dist/{name}"') for name in expected_layers]
 if any(pos < 0 for pos in install_positions) or install_positions != sorted(install_positions):
-    fail("installer must compose capability core/bridge/DOM before native Gateway core")
+    fail("installer must compose capability core/bridge/DOM and protocol runtime before native Gateway core")
 if '> "$TMP/dashboard/dist/gateway-native.js"' not in installer:
-    fail("installer must stage the capability/native composition into the single gateway-native.js artifact")
+    fail("installer must stage the capability/protocol/native composition into the single gateway-native.js artifact")
 
 # Local seal hardening is part of the supported artifact, not documentation-only
 # guidance. Lock transform ordering, transaction rollback and post-swap validation.
@@ -167,6 +182,8 @@ ci = read(".github/workflows/ci.yml")
 for token in (
     "Test-only npm dependency boundary",
     "npm ci --ignore-scripts --no-fund --no-audit",
+    "node --check dashboard/dist/protocol-runtime.js",
+    "node --check tests/frontend_protocol_runtime.mjs",
     'python scripts/stage_security_closure.py "$tmp/plugin_api_v3.py"',
     '! grep -Fq "await request.json()" "$tmp/plugin_api_v3.py"',
     "scripts/stage_security_closure.py",
@@ -196,4 +213,4 @@ try:
 finally:
     ENTRY.write_bytes(loader_bytes)
 
-print("Model capability loader/install/security architecture verification passed.")
+print("Model capability/protocol loader/install/security architecture verification passed.")

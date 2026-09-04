@@ -5,7 +5,7 @@
     console.error('[hermes-worker-studio] cannot resolve Gateway-native entry');
     return;
   }
-  const layers = ['model-capability-core.js', 'model-capability-bridge.js', 'model-capability-dom.js', 'gateway-native-core.js'];
+  const layers = ['model-capability-core.js', 'model-capability-bridge.js', 'model-capability-dom.js', 'protocol-runtime.js', 'gateway-native-core.js'];
   function load(index) {
     if (index >= layers.length) return;
     const script = document.createElement('script');
