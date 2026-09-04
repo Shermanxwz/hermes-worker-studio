@@ -9,10 +9,24 @@
   const RESERVED = new Set(['auto', 'none']);
 
   const clone = (v) => v && typeof v === 'object' ? JSON.parse(JSON.stringify(v)) : v;
+  const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
   const providerRows = (o) => (Array.isArray(o?.providers) ? o.providers : []).filter((p) => !String(p?.slug || '').toLowerCase().startsWith('hws-protocol-') && p?.hws_protocol_bridge?.managed_by !== 'hermes-worker-studio');
   const providerBySlug = (o, slug) => providerRows(o).find((p) => p?.slug === slug || (Array.isArray(p?.aliases) && p.aliases.includes(slug)));
   const modelsFor = (o, slug) => Array.isArray(providerBySlug(o, slug)?.models) ? providerBySlug(o, slug).models : [];
   const modelCapability = (o, provider, model) => providerBySlug(o, provider)?.capabilities?.[model] || {};
+
+  function rawEffortValues(lists) {
+    const out = [];
+    for (const list of lists) {
+      if (!Array.isArray(list)) continue;
+      for (const item of list) {
+        const value = String(typeof item === 'string' ? item : item?.value || '').trim();
+        if (value) out.push(value);
+      }
+    }
+    return out;
+  }
 
   function uniqueEfforts(lists) {
     const out = [];
@@ -58,16 +72,124 @@
     };
   }
 
+  function configObject(payload) {
+    return isObject(payload?.config) ? payload.config : (isObject(payload) ? payload : {});
+  }
+
+  function configProvider(configPayload, providerRow) {
+    const providers = configObject(configPayload).providers;
+    if (!isObject(providers) || !providerRow) return null;
+    const wanted = new Set([
+      String(providerRow.slug || '').trim().toLowerCase(),
+      String(providerRow.name || '').trim().toLowerCase(),
+      ...(Array.isArray(providerRow.aliases) ? providerRow.aliases.map((x) => String(x || '').trim().toLowerCase()) : []),
+    ].filter(Boolean));
+    for (const [key, value] of Object.entries(providers)) {
+      if (!isObject(value)) continue;
+      const aliases = [key, value.slug, value.name, ...(Array.isArray(value.aliases) ? value.aliases : [])].map((x) => String(x || '').trim().toLowerCase()).filter(Boolean);
+      if (aliases.some((x) => wanted.has(x))) return value;
+    }
+    return null;
+  }
+
+  function explicitReasoningMetadata(meta, source) {
+    if (!isObject(meta)) return null;
+    const raw = meta.reasoning;
+    const rich = isObject(raw) ? raw : {};
+    const effortLists = [rich.options, rich.efforts, rich.supported_efforts, rich.supportedEfforts, meta.reasoning_efforts, meta.reasoningEfforts, meta.supported_reasoning_efforts, meta.supportedReasoningEfforts];
+    const efforts = uniqueEfforts(effortLists);
+    const rawEfforts = rawEffortValues(effortLists).map((x) => x.toLowerCase());
+    const rawControl = String(rich.control || rich.kind || rich.mode || meta.reasoning_control || meta.reasoningControl || '').trim().toLowerCase();
+    const control = CONTROLS.has(rawControl) ? rawControl : '';
+    const disableValue = rich.can_disable ?? rich.canDisable ?? meta.can_disable_reasoning ?? meta.canDisableReasoning;
+    let canDisable = disableValue === true ? true : disableValue === false ? false : null;
+    if (canDisable === null && rawEfforts.includes('none')) canDisable = true;
+    if (canDisable === null && (control === 'toggle' || control === 'toggle_effort')) canDisable = true;
+    if (canDisable === null && control === 'fixed') canDisable = false;
+    let supported = raw === true || rich.supported === true || meta.supports_reasoning === true ? true
+      : raw === false || rich.supported === false || meta.supports_reasoning === false ? false : null;
+    if (supported === null && (efforts.length || canDisable !== null || (control && control !== 'none' && control !== 'auto'))) supported = true;
+    if (control === 'none') supported = false;
+    const defaultEffort = String(rich.default_effort || rich.defaultEffort || meta.default_reasoning_effort || meta.defaultReasoningEffort || '').trim();
+    if (supported === null && canDisable === null && !efforts.length && !control && !defaultEffort) return null;
+    return { supported, canDisable, efforts, control, defaultEffort, source };
+  }
+
+  function capabilitySignals(capability) {
+    const cap = isObject(capability) ? capability : {};
+    const rich = isObject(cap.reasoning) ? cap.reasoning : {};
+    const efforts = uniqueEfforts([rich.options, rich.efforts, rich.supported_efforts, rich.supportedEfforts, cap.reasoning_efforts, cap.reasoningEfforts, cap.supported_reasoning_efforts, cap.supportedReasoningEfforts]);
+    const disable = rich.can_disable ?? rich.canDisable ?? cap.can_disable_reasoning ?? cap.canDisableReasoning;
+    const control = String(rich.control || rich.kind || rich.mode || cap.reasoning_control || cap.reasoningControl || '').trim().toLowerCase();
+    const defaultEffort = String(rich.default_effort || rich.defaultEffort || cap.default_reasoning_effort || '').trim();
+    const support = cap.reasoning === false || rich.supported === false || cap.supports_reasoning === false ? false
+      : cap.reasoning === true || isObject(cap.reasoning) || rich.supported === true || cap.supports_reasoning === true ? true : null;
+    return {
+      support,
+      hasEfforts: efforts.length > 0,
+      hasDisable: disable === true || disable === false,
+      hasControl: CONTROLS.has(control),
+      hasDefault: !!defaultEffort,
+    };
+  }
+
+  function mergeExplicitReasoning(capability, metadata) {
+    const cap = isObject(capability) ? { ...capability } : {};
+    if (!metadata) return { capability: cap, changed: false };
+    const before = capabilitySignals(cap);
+    if (before.support === false) return { capability: cap, changed: false };
+    let changed = false;
+    if (before.support === null && metadata.supported !== null) {
+      cap.reasoning = metadata.supported;
+      changed = true;
+    }
+    if (!before.hasEfforts && metadata.efforts.length) {
+      cap.reasoning_efforts = metadata.efforts.map((x) => ({ ...x }));
+      changed = true;
+    }
+    if (!before.hasDisable && metadata.canDisable !== null) {
+      cap.can_disable_reasoning = metadata.canDisable;
+      changed = true;
+    }
+    if (!before.hasControl && metadata.control) {
+      cap.reasoning_control = metadata.control;
+      changed = true;
+    }
+    if (!before.hasDefault && metadata.defaultEffort) {
+      cap.default_reasoning_effort = metadata.defaultEffort;
+      changed = true;
+    }
+    if (changed && !cap.reasoning_source) cap.reasoning_source = metadata.source;
+    return { capability: cap, changed };
+  }
+
+  function overlayFromHermesConfig(capability, providerConfig, model) {
+    if (!isObject(providerConfig)) return capability;
+    const models = isObject(providerConfig.models) ? providerConfig.models : {};
+    const modelEntry = isObject(models[model]) ? models[model] : null;
+    const exactPayload = isObject(modelEntry?.hws_reasoning) ? modelEntry.hws_reasoning : modelEntry;
+    const exact = explicitReasoningMetadata(exactPayload, 'hermes.provider_config.model');
+    const defaults = explicitReasoningMetadata(providerConfig.hws_reasoning_defaults, 'hermes.provider_config.defaults');
+    let result = mergeExplicitReasoning(capability, exact).capability;
+    result = mergeExplicitReasoning(result, defaults).capability;
+    return result;
+  }
+
   const descriptor = (options, provider, model) => modelCapability(options, provider, model)?.hws_reasoning_control || descriptorFromCapability(modelCapability(options, provider, model));
 
-  function enrichModelOptions(payload) {
+  function enrichModelOptions(payload, configPayload = null) {
     if (!payload || typeof payload !== 'object') return payload;
     const next = clone(payload);
     for (const provider of providerRows(next)) {
-      const caps = provider?.capabilities;
-      if (!caps || typeof caps !== 'object') continue;
-      for (const model of Object.keys(caps)) {
-        const cap = caps[model] && typeof caps[model] === 'object' ? caps[model] : {};
+      const configured = configProvider(configPayload, provider);
+      const caps = isObject(provider.capabilities) ? provider.capabilities : {};
+      provider.capabilities = caps;
+      const modelNames = [];
+      for (const model of Array.isArray(provider.models) ? provider.models : []) if (!modelNames.includes(model)) modelNames.push(model);
+      for (const model of Object.keys(caps)) if (!modelNames.includes(model)) modelNames.push(model);
+      for (const model of modelNames) {
+        let cap = isObject(caps[model]) ? caps[model] : {};
+        cap = overlayFromHermesConfig(cap, configured, model);
         const d = descriptorFromCapability(cap);
         cap.hws_reasoning_control = d;
         const internal = d.efforts.map((x) => ({ ...x }));
@@ -171,7 +293,7 @@
   }
 
   window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITIES__ = {
-    version: 2, descriptor: descriptorFromCapability, enrichModelOptions, reasoningValueFromModelOptions, reasoningLabel: label, validateReasoning, hermesDefaultEffort: HERMES_DEFAULT_EFFORT, source: 'Hermes public model/options + Gateway config.set',
-    _internal: { clone, providerRows, providerBySlug, modelsFor, descriptor, modelCapability, allowedReasoningValues, SmartCompactRouteSelector },
+    version: 2, descriptor: descriptorFromCapability, enrichModelOptions, reasoningValueFromModelOptions, reasoningLabel: label, validateReasoning, hermesDefaultEffort: HERMES_DEFAULT_EFFORT, source: 'Hermes public model/options + official provider config + Gateway config.set',
+    _internal: { clone, providerRows, providerBySlug, modelsFor, descriptor, modelCapability, allowedReasoningValues, SmartCompactRouteSelector, configObject, configProvider, explicitReasoningMetadata, overlayFromHermesConfig },
   };
 })();
