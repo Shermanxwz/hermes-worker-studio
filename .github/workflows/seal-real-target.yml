@@ -18,6 +18,10 @@ on:
         description: Optional explicit Hermes model for the real Run; provide together with provider
         required: false
         default: ''
+      reasoning_effort:
+        description: Optional concrete reasoning effort (for example high/xhigh/max); requires provider + model and fails closed unless explicitly published
+        required: false
+        default: ''
 
 permissions:
   actions: read
@@ -38,6 +42,7 @@ jobs:
       HWS_DASHBOARD_URL: ${{ inputs.dashboard_url }}
       HWS_SEAL_PROVIDER: ${{ inputs.provider }}
       HWS_SEAL_MODEL: ${{ inputs.model }}
+      HWS_SEAL_REASONING_EFFORT: ${{ inputs.reasoning_effort }}
 
     steps:
       - name: Checkout exact candidate
@@ -71,6 +76,9 @@ jobs:
           args=(--url "$HWS_DASHBOARD_URL")
           if [[ -n "${HWS_SEAL_PROVIDER:-}" || -n "${HWS_SEAL_MODEL:-}" ]]; then
             args+=(--provider "$HWS_SEAL_PROVIDER" --model "$HWS_SEAL_MODEL")
+          fi
+          if [[ -n "${HWS_SEAL_REASONING_EFFORT:-}" ]]; then
+            args+=(--reasoning-effort "$HWS_SEAL_REASONING_EFFORT")
           fi
           python scripts/seal_close.py "${args[@]}"
 
