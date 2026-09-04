@@ -21,6 +21,10 @@ for (const name of ['HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'H
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 window.__HERMES_BASE_PATH__ = '';
+// This isolated Product 3 harness does not load the dynamic capability layer;
+// mark that optional layer as already settled so the test exercises Product 3
+// immediately instead of waiting for a bridge that is intentionally absent.
+window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ = true;
 window.requestAnimationFrame = (fn) => { fn(Date.now()); return 1; };
 globalThis.requestAnimationFrame = window.requestAnimationFrame;
 window.HTMLElement.prototype.scrollTo = function scrollTo({ top = 0 } = {}) { this.scrollTop = top; };

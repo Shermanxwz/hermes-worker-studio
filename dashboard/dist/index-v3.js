@@ -17,6 +17,16 @@
   // enrichment (including the explicit reasoning vocabulary from /api/config)
   // on that first render.
   function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }
+  function waitForCapabilityBridge() {
+    if (window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ === true || typeof window.addEventListener !== 'function') return Promise.resolve();
+    return new Promise((resolve) => {
+      let timer;
+      const done = () => { if (timer) clearTimeout(timer); window.removeEventListener?.('hws-model-capability-ready', done); resolve(); };
+      window.addEventListener('hws-model-capability-ready', done, { once: true });
+      if (window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ === true) done();
+      else timer = setTimeout(done, 1500);
+    });
+  }
   const PLUGIN = '/api/plugins/hermes-worker-studio';
   const PROJECT_MARK_PATH = '/dashboard-plugins/hermes-worker-studio/dist/project-mark.png';
   const RECENT_LIMIT = 10;
@@ -2000,6 +2010,7 @@
     useEffect(() => { ensureBranding(); document.documentElement.dataset.hwsStudio = 'true'; return () => { delete document.documentElement.dataset.hwsStudio; }; }, []);
     const refreshConfig = useCallback(async () => { const cfg = unwrapConfig(await api('/api/config')); setConfig(cfg); return cfg; }, []);
     const refreshOptions = useCallback(async (refresh = false) => {
+      await waitForCapabilityBridge();
       const data = await api(`/api/model/options${refresh ? '?refresh=1' : ''}`);
       setModelOptions(data);
       setChatRoute((route) => {

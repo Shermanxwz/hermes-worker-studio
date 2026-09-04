@@ -185,6 +185,15 @@
   }
   Object.defineProperty(SDK, 'fetchJSON', { configurable: true, enumerable: true, get: () => fetchJSON, set: (fn) => { downstream = typeof fn === 'function' ? fn.bind(SDK) : null; } });
 
+  // Product 3 can be mounted by the Dashboard before this dynamically loaded
+  // layer finishes installing. Signal readiness so its first model request
+  // cannot race the capability/config enrichment path.
+  window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ = true;
+  if (typeof window.dispatchEvent === 'function') {
+    const event = typeof window.Event === 'function' ? new window.Event('hws-model-capability-ready') : { type: 'hws-model-capability-ready' };
+    window.dispatchEvent(event);
+  }
+
   API.applyMoaOverrides = applyMoaOverrides;
   API._runtime = {
     get modelOptions() { return modelOptions; }, get hermesConfig() { return hermesConfig; }, get moaConfig() { return moaConfig; }, moaOverrides, runRoutes,

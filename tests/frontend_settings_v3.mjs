@@ -17,6 +17,9 @@ Object.defineProperty(globalThis, 'navigator', { value: window.navigator, config
 for (const name of ['HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'HTMLSelectElement', 'Event', 'MouseEvent']) globalThis[name] = window[name];
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 window.__HERMES_BASE_PATH__ = '';
+// This isolated settings harness intentionally omits the dynamic capability
+// layer; do not wait for a bridge that is not part of this fixture.
+window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ = true;
 window.requestAnimationFrame = (fn) => { fn(Date.now()); return 1; };
 globalThis.requestAnimationFrame = window.requestAnimationFrame;
 window.HTMLElement.prototype.scrollTo = function scrollTo() {};
