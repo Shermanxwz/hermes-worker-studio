@@ -4,7 +4,7 @@
 The historical Product 3 verifier remains byte-stable in verify_contract_core.py.
 The public manifest still enters through dashboard/dist/gateway-native.js; that
 file is now a deterministic source loader whose final layer is the unchanged
-native Gateway implementation in gateway-native-core.js.  The supported install
+native Gateway implementation in gateway-native-core.js. The supported install
 artifact composes the same ordered layers into one staged gateway-native.js.
 For historical checks, project the core implementation onto the entry path
 temporarily, run every old assertion, then restore the loader.
@@ -22,8 +22,10 @@ LEGACY = ROOT / "scripts/verify_contract_core.py"
 
 errors: list[str] = []
 
+
 def fail(message: str) -> None:
     errors.append(message)
+
 
 def read(path: str) -> str:
     target = ROOT / path
@@ -31,6 +33,7 @@ def read(path: str) -> str:
         fail(f"missing required file: {path}")
         return ""
     return target.read_text(encoding="utf-8")
+
 
 manifest_text = read("dashboard/manifest.json")
 try:
@@ -95,8 +98,51 @@ if any(pos < 0 for pos in install_positions) or install_positions != sorted(inst
 if '> "$TMP/dashboard/dist/gateway-native.js"' not in installer:
     fail("installer must stage the capability/native composition into the single gateway-native.js artifact")
 
+# Local seal hardening is part of the supported artifact, not documentation-only
+# guidance. Lock transform ordering, transaction rollback and post-swap validation.
+security_transform = read("scripts/stage_security_closure.py")
+for token in (
+    "os.O_EXCL",
+    "os.O_NOFOLLOW",
+    "os.open(temporary, flags, 0o600)",
+    "request body must contain valid JSON",
+    "expected exactly seven staged request.json calls",
+):
+    if token not in security_transform:
+        fail(f"staged security closure lost required token: {token}")
+
+transform_order = [
+    installer.find('stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"'),
+    installer.find('stage_mixed_protocol.py"'),
+    installer.find('stage_security_closure.py" "$TMP/dashboard/plugin_api_v3.py"'),
+]
+if any(pos < 0 for pos in transform_order) or transform_order != sorted(transform_order):
+    fail("installer must apply product, mixed-protocol and security transforms in canonical order")
+for token in (
+    "ROLLBACK_ARMED=1",
+    "rollback_install",
+    "atomic-exchange",
+    'hermes plugins doctor "$DEST" --ci',
+    "hermes plugins enable hermes-worker-studio",
+):
+    if token not in installer:
+        fail(f"installer lost rollback/final validation contract token: {token}")
+if installer.find('hermes plugins doctor "$DEST" --ci') > installer.find("hermes plugins enable hermes-worker-studio"):
+    fail("installed-tree Plugin Doctor must run before official enable so validation failure remains rollback-safe")
+
+ci = read(".github/workflows/ci.yml")
+for token in (
+    "High-severity frontend dependency audit",
+    "npm audit --audit-level=high --ignore-scripts",
+    'python scripts/stage_security_closure.py "$tmp/plugin_api_v3.py"',
+    '! grep -Fq "await request.json()" "$tmp/plugin_api_v3.py"',
+    "scripts/stage_security_closure.py",
+):
+    if token not in ci:
+        fail(f"canonical CI lost seal hardening gate: {token}")
+
 if errors:
-    print("Model capability architecture verification FAILED:")
+    print("Model capability / seal-hardening architecture verification FAILED:")
     for error in errors:
         print(f"  - {error}")
     raise SystemExit(1)
@@ -115,4 +161,4 @@ try:
 finally:
     ENTRY.write_bytes(loader_bytes)
 
-print("Model capability loader/install architecture verification passed.")
+print("Model capability loader/install/security architecture verification passed.")
