@@ -3,9 +3,12 @@ name: Generate npm lock
 on:
   push:
     branches: [main]
+    paths:
+      - package.json
+      - .github/workflows/generate-npm-lock.yml
 
 permissions:
-  contents: read
+  contents: write
 
 # Temporary seal utility: removed after package-lock.json is committed.
 jobs:
@@ -29,10 +32,20 @@ jobs:
           const root = lock.packages?.[''];
           if (!root || root.name !== pkg.name || root.version !== pkg.version) throw new Error('lock root identity mismatch');
           if (JSON.stringify(root.devDependencies) !== JSON.stringify(pkg.devDependencies)) throw new Error('lock root devDependencies mismatch');
+          for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+            if (root[field] && Object.keys(root[field]).length) throw new Error(`root ${field} must remain empty`);
+          }
           NODE
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sealed-package-lock
-          path: package-lock.json
-          if-no-files-found: error
-          retention-days: 1
+      - name: Commit verified lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add package-lock.json
+          if git diff --cached --quiet; then
+            echo 'package-lock.json already matches the verified dependency graph'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Seal frontend test harness lockfile'
+          git push origin HEAD:main
