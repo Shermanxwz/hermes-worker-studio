@@ -47,7 +47,9 @@ function loadBridge(handler) {
 
 {
   let modelProbeCalls = 0;
+  const projection = { routes: [] };
   const { sdk, calls } = loadBridge(async (path, _init, body) => {
+    if (path === `${PLUGIN}/hermes/protocols`) return projection;
     if (path.startsWith(`${PLUGIN}/hermes/protocol-route?`)) {
       return { provider: 'new-api', model: 'gpt-5.6-luna', status: 'unresolved', requires_probe: true, execution_provider: '' };
     }
@@ -69,6 +71,9 @@ function loadBridge(handler) {
     }
     throw new Error(`unexpected ${path}`);
   });
+  const projected = await sdk.fetchJSON(`${PLUGIN}/hermes/protocols`);
+  assert.strictEqual(projected, projection);
+  assert.strictEqual(projected.routes, projection.routes, 'ModelsPage keeps the official route-array reference in React state');
   const result = await sdk.fetchJSON(`${PLUGIN}/hermes/model-probe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -78,6 +83,10 @@ function loadBridge(handler) {
   assert.equal(result.route.mode, 'codex_responses');
   assert.equal(modelProbeCalls, 0, 'unresolved diagnostics must never fall through to provider-default Chat probe');
   assert.equal(calls.filter((call) => call.path === `${PLUGIN}/hermes/protocols/probe`).length, 1);
+  assert.equal(projection.routes.length, 1, 'real probe must update the already-rendered protocol projection');
+  assert.equal(projection.routes[0].status, 'resolved');
+  assert.equal(projection.routes[0].mode, 'codex_responses');
+  assert.equal(projection.routes[0].execution_provider, 'hws-protocol-luna-responses');
 }
 
 {
