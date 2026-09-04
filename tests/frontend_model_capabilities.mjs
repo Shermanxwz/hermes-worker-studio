@@ -46,8 +46,8 @@ class FakeWebSocket {
 }
 Object.assign(globalThis, { WebSocket: FakeWebSocket }); window.WebSocket = FakeWebSocket;
 
-// The manifest-owned Gateway entry is a deterministic loader. Capability
-// layers must install before the immutable native Gateway core.
+// The manifest-owned Gateway entry is a deterministic loader. Capability and
+// per-model protocol layers must install before the immutable native Gateway core.
 const loaded = [];
 const nativeAppend = window.document.head.appendChild.bind(window.document.head);
 window.document.head.appendChild = (node) => {
@@ -60,7 +60,7 @@ window.document.head.appendChild = (node) => {
 };
 window.eval(loader);
 await new Promise((resolve) => setTimeout(resolve, 0));
-assert.deepEqual(loaded, ['model-capability-core.js', 'model-capability-bridge.js', 'model-capability-dom.js', 'gateway-native-core.js']);
+assert.deepEqual(loaded, ['model-capability-core.js', 'model-capability-bridge.js', 'model-capability-dom.js', 'protocol-runtime.js', 'gateway-native-core.js']);
 window.document.head.appendChild = nativeAppend;
 
 window.eval(core); window.eval(bridge); window.eval(domLayer);
