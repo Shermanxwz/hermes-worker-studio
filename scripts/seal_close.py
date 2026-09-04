@@ -76,6 +76,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--api-key", default=os.getenv("API_SERVER_KEY", ""))
     parser.add_argument("--provider", default=os.getenv("HWS_SEAL_PROVIDER", ""))
     parser.add_argument("--model", default=os.getenv("HWS_SEAL_MODEL", ""))
+    parser.add_argument("--reasoning-effort", default=os.getenv("HWS_SEAL_REASONING_EFFORT", ""), help="Optional concrete reasoning effort for the real Run; requires provider/model")
     parser.add_argument("--http-timeout", type=float, default=30.0)
     parser.add_argument("--run-timeout", type=float, default=180.0)
     parser.add_argument("--evidence-dir", type=Path, default=Path(".seal"))
@@ -91,8 +92,13 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
     candidate = require_clean_candidate(root)
     provider = str(args.provider or "").strip()
     model = str(args.model or "").strip()
+    reasoning_effort = str(args.reasoning_effort or "").strip()
     if bool(provider) != bool(model):
         raise SealCloseError("--provider and --model must be supplied together, or both omitted, so the seal cannot silently test a different route")
+    if reasoning_effort and not (provider and model):
+        raise SealCloseError("--reasoning-effort requires explicit --provider and --model")
+    if reasoning_effort.lower() == "auto":
+        raise SealCloseError("--reasoning-effort must be a concrete non-Auto value")
 
     evidence_dir = args.evidence_dir if args.evidence_dir.is_absolute() else root / args.evidence_dir
     upstream_path = evidence_dir / "upstream.json"
@@ -109,6 +115,8 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
     if provider:
         env["HWS_SEAL_PROVIDER"] = provider
         env["HWS_SEAL_MODEL"] = model
+    if reasoning_effort:
+        env["HWS_SEAL_REASONING_EFFORT"] = reasoning_effort
 
     # Gate 0: official upstream semantics. No install/browser/model work should
     # happen if the pinned Hermes revision still lacks a release-blocking SDK
@@ -146,6 +154,8 @@ def close(args: argparse.Namespace) -> dict[str, Any]:
     ]
     if provider:
         acceptance.extend(["--provider", provider, "--model", model])
+    if reasoning_effort:
+        acceptance.extend(["--reasoning-effort", reasoning_effort])
     run(acceptance, cwd=root, env=env)
 
     target = load_json(target_path)
