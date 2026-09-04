@@ -151,7 +151,7 @@ for (const token of [
 
 assert.ok(!js.includes("title: 'New conversation'"), 'fixed duplicate session title must never return');
 assert.ok(!js.includes('API_SERVER_KEY'), 'browser UI source must never see Hermes bearer secrets');
-assert.ok(js.includes('function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }'), 'Product 3 must resolve the SDK fetch layer at call time so capability enrichment is not bypassed during dynamic loading');
+assert.ok(js.includes('function fetchJSON(path, init) { return (window.__HERMES_PLUGIN_SDK__ || SDK).fetchJSON(path, init); }'), 'Product 3 must resolve the current SDK object and fetch layer at call time so capability enrichment is not bypassed during dynamic loading');
 assert.ok(!js.includes('const fetchJSON = SDK.fetchJSON;'), 'Product 3 must not capture the pre-bridge SDK fetch layer');
 assert.ok(js.includes('waitForCapabilityBridge();'), 'Product 3 must wait for the capability bridge before its first model inventory request');
 assert.ok(js.includes("hws-model-capability-ready"), 'Product 3 must have an explicit capability bridge readiness signal');

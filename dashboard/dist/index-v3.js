@@ -10,13 +10,14 @@
   const React = SDK.React;
   const h = React.createElement;
   const { useCallback, useEffect, useMemo, useRef, useState } = SDK.hooks;
-  // Resolve the SDK method at call time. The manifest entry loads the
+  // Resolve both the SDK object and method at call time. The manifest entry loads the
   // capability bridge before this bundle in the normal path, but Hermes may
-  // execute Product 3 before the bridge's dynamic layer finishes loading.
-  // Capturing SDK.fetchJSON here would permanently bypass capability
-  // enrichment (including the explicit reasoning vocabulary from /api/config)
-  // on that first render.
-  function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }
+  // execute Product 3 before the bridge's dynamic layer finishes loading or
+  // replace the host SDK object while plugins are bootstrapping. Capturing
+  // either SDK.fetchJSON or the pre-bootstrap object would permanently bypass
+  // capability enrichment (including the explicit reasoning vocabulary from
+  // /api/config) on that first render.
+  function fetchJSON(path, init) { return (window.__HERMES_PLUGIN_SDK__ || SDK).fetchJSON(path, init); }
   function waitForCapabilityBridge() {
     const runtimeReady = () => window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITY_BRIDGE_READY__ === true
       && window.__HERMES_WORKER_STUDIO_GATEWAY_NATIVE_READY__ === true;
