@@ -693,6 +693,47 @@ def _entry_model_protocol(entry: dict[str, Any] | None, model: str) -> str:
     return _canonical_protocol_mode(item.get("transport") or item.get("api_mode")) if isinstance(item, dict) else ""
 
 
+def _entry_model_metadata(entry: dict[str, Any] | None, model: str) -> dict[str, Any]:
+    """Return the source provider's exact metadata for one model.
+
+    Managed protocol aliases are generated from this metadata. Keeping the
+    lookup in the official provider entry means a compatibility alias can carry
+    a narrowly declared native request shape without turning model names into a
+    hidden capability registry.
+    """
+    if not isinstance(entry, dict):
+        return {}
+    models = entry.get("models")
+    if not isinstance(models, dict):
+        return {}
+    item = models.get(model)
+    return item if isinstance(item, dict) else {}
+
+
+def _native_reasoning_extra_body(
+    entry: dict[str, Any] | None,
+    model: str,
+    mode: str,
+) -> dict[str, Any]:
+    """Build only an explicitly declared provider-native reasoning payload.
+
+    MiniMax M3's OpenAI-compatible wire has a binary thinking control, not a
+    Hermes depth ladder. The source config opts in with
+    ``hws_native_reasoning: minimax_openai``; no other model or endpoint is
+    inferred here. The generated alias then makes the native fields visible to
+    Hermes' normal ``request_overrides.extra_body`` path.
+    """
+    if mode != "chat_completions":
+        return {}
+    marker = _entry_model_metadata(entry, model).get("hws_native_reasoning")
+    if marker != "minimax_openai":
+        return {}
+    return {
+        "reasoning_split": True,
+        "thinking": {"type": "adaptive"},
+    }
+
+
 def _option_provider(options: dict[str, Any], provider: str) -> dict[str, Any] | None:
     wanted = str(provider or "").strip()
     rows = options.get("providers") if isinstance(options, dict) else None
@@ -823,24 +864,30 @@ def _ensure_protocol_aliases(
         alias = _protocol_alias_name(stored_key or provider, model, mode, _entry_base_url(source))
         aliases[mode] = alias
         existing = providers.get(alias)
-        marker = existing.get("hws_protocol_bridge") if isinstance(existing, dict) else None
-        if not isinstance(existing, dict) or not isinstance(marker, dict) or marker.get("source_provider") != (stored_key or provider) or marker.get("source_model") != model or marker.get("mode") != mode:
-            entry = copy.deepcopy(source)
-            entry["name"] = f"{source_name} · HWS { _protocol_mode_label(mode) } · {model}"
-            entry["transport"] = mode
-            entry.pop("api_mode", None)
-            entry["default_model"] = model
-            source_models = source.get("models")
-            if isinstance(source_models, dict) and model in source_models:
-                entry["models"] = {model: copy.deepcopy(source_models[model])}
-            else:
-                entry["models"] = {model: {}}
-            entry["hws_protocol_bridge"] = {
-                "source_provider": stored_key or provider,
-                "source_model": model,
-                "mode": mode,
-                "managed_by": "hermes-worker-studio",
-            }
+        expected_marker = {
+            "source_provider": stored_key or provider,
+            "source_model": model,
+            "mode": mode,
+            "managed_by": "hermes-worker-studio",
+        }
+        native_extra_body = _native_reasoning_extra_body(source, model, mode)
+        entry = copy.deepcopy(source)
+        entry["name"] = f"{source_name} · HWS { _protocol_mode_label(mode) } · {model}"
+        entry["transport"] = mode
+        entry.pop("api_mode", None)
+        entry["default_model"] = model
+        source_models = source.get("models")
+        if isinstance(source_models, dict) and model in source_models:
+            entry["models"] = {model: copy.deepcopy(source_models[model])}
+        else:
+            entry["models"] = {model: {}}
+        if native_extra_body:
+            configured_extra_body = source.get("extra_body")
+            merged_extra_body = copy.deepcopy(configured_extra_body) if isinstance(configured_extra_body, dict) else {}
+            merged_extra_body.update(native_extra_body)
+            entry["extra_body"] = merged_extra_body
+        entry["hws_protocol_bridge"] = expected_marker
+        if not isinstance(existing, dict) or existing != entry:
             providers[alias] = entry
             changed = True
     if changed:
@@ -934,7 +981,15 @@ def _protocol_route_snapshot(
                 and str(alias_marker.get("source_model") or "") == source_model
                 and str(alias_marker.get("mode") or "") == mode
             )
-            if ensure_alias and not alias_is_current:
+            if ensure_alias and _is_custom_endpoint(config, source_provider):
+                # A marker only proves that the alias belongs to this route;
+                # it does not prove that its copied model metadata or native
+                # request overrides are current. Reconcile the full managed
+                # alias on every execution lookup; _ensure_protocol_aliases()
+                # writes only when the desired content differs.
+                config, aliases = _ensure_protocol_aliases(config, source_provider, source_model, (mode,))
+                execution_provider = aliases.get(mode, "")
+            elif ensure_alias and not alias_is_current:
                 config, aliases = _ensure_protocol_aliases(config, source_provider, source_model, (mode,))
                 execution_provider = aliases.get(mode, "")
             return {

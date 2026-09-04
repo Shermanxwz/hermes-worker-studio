@@ -69,6 +69,17 @@ const hermesConfig = {
         'ghost-model': { hws_reasoning: { reasoning_efforts: ['low', 'high'] } },
       },
     },
+    'hws-protocol-newapi-responses': {
+      name: 'New API · HWS Responses · gpt-proxy',
+      base_url: 'https://newapi.invalid/v1',
+      models: { 'gpt-proxy': {} },
+      hws_protocol_bridge: {
+        source_provider: 'newapi',
+        source_model: 'gpt-proxy',
+        mode: 'codex_responses',
+        managed_by: 'hermes-worker-studio',
+      },
+    },
   },
 };
 const moaConfig = { default_preset: 'default', presets: { default: { reference_models: [{ provider: 'official', model: 'effort-model', reasoning_effort: 'low', enabled: true }], aggregator: { provider: 'official', model: 'unknown-model' } } } };
@@ -206,6 +217,16 @@ assert.deepEqual(plain(lastConfigWrite.params), { key: 'reasoning', session_id: 
 assert.equal(newapiStarted.source_route.reasoning, 'xhigh');
 assert.equal(newapiStarted.source_route.reasoning_semantic, 'effort');
 assert.equal(newapiStarted.source_route.reasoning_control, 'toggle_effort');
+
+// Product execution uses a managed Hermes provider alias for a model-specific
+// transport. Capability truth must still come from the source provider/model,
+// otherwise every non-Auto GPT value is rejected before the official Run.
+const aliasStarted = await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: 'stored-session-alias', input: 'reason through alias', provider: 'hws-protocol-newapi-responses', model: 'gpt-proxy', model_options: { reasoning_effort: 'xhigh' } }) });
+assert.equal(aliasStarted.source_route.provider, 'hws-protocol-newapi-responses');
+assert.equal(aliasStarted.source_route.source_provider, 'newapi');
+assert.equal(aliasStarted.source_route.source_model, 'gpt-proxy');
+assert.equal(aliasStarted.source_route.reasoning, 'xhigh');
+assert.equal(aliasStarted.source_route.reasoning_control, 'toggle_effort');
 
 const configWritesBeforeInvalid = calls.filter((x) => x.rpc === 'config.set').length;
 await assert.rejects(

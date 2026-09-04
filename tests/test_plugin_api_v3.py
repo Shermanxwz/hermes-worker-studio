@@ -384,6 +384,80 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertEqual(writes[0][0], "/api/config")
         self.assertEqual(set(writes[0][1]["config"]), {"providers"})
 
+    def test_existing_protocol_alias_refreshes_model_metadata_and_minimax_native_wire(self):
+        source = {
+            "name": "New API",
+            "api": "https://gateway.example/v1",
+            "key_env": "NEW_API_KEY",
+            "models": {
+                "MiniMax-M3": {
+                    "hws_reasoning": {
+                        "supports_reasoning": True,
+                        "can_disable_reasoning": False,
+                        "reasoning_control": "fixed",
+                    },
+                    "hws_native_reasoning": "minimax_openai",
+                },
+            },
+        }
+        alias = plugin_api_v3._protocol_alias_name(
+            "new-api", "MiniMax-M3", "chat_completions", "https://gateway.example/v1"
+        )
+        config = {
+            "providers": {
+                "new-api": source,
+                alias: {
+                    "name": "stale alias",
+                    "api": "https://gateway.example/v1",
+                    "models": {"MiniMax-M3": {}},
+                    "transport": "chat_completions",
+                    "hws_protocol_bridge": {
+                        "source_provider": "new-api",
+                        "source_model": "MiniMax-M3",
+                        "mode": "chat_completions",
+                        "managed_by": "hermes-worker-studio",
+                    },
+                },
+            },
+        }
+        writes = []
+
+        def fake_proxy(path, method="GET", body=None, timeout=None):
+            if method == "PUT":
+                writes.append((path, body))
+            return {"ok": True}
+
+        with patch.object(plugin_api_v3._legacy, "_hermes_proxy", side_effect=fake_proxy):
+            updated, aliases = plugin_api_v3._ensure_protocol_aliases(
+                config, "new-api", "MiniMax-M3", ("chat_completions",)
+            )
+
+        refreshed = updated["providers"][aliases["chat_completions"]]
+        self.assertEqual(refreshed["models"], source["models"])
+        self.assertEqual(
+            refreshed["extra_body"],
+            {"reasoning_split": True, "thinking": {"type": "adaptive"}},
+        )
+        self.assertEqual(refreshed["hws_protocol_bridge"]["source_provider"], "new-api")
+        self.assertEqual(len(writes), 1)
+
+    def test_undeclared_model_does_not_receive_native_reasoning_wire(self):
+        source = {
+            "name": "New API",
+            "api": "https://gateway.example/v1",
+            "models": {"other-model": {}},
+        }
+        with patch.object(plugin_api_v3._legacy, "_hermes_proxy", return_value={"ok": True}):
+            updated, aliases = plugin_api_v3._ensure_protocol_aliases(
+                {"providers": {"new-api": source}},
+                "new-api",
+                "other-model",
+                ("chat_completions",),
+            )
+
+        alias = updated["providers"][aliases["chat_completions"]]
+        self.assertNotIn("extra_body", alias)
+
     def test_protocol_alias_write_falls_back_to_hermes_config_store_when_api_server_has_no_config_route(self):
         source = {
             "name": "New API",
@@ -489,6 +563,61 @@ class ProductRunsBridgeTests(unittest.TestCase):
 
         self.assertEqual(route["status"], "resolved")
         self.assertTrue(route["execution_provider"].endswith("-responses"))
+        self.assertTrue(any(call.args[0] == "/api/config" for call in proxy.call_args_list))
+
+    def test_resolved_custom_route_reconciles_stale_managed_alias_content(self):
+        source = {
+            "name": "New API",
+            "api": "https://gateway.example/v1",
+            "models": {
+                "MiniMax-M3": {
+                    "hws_native_reasoning": "minimax_openai",
+                },
+            },
+        }
+        alias = plugin_api_v3._protocol_alias_name(
+            "new-api", "MiniMax-M3", "chat_completions", "https://gateway.example/v1"
+        )
+        config = {
+            "providers": {
+                "new-api": source,
+                alias: {
+                    "name": "stale but correctly owned",
+                    "api": "https://gateway.example/v1",
+                    "models": {"MiniMax-M3": {}},
+                    "transport": "chat_completions",
+                    "hws_protocol_bridge": {
+                        "source_provider": "new-api",
+                        "source_model": "MiniMax-M3",
+                        "mode": "chat_completions",
+                        "managed_by": "hermes-worker-studio",
+                    },
+                },
+            },
+        }
+        options = {"providers": [{"slug": "new-api", "models": ["MiniMax-M3"], "capabilities": {}}]}
+
+        with tempfile.TemporaryDirectory() as directory, \
+            patch.object(plugin_api_v3, "_PROTOCOL_FILE", pathlib.Path(directory) / "protocols.json"), \
+            patch.object(plugin_api_v3, "_read_official_config", return_value=config), \
+            patch.object(plugin_api_v3, "_read_official_model_options", return_value=options), \
+            patch.object(plugin_api_v3._legacy, "_hermes_proxy", return_value={"ok": True}) as proxy:
+            plugin_api_v3._save_route_state("new-api", "MiniMax-M3", {
+                "source_provider": "new-api",
+                "source_model": "MiniMax-M3",
+                "mode": "chat_completions",
+                "status": "resolved",
+                "execution_provider": alias,
+            })
+            route = plugin_api_v3._protocol_route_snapshot(
+                config, options, "new-api", "MiniMax-M3", ensure_alias=True
+            )
+
+        self.assertEqual(route["execution_provider"], alias)
+        self.assertEqual(
+            config["providers"][alias]["extra_body"],
+            {"reasoning_split": True, "thinking": {"type": "adaptive"}},
+        )
         self.assertTrue(any(call.args[0] == "/api/config" for call in proxy.call_args_list))
 
     def test_v3_run_replaces_source_provider_with_resolved_alias_before_official_submission(self):

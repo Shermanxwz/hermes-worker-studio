@@ -88,6 +88,31 @@
     return modelOptions;
   }
 
+  function capabilityRoute(config, provider, model) {
+    const wanted = String(provider || '').trim().toLowerCase();
+    const fallback = { provider: String(provider || '').trim(), model: String(model || '').trim() };
+    if (!wanted) return fallback;
+    const root = API._internal.configObject(config);
+    const providers = root && typeof root.providers === 'object' && !Array.isArray(root.providers) ? root.providers : {};
+    for (const [key, entry] of Object.entries(providers)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const identities = [key, entry.name, entry.slug, ...(Array.isArray(entry.aliases) ? entry.aliases : [])]
+        .map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+      if (!identities.includes(wanted)) continue;
+      const marker = entry.hws_protocol_bridge;
+      if (marker && typeof marker === 'object' && !Array.isArray(marker) && marker.source_provider) {
+        return {
+          provider: String(marker.source_provider).trim(),
+          model: String(marker.source_model || model || '').trim(),
+          execution_provider: String(provider || '').trim(),
+          execution_model: String(model || '').trim(),
+        };
+      }
+      return fallback;
+    }
+    return fallback;
+  }
+
   function applyMoaOverrides(body) {
     if (!body?.presets || typeof body.presets !== 'object') return body;
     const next = clone(body);
@@ -106,17 +131,21 @@
   async function sourceRoute(body) {
     const provider = String(body?.provider || '').trim();
     const model = String(body?.model || '').trim();
+    const config = await ensureHermesConfig();
+    const capability = capabilityRoute(config, provider, model);
+    const capabilityProvider = capability.provider || provider;
+    const capabilityModel = capability.model || model;
     let requested = API.reasoningValueFromModelOptions(body?.model_options) || 'auto';
     let checked = null;
     if (requested !== 'auto') {
       const options = await ensureModelOptions();
-      const d = API._internal.descriptor(options, provider, model);
+      const d = API._internal.descriptor(options, capabilityProvider, capabilityModel);
       requested = API.reasoningValueFromModelOptions(body?.model_options, d) || requested;
-      checked = API.validateReasoning(options, provider, model, requested);
+      checked = API.validateReasoning(options, capabilityProvider, capabilityModel, requested);
     } else if (modelOptions && provider && model) {
-      checked = API.validateReasoning(modelOptions, provider, model, 'auto');
+      checked = API.validateReasoning(modelOptions, capabilityProvider, capabilityModel, 'auto');
     }
-    return {
+    const result = {
       provider: provider || null,
       model: model || null,
       reasoning: checked?.value || 'auto',
@@ -124,6 +153,11 @@
       reasoning_control: checked?.descriptor?.control || 'auto',
       source: 'hermes.model_options+provider_config+gateway.config.set',
     };
+    if (capabilityProvider !== provider || capabilityModel !== model) {
+      result.source_provider = capabilityProvider || null;
+      result.source_model = capabilityModel || null;
+    }
+    return result;
   }
   const attachRoute = (result, meta) => meta && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, source_route: clone(meta) } : result;
 
@@ -200,6 +234,6 @@
   API.applyMoaOverrides = applyMoaOverrides;
   API._runtime = {
     get modelOptions() { return modelOptions; }, get hermesConfig() { return hermesConfig; }, get moaConfig() { return moaConfig; }, moaOverrides, runRoutes,
-    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute, ensureModelOptions, ensureHermesConfig,
+    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute, ensureModelOptions, ensureHermesConfig, capabilityRoute,
   };
 })();
