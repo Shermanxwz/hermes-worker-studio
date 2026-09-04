@@ -127,7 +127,7 @@ for file in \
   plugin.yaml __init__.py schemas.py tools.py \
   dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py \
   dashboard/dist/gateway-native.js dashboard/dist/gateway-native-core.js \
-  dashboard/dist/model-capability-core.js dashboard/dist/model-capability-bridge.js dashboard/dist/model-capability-dom.js \
+  dashboard/dist/model-capability-core.js dashboard/dist/model-capability-bridge.js dashboard/dist/model-capability-dom.js dashboard/dist/protocol-runtime.js \
   dashboard/dist/index-v3.js dashboard/dist/project-mark.png dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css \
   scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py scripts/stage_security_closure.py; do
   if [[ ! -f "$ROOT/$file" ]]; then
@@ -146,12 +146,14 @@ cp "$ROOT/dashboard/dist/index-v3.js" "$ROOT/dashboard/dist/project-mark.png" "$
 
 # Source stays split for maintainability, but the one supported installed
 # artifact keeps the historical single Gateway-native browser entry. Compose
-# capability semantics ahead of the byte-stable native Gateway implementation
-# so the installed plugin needs no secondary script files or runtime loader.
+# capability/protocol semantics ahead of the byte-stable native Gateway
+# implementation so the installed plugin needs no secondary script files or
+# runtime loader.
 cat \
   "$ROOT/dashboard/dist/model-capability-core.js" \
   "$ROOT/dashboard/dist/model-capability-bridge.js" \
   "$ROOT/dashboard/dist/model-capability-dom.js" \
+  "$ROOT/dashboard/dist/protocol-runtime.js" \
   "$ROOT/dashboard/dist/gateway-native-core.js" \
   > "$TMP/dashboard/dist/gateway-native.js"
 
@@ -266,6 +268,9 @@ Model capabilities are normalized from Hermes' official model inventory inside
 the single staged gateway-native.js artifact. Non-Auto reasoning overrides are
 validated against the exact Provider+Model capability and fail closed before
 Gateway config.set/prompt submission; no model-name capability registry exists.
+The protocol runtime uses the same official model projection and Hermes Runs to
+resolve an undeclared custom model between Chat Completions and Responses before
+Product Chat or the Models diagnostic can fall back to a provider-wide default.
 
 Chat/session runtime state, Context usage, Auto Compact lifecycle, canonical todo,
 steer/interrupt, no-wait Full Access input handling, and arbitrary attachments are
