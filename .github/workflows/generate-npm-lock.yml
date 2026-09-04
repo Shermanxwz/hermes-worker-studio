@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
 
+# Temporary seal utility: removed after package-lock.json is committed.
 jobs:
   generate-lock:
     runs-on: ubuntu-24.04
