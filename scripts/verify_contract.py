@@ -4,7 +4,7 @@
 The historical Product 3 verifier remains byte-stable in verify_contract_core.py.
 The public manifest still enters through dashboard/dist/gateway-native.js; that
 file is now a deterministic source loader whose final layer is the unchanged
-native Gateway implementation in gateway-native-core.js.  The supported install
+native Gateway implementation in gateway-native-core.js. The supported install
 artifact composes the same ordered layers into one staged gateway-native.js.
 For historical checks, project the core implementation onto the entry path
 temporarily, run every old assertion, then restore the loader.
@@ -22,8 +22,10 @@ LEGACY = ROOT / "scripts/verify_contract_core.py"
 
 errors: list[str] = []
 
+
 def fail(message: str) -> None:
     errors.append(message)
+
 
 def read(path: str) -> str:
     target = ROOT / path
@@ -31,6 +33,7 @@ def read(path: str) -> str:
         fail(f"missing required file: {path}")
         return ""
     return target.read_text(encoding="utf-8")
+
 
 manifest_text = read("dashboard/manifest.json")
 try:
@@ -95,8 +98,86 @@ if any(pos < 0 for pos in install_positions) or install_positions != sorted(inst
 if '> "$TMP/dashboard/dist/gateway-native.js"' not in installer:
     fail("installer must stage the capability/native composition into the single gateway-native.js artifact")
 
+# Local seal hardening is part of the supported artifact, not documentation-only
+# guidance. Lock transform ordering, transaction rollback and post-swap validation.
+security_transform = read("scripts/stage_security_closure.py")
+for token in (
+    "os.O_EXCL",
+    "os.O_NOFOLLOW",
+    "os.open(temporary, flags, 0o600)",
+    "request body must contain valid JSON",
+    "expected exactly seven staged request.json calls",
+):
+    if token not in security_transform:
+        fail(f"staged security closure lost required token: {token}")
+
+transform_order = [
+    installer.find('stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"'),
+    installer.find('stage_mixed_protocol.py"'),
+    installer.find('stage_security_closure.py" "$TMP/dashboard/plugin_api_v3.py"'),
+]
+if any(pos < 0 for pos in transform_order) or transform_order != sorted(transform_order):
+    fail("installer must apply product, mixed-protocol and security transforms in canonical order")
+for token in (
+    "ROLLBACK_ARMED=1",
+    "rollback_install",
+    "atomic-exchange",
+    'hermes plugins doctor "$DEST" --ci',
+    "hermes plugins enable hermes-worker-studio",
+):
+    if token not in installer:
+        fail(f"installer lost rollback/final validation contract token: {token}")
+if installer.find('hermes plugins doctor "$DEST" --ci') > installer.find("hermes plugins enable hermes-worker-studio"):
+    fail("installed-tree Plugin Doctor must run before official enable so validation failure remains rollback-safe")
+
+# npm exists only as a private frontend test harness. Seal correctness must not
+# depend on a live third-party advisory endpoint: production npm dependency
+# fields are forbidden, test dependencies are exact-pinned, install scripts are
+# disabled in CI, and the committed lock root must match package.json exactly.
+try:
+    package = json.loads(read("package.json"))
+except Exception as exc:
+    package = {}
+    fail(f"invalid package.json: {exc}")
+if package.get("name") != "hermes-worker-studio-tests" or package.get("private") is not True:
+    fail("root npm package must remain the private hermes-worker-studio-tests harness")
+for field in ("dependencies", "optionalDependencies", "peerDependencies"):
+    if package.get(field):
+        fail(f"production npm dependency field must stay empty: {field}")
+dev_dependencies = package.get("devDependencies") or {}
+if not isinstance(dev_dependencies, dict) or not dev_dependencies:
+    fail("frontend test harness must keep an explicit devDependency set")
+else:
+    for name, version in dev_dependencies.items():
+        parts = str(version).split(".")
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            fail(f"test dependency must be exact x.y.z pin: {name}={version}")
+try:
+    package_lock = json.loads(read("package-lock.json"))
+except Exception as exc:
+    package_lock = {}
+    fail(f"invalid package-lock.json: {exc}")
+if package_lock.get("lockfileVersion") != 3:
+    fail("package-lock.json must remain lockfileVersion 3")
+lock_root = (package_lock.get("packages") or {}).get("") or {}
+if lock_root.get("devDependencies") != dev_dependencies:
+    fail("package-lock root devDependencies must exactly match package.json")
+
+ci = read(".github/workflows/ci.yml")
+for token in (
+    "Test-only npm dependency boundary",
+    "npm ci --ignore-scripts --no-fund --no-audit",
+    'python scripts/stage_security_closure.py "$tmp/plugin_api_v3.py"',
+    '! grep -Fq "await request.json()" "$tmp/plugin_api_v3.py"',
+    "scripts/stage_security_closure.py",
+):
+    if token not in ci:
+        fail(f"canonical CI lost seal hardening gate: {token}")
+if "npm audit" in ci:
+    fail("canonical CI must not depend on the live npm advisory service")
+
 if errors:
-    print("Model capability architecture verification FAILED:")
+    print("Model capability / seal-hardening architecture verification FAILED:")
     for error in errors:
         print(f"  - {error}")
     raise SystemExit(1)
@@ -115,4 +196,4 @@ try:
 finally:
     ENTRY.write_bytes(loader_bytes)
 
-print("Model capability loader/install architecture verification passed.")
+print("Model capability loader/install/security architecture verification passed.")

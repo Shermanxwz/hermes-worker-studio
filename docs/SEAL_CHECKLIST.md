@@ -24,9 +24,12 @@ Repository gates must prove the same build path that the target installer uses:
 - [ ] CSS layering is `product.css -> product-sealed.css -> product-closure.css`;
 - [ ] `stage_product_bundle.py` is exact-count/fail-closed and adds only the supported attachment + interaction/accessibility closure;
 - [ ] `stage_mixed_protocol.py` is exact-count/fail-closed and adds only the pinned-Hermes per-model protocol bridge;
+- [ ] `stage_security_closure.py` is exact-count/fail-closed, creates private state temp files with mode `0600` + exclusive/no-follow semantics and maps malformed JSON to HTTP 400;
 - [ ] staged `index-v3.js` passes `node --check`;
 - [ ] staged `plugin_api_v3.py` passes Python compile;
+- [ ] root npm package is private/test-only, production dependency fields are empty, devDependencies are exact-pinned, package/lock roots match, and CI install scripts are disabled;
 - [ ] installer tests verify the exact installed file set and staged behavior;
+- [ ] installed-tree Doctor or official enable failure restores the previous plugin/theme with no staging/backup residue;
 - [ ] candidate SHA stamping is the only candidate-specific runtime mutation.
 
 ## 3. One-command real-target closure
@@ -131,7 +134,9 @@ On native `/sessions` (desktop upstream shell contract):
 - [ ] local host-shell compatibility selectors remain narrow/reversible; the official exclusive-shell contract is still required for final sealing;
 - [ ] project mark is served through Hermes' official plugin static-asset route;
 - [ ] release transforms have no network/process/runtime ownership;
-- [ ] real-target workflow is manual-only with `actions: read` + `contents: read` and no PR/repository write permission.
+- [ ] protocol/projection state has no create-then-chmod permission window;
+- [ ] malformed Product 3 JSON mutations fail as 4xx, not host-dependent 5xx;
+- [ ] real-target workflow is manual-only with `actions: read` + `contents: read` and no PR/repository/tag/release write permission.
 
 ## 10. Final decision
 
@@ -148,4 +153,4 @@ The GitHub finalizer is read-only and must confirm:
 - current `main` HEAD still equals that exact SHA;
 - the latest exact-main **push** CI from `.github/workflows/ci.yml` is completed/success.
 
-No code merge or branch mutation is permitted after target/browser evidence capture. Only then may that exact `main` commit be called `SEALED`.
+No code merge or branch mutation is permitted after target/browser evidence capture. Only then may that exact `main` commit be called `SEALED`. Git tag / GitHub Release creation is optional and may be omitted entirely.

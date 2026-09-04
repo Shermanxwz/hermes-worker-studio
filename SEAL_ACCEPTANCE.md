@@ -6,7 +6,7 @@
 2. real Hermes target/runtime evidence;
 3. real desktop/mobile browser evidence.
 
-Temporary development branches may exist while work is in progress, but a repository entering archive/seal state must converge back to `main` only.
+Temporary development branches may exist while work is in progress, but a repository entering archive/seal state must converge back to `main` only. A Git tag or GitHub Release is optional distribution metadata and is **not** part of seal eligibility; the exact `main` SHA plus the evidence planes are authoritative.
 
 ## 1. Repository health and release identity
 
@@ -26,6 +26,9 @@ The exact repository candidate must be green for ordinary CI:
 
 - Studio static + unit + Product 3 mounted UI runtime;
 - exact staged release artifact syntax/closure gate;
+- deterministic private npm test-harness boundary: no production npm dependencies, exact devDependency pins, package/lock parity, and lifecycle scripts disabled during CI install;
+- installer transaction tests, including rollback after installed-tree Doctor/enable failure;
+- staged private-state/JSON security closure tests;
 - Gateway-native durable reconnect, no-wait input and arbitrary-file attachment tests;
 - Hermes pinned archive-baseline public-contract verification;
 - Hermes upstream subagent lifecycle / Runs / approvals / Gateway attachment/todo/context regression tests;
@@ -34,7 +37,7 @@ The exact repository candidate must be green for ordinary CI:
 - official Hermes Web branding provenance;
 - final seal verifier/unit contracts.
 
-Ordinary CI answers **“is this exact repository candidate healthy?”**. It must not stay permanently red merely because a known future seal-required upstream contract has not landed yet.
+Ordinary CI answers **“is this exact repository candidate healthy?”**. It must not stay permanently red merely because a known future seal-required upstream contract has not landed yet, or because a third-party advisory service is unavailable.
 
 Hermes remains the only execution, session, model, approval, input-request, Skills/MCP and Worker source of truth.
 
@@ -61,15 +64,19 @@ The contract is tracked upstream at `NousResearch/hermes-agent#100149` and speci
 
 ## 2. Supported artifact invariant
 
-The supported installer creates a temporary candidate and ships only documented Product 3 files. Before atomic replacement it:
+The supported installer creates a temporary candidate and ships only documented Product 3 files. Before the transaction commits it:
 
 1. stamps the exact candidate SHA into the staged Product 3 bridge;
 2. applies `stage_product_bundle.py` for the existing attachment + interaction/accessibility closure;
 3. applies `stage_mixed_protocol.py` for pinned-Hermes per-model Chat/Responses compatibility;
-4. runs Hermes Plugin Doctor on the staged tree;
-5. atomically swaps the install and runs final Plugin Doctor.
+4. applies `stage_security_closure.py` so private Studio state uses mode-`0600` exclusive/no-follow temporary files before atomic rename and malformed JSON bodies become explicit HTTP 400 responses;
+5. runs Hermes Plugin Doctor on the staged tree;
+6. replaces the installed tree, preferring `renameat2(RENAME_EXCHANGE)` when supported and otherwise preserving the old tree for rollback;
+7. runs Plugin Doctor against the **exact installed path** before changing enabled-plugin state;
+8. writes the theme with a rollback copy and enables Worker Studio through the official Hermes plugin command;
+9. discards old plugin/theme copies only after every post-swap gate succeeds.
 
-Both transforms are exact-count/fail-closed build steps. They may not own network/process execution or become a second runtime. CI independently reproduces these transforms, syntax-checks the resulting JS/Python and asserts the final closure tokens. Installer tests assert the exact installed file set.
+All release transforms are exact-count/fail-closed build steps. They may not own network/process execution or become a second runtime. CI independently reproduces the same staged JS/Python, syntax-checks it and asserts the final closure tokens. Installer tests assert the exact installed file set and prove that post-swap Doctor/enable failures restore the previous plugin/theme without staging or backup residue.
 
 The final stylesheet chain is:
 
@@ -102,7 +109,7 @@ It performs, in order:
 1. exact candidate SHA resolution;
 2. `scripts/seal_upstream_gate.py` against the exact Hermes pin;
 3. `.seal/upstream.json` creation only after baseline and seal-blocking public contracts pass;
-4. deterministic atomic Product 3 install with exact candidate stamp;
+4. deterministic transactional Product 3 install with exact candidate stamp and installed-tree validation;
 5. real Hermes execution/session/todo acceptance -> target evidence **v2**;
 6. running Dashboard candidate readback and `installed_candidate_verified=true`;
 7. proof of the actual final execution route (`provider`, `model`, route status, transport mode when declared/resolved, and execution provider);
@@ -270,11 +277,11 @@ The final GitHub verifier is deliberately **read-only**. It requires:
 - the latest exact-candidate **push** CI from `.github/workflows/ci.yml` is completed/success;
 - the local seal verdict is v2, eligible and names the same candidate.
 
-The real-target workflow has only `actions: read` and `contents: read`. It does not mark PRs ready, merge PRs, rewrite branches, or create a different post-evidence commit.
+The real-target workflow has only `actions: read` and `contents: read`. It does not mark PRs ready, merge PRs, rewrite branches, create tags, create GitHub Releases, or create a different post-evidence commit.
 
 ## 11. Release rule
 
-Do **not** tag or call Product 3 sealed until:
+Do **not** call Product 3 sealed until:
 
 1. all development/closure changes have already been merged into `main`;
 2. the exact current `main` HEAD push CI is fully green;
@@ -282,5 +289,7 @@ Do **not** tag or call Product 3 sealed until:
 4. `.seal/SEALED.json` says `eligible: true` for that exact SHA and records the exact verified Hermes upstream commit;
 5. the read-only GitHub finalizer confirms `main` still points at that SHA and its canonical push CI is green;
 6. no temporary development branch remains in the repository.
+
+Tagging and publishing a GitHub Release are optional and may be omitted entirely. They never substitute for the exact-main evidence above and are not required to reach `SEALED`.
 
 Until the required official exclusive-shell contract is present in the pinned Hermes revision and exact-current real-target evidence closes, the correct state is **ARCHIVE CANDIDATE**.

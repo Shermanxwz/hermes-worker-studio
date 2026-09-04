@@ -11,13 +11,17 @@ A green GitHub workflow proves an exact commit is a repository-level **ARCHIVE C
 | Shell syntax | `scripts/install.sh` |
 | Architecture | `scripts/verify_contract.py` |
 | Unit / HTTP / installer | `python -m unittest discover` |
-| Exact staged artifact | run both release transforms, then `node --check` + Python compile + closure assertions |
+| Exact staged artifact | run all deterministic release transforms, then `node --check` + Python compile + closure assertions |
+| Staged security closure | private state is created mode `0600` with exclusive/no-follow temp semantics; malformed JSON maps to HTTP 400 |
+| Installer transaction | post-swap Doctor/enable failure restores the previous plugin and theme; no staging/backup residue remains |
+| npm test-harness boundary | private test-only package; no production dependency fields; exact dev pins; package/lock parity; install scripts disabled |
 | Mounted Product 3 behavior | `npm run test:frontend` |
 | Seal CLIs | acceptance/evidence/upstream/close/finalize help gates |
 | Manifest | JSON parser |
-| Frontend dependencies | high-severity `npm audit` |
 
-The staged-artifact gate is intentional: checked-in review source is not accepted as proof of the installed candidate. CI reproduces the installer build path (`stage_product_bundle.py` then `stage_mixed_protocol.py`) and validates the resulting JS/Python.
+The staged-artifact gate is intentional: checked-in review source is not accepted as proof of the installed candidate. CI reproduces the installer build path (`stage_product_bundle.py`, `stage_mixed_protocol.py`, then `stage_security_closure.py`) and validates the resulting JS/Python. Every release rewrite is exact-count/fail-closed.
+
+The root npm package is not a production package. `verify_contract.py` and the Studio CI job require `hermes-worker-studio-tests` to remain private, reject nonempty `dependencies` / `optionalDependencies` / `peerDependencies`, require exact `x.y.z` devDependency pins, require the lockfile root to match `package.json`, and install with `npm ci --ignore-scripts --no-fund --no-audit`. Canonical seal CI intentionally does not depend on the live npm advisory service, because advisory-service availability is external infrastructure state rather than evidence about the shipped plugin.
 
 Mounted/unit coverage includes:
 
@@ -36,7 +40,9 @@ Mounted/unit coverage includes:
 - target evidence v2 and seal verdict v2 schema compatibility;
 - provider/model pair requirement for a specific real-target route;
 - browser evidence requiring three actual passed viewport projects;
-- exact-main read-only GitHub finalization and canonical workflow-path verification.
+- exact-main read-only GitHub finalization and canonical workflow-path verification;
+- staged private-state write hardening and malformed-JSON fail-closed behavior;
+- rollback after failure of the installed-tree Plugin Doctor or official plugin enable command.
 
 ## Job: Pinned Hermes public contracts
 
@@ -50,11 +56,17 @@ Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suite
 
 ## Job: Production security + dependency boundary
 
-- Bandit over production Python plus deterministic release transforms;
+- Bandit over production Python plus every deterministic release transform;
 - committed-secret rejection;
 - second-runtime sentinel rejection across runtime, CSS, installer and transform files.
 
-`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, evidence schemas and read-only exact-main target workflow.
+`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, deterministic npm test-harness boundary, evidence schemas and read-only exact-main target workflow.
+
+## Supported installer transaction
+
+The installer constructs and validates the complete candidate before replacing the installed tree. When an existing install is present it prefers Linux `renameat2(RENAME_EXCHANGE)` for an atomic namespace exchange; where that operation is unavailable it preserves the old tree in a rollback location before replacement.
+
+The previous plugin tree is retained until the exact installed path passes Hermes Plugin Doctor and `hermes plugins enable hermes-worker-studio` succeeds. The previous theme is retained as a rollback copy and the new theme is written to a same-directory staging file before atomic rename. Any post-swap failure restores prior plugin/theme state. If rollback itself cannot complete, recovery artifacts are deliberately preserved and the installer returns a dedicated failure code instead of deleting the only recovery material. The rollback copy is discarded only at the explicit commit point.
 
 ## Real-target machine gate
 
@@ -97,7 +109,7 @@ A PR-head CI, a same-name workflow at another path, a skipped viewport test, or 
 
 ## Failure policy
 
-No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, or non-green exact-main push CI blocks sealing.
+No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, non-green exact-main push CI, npm production-dependency or lock/pin boundary drift, private-state hardening drift, or installer rollback regression blocks sealing.
 
 HTTPS certificate errors are not ignored by default. `HWS_SEAL_IGNORE_HTTPS_ERRORS=1` is an explicit trusted local/test override only.
 

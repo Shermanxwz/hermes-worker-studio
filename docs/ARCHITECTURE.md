@@ -140,14 +140,19 @@ Stop, Steer, Approval and unattended input responses are Gateway-native. Dialogs
 
 ## 11. Deterministic supported artifact
 
-The checked-in browser/backend source remains reviewable. The supported atomic installer creates a temporary candidate, stamps the exact `BUILD_CANDIDATE_SHA`, then applies two exact-count build transforms:
+The checked-in browser/backend source remains reviewable. The supported installer creates a temporary candidate, stamps the exact `BUILD_CANDIDATE_SHA`, then applies three exact-count build transforms:
 
 - `stage_product_bundle.py` — existing attachment family plus interaction/accessibility closure;
-- `stage_mixed_protocol.py` — pinned-Hermes per-model mixed-protocol compatibility.
+- `stage_mixed_protocol.py` — pinned-Hermes per-model mixed-protocol compatibility;
+- `stage_security_closure.py` — staged private-state write hardening plus explicit malformed-JSON HTTP 400 handling.
 
-These transforms have no network/process/runtime ownership and fail closed if their source anchors drift. CI independently builds this same staged JS/Python and syntax-checks it; installer tests assert the exact installed file set and final behavior. The only intentional candidate-specific mutation is the exact SHA stamp.
+The security transform creates projection/protocol temporary files with `O_CREAT|O_EXCL`, adds `O_NOFOLLOW` when available, assigns mode `0600` at creation time, fsyncs the payload and then replaces the destination. It does not become a persistence authority: these remain bounded Studio projections/route hints while Hermes owns execution/session/model truth.
 
-`/product-capabilities` exposes the loaded candidate identity so target/browser evidence can prove the running product is the same code whose canonical CI is green.
+These transforms have no network/process/runtime ownership and fail closed if their source anchors drift. CI independently builds this same staged JS/Python, syntax-checks it, runs a high-severity audit against the exact npm lockfile and asserts the security closure tokens. Installer tests assert the exact installed file set, final behavior and post-swap rollback.
+
+Installation is a transaction. The staged tree passes Plugin Doctor before replacement. Existing installs prefer Linux `renameat2(RENAME_EXCHANGE)` so old/new names exchange atomically; the portable fallback moves the old tree to a rollback location before replacement. The old plugin and theme remain recoverable until the exact installed path passes Plugin Doctor and official `hermes plugins enable` succeeds. Failure restores previous state and removes transaction residue. Only then is the rollback copy discarded.
+
+The only intentional candidate-specific mutation is the exact SHA stamp. `/product-capabilities` exposes the loaded candidate identity so target/browser evidence can prove the running product is the same code whose canonical CI is green.
 
 ## 12. Seal identity and evidence topology
 
@@ -166,7 +171,7 @@ PR CI green
 ```text
 exact clean main SHA
   -> upstream required-contract evidence
-  -> deterministic staged artifact + atomic install + SHA stamp
+  -> deterministic staged artifact + transactional install + SHA stamp
   -> running Dashboard SHA read-back
   -> target evidence v2
        -> real Hermes Run
@@ -188,4 +193,4 @@ The manual target workflow fetches `origin/main` and refuses to proceed unless i
 
 `github_finalize_seal.py` is a read-only final identity gate. It requires repository default branch `main`, current main SHA equal to the candidate, and an exact-candidate `push` CI named `CI` from `.github/workflows/ci.yml` with `completed/success`.
 
-Only exact-current **main** push CI green + required upstream contract + target evidence v2 + three required browser passes + seal-verdict v2 + read-only exact-main verification qualify Product 3 for `SEALED`. Repository CI alone never upgrades `ARCHIVE CANDIDATE`, and the official exclusive-shell issue remains a hard gate while absent from the pinned Hermes revision.
+Only exact-current **main** push CI green + required upstream contract + target evidence v2 + three required browser passes + seal-verdict v2 + read-only exact-main verification qualify Product 3 for `SEALED`. Repository CI alone never upgrades `ARCHIVE CANDIDATE`, and the official exclusive-shell issue remains a hard gate while absent from the pinned Hermes revision. Git tags and GitHub Releases are optional distribution metadata, not seal identity.

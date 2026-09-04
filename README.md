@@ -140,14 +140,17 @@ Full Access 只写 Hermes 官方审批/委派配置并保存恢复快照。Herme
 
 ## 封存级 build / install parity
 
-Supported installer 在临时目录建立 exact candidate，写入 candidate SHA，然后执行两条 deterministic、exact-count、fail-closed build transform：
+Supported installer 在临时目录建立 exact candidate，写入 candidate SHA，然后执行三条 deterministic、exact-count、fail-closed build transform：
 
 - `scripts/stage_product_bundle.py` — 现有附件族 + interaction/accessibility closure；
-- `scripts/stage_mixed_protocol.py` — pinned Hermes mixed Chat/Responses per-model compatibility。
+- `scripts/stage_mixed_protocol.py` — pinned Hermes mixed Chat/Responses per-model compatibility；
+- `scripts/stage_security_closure.py` — 私有状态以 `0600` exclusive/no-follow 临时文件写入后再 rename，并把 malformed JSON 明确映射为 HTTP 400。
 
-CI 会独立生成**同一份 staged JS/Python**，再执行 `node --check` / Python compile 和关键闭环断言；installer tests 断言最终安装文件集合、candidate SHA 和两条 transform 的最终行为。这样不会出现“源码测试绿，但安装后的代码没人测”。
+CI 会独立生成**同一份 staged JS/Python**，再执行 `node --check` / Python compile 和关键闭环断言；installer tests 断言最终安装文件集合、candidate SHA、三条 transform 的最终行为，以及 installed-tree Doctor / enable 失败后的回滚。这样不会出现“源码测试绿，但安装后的代码没人测”。
 
-安装是原子的：staged Plugin Doctor 成功后才替换旧插件，失败会保留上一份 install。
+安装是事务式的：staged Plugin Doctor 先通过，已有安装优先通过 Linux `renameat2(RENAME_EXCHANGE)` 做原子目录交换；不支持时保留旧树后替换。旧插件和旧 theme 一直保留到**实际安装路径**再次通过 Plugin Doctor 且官方 `hermes plugins enable` 成功，之后才进入 commit point。任何 post-swap 失败都会恢复上一份 plugin/theme，并清理 staging/backup 残留。
+
+根 npm 包只是 `private` 的前端测试 harness：生产 `dependencies` / `optionalDependencies` / `peerDependencies` 必须为空，devDependencies 必须精确 `x.y.z` pin，`package-lock.json` 根依赖必须与 `package.json` 一致，CI 使用 `npm ci --ignore-scripts --no-audit`。Canonical seal CI 不依赖 npm 在线 advisory 服务，因此第三方审计服务超时不会改变代码/封存判定。
 
 ## Desktop / Mobile 产品闭环
 
@@ -211,7 +214,7 @@ python scripts/seal_close.py --url http://127.0.0.1:19119
 python scripts/seal_close.py --hermes-root /path/to/hermes-agent --url http://127.0.0.1:19119
 ```
 
-只有 exact-current candidate CI 绿色、required upstream contract 通过、真实目标机/模型/浏览器证据闭合，并且 `.seal/SEALED.json eligible=true` 指向同一 candidate/pin 时，才能称为 `SEALED`。
+只有 exact-current candidate CI 绿色、required upstream contract 通过、真实目标机/模型/浏览器证据闭合，并且 `.seal/SEALED.json eligible=true` 指向同一 candidate/pin 时，才能称为 `SEALED`。Git tag / GitHub Release 是可选分发元数据，不是 seal eligibility 的组成部分。
 
 ## 安装
 
