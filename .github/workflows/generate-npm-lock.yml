@@ -1,0 +1,37 @@
+name: Generate npm lock
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  generate-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Generate exact test-harness lockfile
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Validate lockfile identity
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          if (lock.lockfileVersion !== 3) throw new Error(`expected lockfileVersion 3, got ${lock.lockfileVersion}`);
+          const root = lock.packages?.[''];
+          if (!root || root.name !== pkg.name || root.version !== pkg.version) throw new Error('lock root identity mismatch');
+          if (JSON.stringify(root.devDependencies) !== JSON.stringify(pkg.devDependencies)) throw new Error('lock root devDependencies mismatch');
+          NODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sealed-package-lock
+          path: package-lock.json
+          if-no-files-found: error
+          retention-days: 1
