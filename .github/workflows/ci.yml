@@ -94,7 +94,15 @@ jobs:
         run: python -m json.tool dashboard/manifest.json >/dev/null
 
       - name: High severity npm audit
-        run: npm audit --audit-level=high
+        shell: bash
+        env:
+          npm_config_fetch_retries: '2'
+          npm_config_fetch_retry_mintimeout: '1000'
+          npm_config_fetch_retry_maxtimeout: '5000'
+          npm_config_fetch_timeout: '20000'
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=10s 120s npm audit --audit-level=high
 
   hermes-upstream-contract:
     name: Pinned Hermes archive public contracts
