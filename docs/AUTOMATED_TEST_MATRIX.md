@@ -17,7 +17,6 @@ A green GitHub workflow proves an exact commit is a repository-level **ARCHIVE C
 | Mounted Product 3 behavior | `npm run test:frontend` |
 | Seal CLIs | acceptance/evidence/upstream/close/finalize help gates |
 | Manifest | JSON parser |
-| Frontend dependencies | explicit high-severity `npm audit` |
 
 The staged-artifact gate is intentional: checked-in review source is not accepted as proof of the installed candidate. CI reproduces the installer build path (`stage_product_bundle.py`, `stage_mixed_protocol.py`, then `stage_security_closure.py`) and validates the resulting JS/Python. Every release rewrite is exact-count/fail-closed.
 
@@ -42,6 +41,16 @@ Mounted/unit coverage includes:
 - staged private-state write hardening and malformed-JSON fail-closed behavior;
 - rollback after failure of the installed-tree Plugin Doctor or official plugin enable command.
 
+## Job: Frontend dependency audit
+
+The exact committed npm lockfile is audited independently from the Studio unit/runtime job. This keeps supply-chain availability from hiding code/test results while still making audit failure a workflow failure.
+
+- `npm audit --audit-level=high --ignore-scripts` is the canonical vulnerability gate;
+- the audit job is read-only and needs no `node_modules` install because npm audits the package/lock graph directly;
+- npm advisory fetch retries/timeouts are explicitly bounded and the audit step itself has a two-minute ceiling;
+- advisory-service timeout/unavailability fails closed rather than being silently skipped;
+- `npm ci --no-audit` in the Studio job suppresses only npm's redundant implicit install-time audit.
+
 ## Job: Pinned Hermes public contracts
 
 Checks the exact Hermes checkout SHA from `tests/upstream-lock.json` and verifies required documented/plugin surfaces. The lock contains Hermes only.
@@ -58,15 +67,13 @@ Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suite
 - committed-secret rejection;
 - second-runtime sentinel rejection across runtime, CSS, installer and transform files.
 
-The Studio job separately performs the explicit high-severity npm dependency audit after installing the exact lockfile. `npm ci --no-audit` suppresses only npm's implicit install-time audit; the dedicated `npm audit --audit-level=high` step is the canonical fail/pass gate.
-
-`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, evidence schemas and read-only exact-main target workflow.
+`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, explicit npm audit gate, evidence schemas and read-only exact-main target workflow.
 
 ## Supported installer transaction
 
 The installer constructs and validates the complete candidate before replacing the installed tree. When an existing install is present it prefers Linux `renameat2(RENAME_EXCHANGE)` for an atomic namespace exchange; where that operation is unavailable it preserves the old tree in a rollback location before replacement.
 
-The previous plugin tree is retained until the exact installed path passes Hermes Plugin Doctor and `hermes plugins enable hermes-worker-studio` succeeds. The previous theme is likewise retained across the transaction. Any post-swap failure or interrupted shell exit restores the prior plugin/theme and removes install/backup residue. The rollback copy is discarded only at the explicit commit point.
+The previous plugin tree is retained until the exact installed path passes Hermes Plugin Doctor and `hermes plugins enable hermes-worker-studio` succeeds. The previous theme is retained as a rollback copy and the new theme is written to a same-directory staging file before atomic rename. Any post-swap failure restores prior plugin/theme state. If rollback itself cannot complete, recovery artifacts are deliberately preserved and the installer returns a dedicated failure code instead of deleting the only recovery material. The rollback copy is discarded only at the explicit commit point.
 
 ## Real-target machine gate
 
@@ -109,7 +116,7 @@ A PR-head CI, a same-name workflow at another path, a skipped viewport test, or 
 
 ## Failure policy
 
-No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, non-green exact-main push CI, high-severity npm audit failure, private-state hardening drift, or installer rollback regression blocks sealing.
+No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, non-green exact-main push CI, high-severity npm audit failure/timeout, private-state hardening drift, or installer rollback regression blocks sealing.
 
 HTTPS certificate errors are not ignored by default. `HWS_SEAL_IGNORE_HTTPS_ERRORS=1` is an explicit trusted local/test override only.
 
