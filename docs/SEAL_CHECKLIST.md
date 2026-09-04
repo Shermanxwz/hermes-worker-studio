@@ -27,7 +27,7 @@ Repository gates must prove the same build path that the target installer uses:
 - [ ] `stage_security_closure.py` is exact-count/fail-closed, creates private state temp files with mode `0600` + exclusive/no-follow semantics and maps malformed JSON to HTTP 400;
 - [ ] staged `index-v3.js` passes `node --check`;
 - [ ] staged `plugin_api_v3.py` passes Python compile;
-- [ ] explicit `npm audit --audit-level=high` passes against the exact lockfile;
+- [ ] root npm package is private/test-only, production dependency fields are empty, devDependencies are exact-pinned, package/lock roots match, and CI install scripts are disabled;
 - [ ] installer tests verify the exact installed file set and staged behavior;
 - [ ] installed-tree Doctor or official enable failure restores the previous plugin/theme with no staging/backup residue;
 - [ ] candidate SHA stamping is the only candidate-specific runtime mutation.
