@@ -144,7 +144,7 @@ jobs:
         run: test -s .upstream/hermes/web/public/favicon.ico
 
   hermes-native-contract:
-    name: Hermes lifecycle + Gateway attachments + Runs + approvals + Plugin Doctor
+    name: Hermes lifecycle + Gateway attachments + Runs + reasoning + approvals + Plugin Doctor
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -168,7 +168,7 @@ jobs:
             'pytest-asyncio==1.3.0' \
             'aiohttp==3.14.3'
 
-      - name: Run Hermes own lifecycle, Gateway, attachment and approval tests
+      - name: Run Hermes own lifecycle, Runs, reasoning wire, attachment and approval tests
         working-directory: .upstream/hermes
         env:
           HERMES_HOME: ${{ runner.temp }}/hermes-upstream-test-home
@@ -176,6 +176,8 @@ jobs:
           python -m pytest -q \
             tests/agent/test_subagent_lifecycle.py \
             tests/gateway/test_api_server_runs.py \
+            tests/agent/transports/test_chat_completions.py \
+            tests/agent/transports/test_router_codex_efforts.py \
             tests/tools/test_approval.py \
             tests/tui_gateway/test_todo_state_events.py \
             tests/tui_gateway/test_attach_does_not_wait_for_agent.py \
