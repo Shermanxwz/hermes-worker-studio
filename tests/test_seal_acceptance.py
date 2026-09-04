@@ -58,6 +58,112 @@ class SealAcceptanceParsingTests(unittest.TestCase):
         self.assertEqual(seal.pick_route(options, "", ""), ("official", "main-model"))
         self.assertEqual(seal.pick_route(options, "moa", "default"), ("moa", "default"))
 
+    def test_validate_reasoning_declaration_accepts_provider_overlay(self):
+        options = {
+            "providers": [{
+                "slug": "newapi",
+                "name": "New API",
+                "models": ["gpt-reasoner"],
+                "capabilities": {"gpt-reasoner": {"reasoning": True}},
+            }],
+        }
+        config = {
+            "providers": {
+                "newapi": {
+                    "name": "New API",
+                    "hws_reasoning_defaults": {
+                        "supports_reasoning": True,
+                        "reasoning_efforts": ["none", "low", "medium", "high", "xhigh", "max"],
+                    },
+                }
+            }
+        }
+        declared = seal.validate_reasoning_declaration(
+            model_options=options,
+            config=config,
+            provider="newapi",
+            model="gpt-reasoner",
+            effort="xhigh",
+        )
+        self.assertEqual(declared["source"], "hermes.provider_config.defaults")
+        self.assertIn("xhigh", declared["values"])
+        self.assertTrue(declared["can_disable"])
+
+    def test_validate_reasoning_declaration_exact_model_blocks_default_escalation(self):
+        options = {
+            "providers": [{
+                "slug": "newapi",
+                "models": ["limited-model"],
+                "capabilities": {"limited-model": {"reasoning": True}},
+            }],
+        }
+        config = {
+            "providers": {
+                "newapi": {
+                    "hws_reasoning_defaults": {"reasoning_efforts": ["low", "medium", "high", "xhigh"]},
+                    "models": {
+                        "limited-model": {
+                            "hws_reasoning": {
+                                "reasoning_efforts": ["low", "high"],
+                                "can_disable_reasoning": False,
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        with self.assertRaises(seal.AcceptanceError):
+            seal.validate_reasoning_declaration(
+                model_options=options,
+                config=config,
+                provider="newapi",
+                model="limited-model",
+                effort="xhigh",
+            )
+        declared = seal.validate_reasoning_declaration(
+            model_options=options,
+            config=config,
+            provider="newapi",
+            model="limited-model",
+            effort="high",
+        )
+        self.assertEqual(declared["source"], "hermes.provider_config.model")
+        self.assertFalse(declared["can_disable"])
+
+    def test_validate_reasoning_declaration_native_metadata_wins(self):
+        options = {
+            "providers": [{
+                "slug": "newapi",
+                "models": ["native-rich"],
+                "capabilities": {
+                    "native-rich": {
+                        "reasoning": {"supported": True, "efforts": ["low", "medium", "high"], "can_disable": False}
+                    }
+                },
+            }],
+        }
+        config = {
+            "providers": {
+                "newapi": {"hws_reasoning_defaults": {"reasoning_efforts": ["low", "medium", "high", "xhigh", "max"]}}
+            }
+        }
+        with self.assertRaises(seal.AcceptanceError):
+            seal.validate_reasoning_declaration(
+                model_options=options,
+                config=config,
+                provider="newapi",
+                model="native-rich",
+                effort="xhigh",
+            )
+        declared = seal.validate_reasoning_declaration(
+            model_options=options,
+            config=config,
+            provider="newapi",
+            model="native-rich",
+            effort="high",
+        )
+        self.assertEqual(declared["source"], "hermes.model_options")
+
     def test_validate_started_route_records_responses_execution_alias(self):
         started = {
             "id": "run-1",
