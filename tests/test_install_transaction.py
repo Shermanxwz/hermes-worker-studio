@@ -85,6 +85,7 @@ class InstallTransactionTests(unittest.TestCase):
             path.name
             for path in (self.hermes_home / "dashboard-themes").iterdir()
             if path.name.startswith(".hermes-worker-studio.yaml.backup.")
+            or path.name.startswith(".hermes-worker-studio.yaml.install.")
         ]
         self.assertEqual(theme_leftovers, [])
 
@@ -130,7 +131,10 @@ class InstallTransactionTests(unittest.TestCase):
             "rollback incomplete; recovery artifacts were preserved for manual recovery",
             "previous plugin backup:",
             "previous theme backup:",
+            "staged theme:",
             "status=70",
+            'install -m 0644 "$ROOT/themes/hermes-worker-studio.yaml" "$THEME_STAGE"',
+            'mv -f "$THEME_STAGE" "$THEME_DEST"',
         ):
             self.assertIn(token, source)
         cleanup_start = source.index("cleanup() {")
