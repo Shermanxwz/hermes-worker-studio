@@ -9,10 +9,12 @@
 
   const originalFetchJSON = SDK.fetchJSON.bind(SDK);
   const PLUGIN = '/api/plugins/hermes-worker-studio';
+  const PROTOCOLS = `${PLUGIN}/hermes/protocols`;
   const PROTOCOL_ROUTE = `${PLUGIN}/hermes/protocol-route`;
   const PROTOCOL_RESOLVE = `${PLUGIN}/hermes/protocols/resolve`;
   const PROTOCOL_PROBE = `${PLUGIN}/hermes/protocols/probe`;
   const MODEL_PROBE = `${PLUGIN}/hermes/model-probe`;
+  let projectedRoutes = null;
 
   function jsonBody(init) {
     if (!init || init.body == null) return {};
@@ -38,18 +40,39 @@
     return /Unhandled fetchJSON call|404|Not Found/i.test(errorText(error));
   }
 
+  function routeKey(route) {
+    return `${String(route?.provider || '').trim()}\n${String(route?.model || '').trim()}`;
+  }
+
+  function rememberProjection(data) {
+    if (Array.isArray(data?.routes)) projectedRoutes = data.routes;
+    return data;
+  }
+
+  function upsertProjectedRoute(route) {
+    if (!Array.isArray(projectedRoutes) || !route?.provider || !route?.model) return route;
+    const key = routeKey(route);
+    const index = projectedRoutes.findIndex((item) => routeKey(item) === key);
+    if (index >= 0) projectedRoutes[index] = route;
+    else projectedRoutes.push(route);
+    return route;
+  }
+
   function protocolRouteUrl(provider, model) {
     const query = new URLSearchParams({ provider, model });
     return `${PROTOCOL_ROUTE}?${query.toString()}`;
   }
 
   async function explicitProtocolProbe(provider, model) {
-    return originalFetchJSON(PROTOCOL_PROBE, post({ provider, model }));
+    const result = await originalFetchJSON(PROTOCOL_PROBE, post({ provider, model }));
+    upsertProjectedRoute(result?.route);
+    return result;
   }
 
   async function lazyProtocolResolve(provider, model) {
     try {
-      return await originalFetchJSON(PROTOCOL_RESOLVE, post({ provider, model }));
+      const route = await originalFetchJSON(PROTOCOL_RESOLVE, post({ provider, model }));
+      return upsertProjectedRoute(route?.route || route);
     } catch (error) {
       if (!missingOptionalRoute(error)) throw error;
       const result = await explicitProtocolProbe(provider, model);
@@ -69,8 +92,8 @@
   async function executionRoute(provider, model) {
     const snapshot = await protocolSnapshot(provider, model);
     if (!snapshot) return null;
-    if (snapshot?.status === 'ambiguous' || snapshot?.requires_choice) return snapshot;
-    if (!snapshot?.requires_probe) return snapshot;
+    if (snapshot?.status === 'ambiguous' || snapshot?.requires_choice) return upsertProjectedRoute(snapshot);
+    if (!snapshot?.requires_probe) return upsertProjectedRoute(snapshot);
     return lazyProtocolResolve(provider, model);
   }
 
@@ -93,6 +116,7 @@
       return explicitProtocolProbe(provider, model);
     }
 
+    upsertProjectedRoute(snapshot);
     const executionProvider = String(snapshot?.execution_provider || provider).trim() || provider;
     if (executionProvider === provider) return originalFetchJSON(MODEL_PROBE, init);
     return originalFetchJSON(MODEL_PROBE, post({ ...body, provider: executionProvider, model }));
@@ -101,6 +125,10 @@
   SDK.fetchJSON = async function protocolRuntimeFetch(path, init) {
     const url = String(path || '');
     const method = String(init?.method || 'GET').toUpperCase();
+
+    if (url === PROTOCOLS && method === 'GET') {
+      return rememberProjection(await originalFetchJSON(path, init));
+    }
 
     if (url.startsWith(`${PROTOCOL_ROUTE}?`) && method === 'GET') {
       const requested = new URL(url, 'http://worker-studio.local');
@@ -118,7 +146,8 @@
     if (url === PROTOCOL_RESOLVE && method === 'POST') {
       const body = jsonBody(init);
       try {
-        return await originalFetchJSON(path, init);
+        const route = await originalFetchJSON(path, init);
+        return upsertProjectedRoute(route?.route || route);
       } catch (error) {
         if (!missingOptionalRoute(error)) throw error;
         const result = await explicitProtocolProbe(String(body.provider || ''), String(body.model || ''));
