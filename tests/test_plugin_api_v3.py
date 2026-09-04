@@ -151,6 +151,25 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertEqual(snapshot["todos"][0]["id"], "a")
         self.assertIn("/api/sessions/session%20x/messages?limit=100&order=latest", proxy.call_args.args[0])
 
+    def test_latest_session_todo_accepts_official_api_server_list_envelope(self):
+        payload = {
+            "object": "list",
+            "data": [
+                {
+                    "role": "tool",
+                    "tool_name": "todo",
+                    "content": {
+                        "todos": [{"id": "a", "content": "Done", "status": "completed"}],
+                        "revision": 5,
+                    },
+                }
+            ],
+        }
+        with patch.object(plugin_api_v3._legacy, "_hermes_proxy", return_value=payload):
+            snapshot = plugin_api_v3._latest_session_todo_snapshot("session api server")
+        self.assertEqual(snapshot["revision"], 5)
+        self.assertEqual(snapshot["todos"][0]["status"], "completed")
+
     def test_changed_session_todo_projects_each_new_revision_without_inventing_a_planner(self):
         run_id = "run-todo"
         plugin_api_v3._legacy._new_run_record(run_id, "session-todo", "running")

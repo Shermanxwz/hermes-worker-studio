@@ -196,7 +196,15 @@ def _latest_session_todo_snapshot(session_id: str | None) -> dict[str, Any] | No
         f"?limit={_TODO_MESSAGE_LIMIT}&order=latest"
     )
     payload = _legacy._hermes_proxy(path)
-    messages = payload.get("messages") if isinstance(payload, dict) else None
+    messages = None
+    if isinstance(payload, dict):
+        # The Dashboard's native route returns ``messages`` while the same
+        # official Session API exposed by Hermes' API Server uses the standard
+        # list envelope's ``data`` field. Both are Hermes-owned surfaces; do
+        # not synthesize todo state when neither shape is present.
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            messages = payload.get("data")
     if not isinstance(messages, list):
         return None
     best: dict[str, Any] | None = None
