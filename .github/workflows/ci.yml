@@ -63,6 +63,7 @@ jobs:
         run: |
           node --check dashboard/dist/index.js
           node --check dashboard/dist/gateway-native.js
+          node --check dashboard/dist/protocol-runtime.js
           node --check dashboard/dist/index-v3.js
           node --check tests/frontend_runtime.mjs
           node --check tests/frontend_runtime_v3.mjs
@@ -70,6 +71,7 @@ jobs:
           node --check tests/frontend_product_v3.mjs
           node --check tests/frontend_settings_v3.mjs
           node --check tests/frontend_context_plan_v3.mjs
+          node --check tests/frontend_protocol_runtime.mjs
           node --check playwright.seal.config.mjs
           node --check tests/target_ui.spec.mjs
 
@@ -221,7 +223,7 @@ jobs:
           legacy_repo='codex-worker-delegation'
           legacy_port=':8788'
           legacy_env='CWD_'
-          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py dashboard/dist/gateway-native.js dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css scripts/install.sh scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py scripts/stage_security_closure.py deploy/worker-studio.env.example)
+          files=(plugin.yaml __init__.py schemas.py tools.py dashboard/manifest.json dashboard/plugin_api.py dashboard/plugin_api_v3.py dashboard/dist/gateway-native.js dashboard/dist/protocol-runtime.js dashboard/dist/index-v3.js dashboard/dist/product.css dashboard/dist/product-sealed.css dashboard/dist/product-closure.css scripts/install.sh scripts/stage_product_bundle.py scripts/stage_mixed_protocol.py scripts/stage_security_closure.py deploy/worker-studio.env.example)
           for token in "$legacy_repo" "$legacy_port" "$legacy_env"; do
             if grep -FIn -- "$token" "${files[@]}"; then
               echo "forbidden parallel-runtime token found: $token" >&2
