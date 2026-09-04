@@ -114,6 +114,24 @@ existing native prompt.submit / Runs path
 
 Main, Worker/delegation and MoA continue to share the same normalized descriptor and validator. Verifier remains read-only until Hermes exposes an independent verifier/review reasoning write contract.
 
+## Real-target reasoning gate
+
+The exact-main real-target seal can now require one concrete effort for one explicit Provider + Model route. The manual workflow accepts `reasoning_effort`; when present it refuses `auto`, requires an explicit vocabulary from the same authority chain above, and submits the real Hermes Run with:
+
+```json
+{
+  "model_options": {
+    "reasoning_effort": "xhigh"
+  }
+}
+```
+
+The target evidence records the requested value, the declaration source that authorized it, the exact Hermes `model_options` submitted, the resolved execution route, and whether the real model Run completed. This is a required gate once `reasoning_effort` is supplied; an unsupported or unpublished value cannot be silently downgraded by Worker Studio.
+
+Repository CI also runs the pinned Hermes revision's own Runs and transport reasoning suites. That fixes both halves of the code-level contract: Worker Studio preserves the concrete effort into Hermes `/v1/runs`, while pinned Hermes tests its Chat Completions and Codex/Responses wire construction.
+
+This is deliberately not described as a literal capture of New API's ingress JSON. Worker Studio cannot observe private request logs inside a third-party New API deployment. A byte-for-byte New API ingress proof requires target-side New API logging or a controlled transparent capture proxy; if required, retain that external capture beside the `.seal/` evidence.
+
 ## Refresh and cache closure
 
 The capability bridge reads the official Dashboard `/api/config` contract in addition to `/api/model/options`.
@@ -154,6 +172,8 @@ The seal requires all of the following:
 - per-model config overrides provider defaults;
 - unsupported/off values fail before Gateway `config.set`;
 - refresh reloads both authoritative model options and config metadata;
-- config unavailability degrades to the previous fail-closed behavior.
+- config unavailability degrades to the previous fail-closed behavior;
+- a real-target concrete effort cannot run without explicit Provider + Model + published vocabulary;
+- target evidence never claims to have captured New API ingress bytes when no such observer exists.
 
-These invariants are covered by `tests/frontend_model_capabilities.mjs` and run under `npm run test:model-capabilities` and the repository-wide `npm run test:frontend` seal suite.
+These invariants are covered by `tests/frontend_model_capabilities.mjs`, `tests/test_reasoning_run_contract.py`, `tests/test_seal_acceptance.py`, the repository-wide Python/frontend CI, pinned Hermes reasoning transport tests, and the exact-main real-target seal when it is executed.
