@@ -128,15 +128,16 @@
   const attachRoute = (result, meta) => meta && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, source_route: clone(meta) } : result;
 
   let downstream = null;
-  let depth = 0;
-  async function fetchJSON(path, init) {
-    const top = depth === 0;
-    depth += 1;
-    try {
-      let nextInit = init;
-      let pending = null;
-      const method = String(init?.method || 'GET').toUpperCase();
-      const refreshModelOptions = isModelOptionsPath(path) && /(?:^|[?&])refresh=1(?:&|$)/.test(String(path));
+  async function fetchJSON(path, init, internal = false) {
+    // Gateway-native calls this same wrapper for its raw downstream request.
+    // Mark that hop explicitly: a shared depth counter misclassifies an
+    // unrelated concurrent Product request as nested and returns un-enriched
+    // /api/model/options data.
+    const top = internal !== true;
+    let nextInit = init;
+    let pending = null;
+    const method = String(init?.method || 'GET').toUpperCase();
+    const refreshModelOptions = isModelOptionsPath(path) && /(?:^|[?&])refresh=1(?:&|$)/.test(String(path));
       if (top && refreshModelOptions) {
         modelOptions = null;
         hermesConfig = undefined;
@@ -184,7 +185,6 @@
       if ((path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'PUT') { moaConfig = clone(result); moaOverrides.clear(); }
       if (path === MOA_PLUGIN || path === MOA_OFFICIAL) queueMicrotask(() => window.__HWS_MODEL_CAPABILITY_DOM_REFRESH__?.());
       return result;
-    } finally { depth -= 1; }
   }
   Object.defineProperty(SDK, 'fetchJSON', { configurable: true, enumerable: true, get: () => fetchJSON, set: (fn) => { downstream = typeof fn === 'function' ? fn.bind(SDK) : null; } });
 

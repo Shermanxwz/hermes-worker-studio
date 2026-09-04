@@ -181,7 +181,7 @@
     const now = Date.now();
     if (now - fullAccessCache.at < 1000) return fullAccessCache.value;
     try {
-      const cfg = unwrapConfig(await originalFetchJSON('/api/config'));
+      const cfg = unwrapConfig(await originalFetchJSON('/api/config', undefined, true));
       const approvals = cfg?.approvals || {};
       const value = approvals.mode === 'off'
         && approvals.cron_mode === 'approve'
@@ -950,7 +950,7 @@
     if (contextMatch) return getOfficialContext(decodeURIComponent(contextMatch[1]));
     const runMatch = url.match(runRoute);
     if (runMatch) return handleRunRoute(url, init, runMatch);
-    return originalFetchJSON(path, init);
+    return originalFetchJSON(path, init, true);
   };
   // Product 3 may already be registered before this native layer finishes
   // loading. Publish readiness only after the SDK setter has installed the

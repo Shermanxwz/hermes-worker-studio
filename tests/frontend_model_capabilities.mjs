@@ -161,8 +161,15 @@ window.__HERMES_PLUGIN_SDK__.fetchJSON = async (url, init = {}) => {
   if (url === '/api/plugins/hermes-worker-studio/hermes/runs-v3') return { id: `run-${calls.filter((x) => x.downstreamRun).length + 1}`, status: 'running', session_id: body.session_id, downstream: true };
   if (url.startsWith('/api/plugins/hermes-worker-studio/hermes/runs/run-')) return { id: url.split('/hermes/runs/')[1].split('?')[0], status: 'completed', events: [] };
   calls.push({ downstreamRun: url, body });
-  return capabilityFetch(url, init);
+  return capabilityFetch(url, init, true);
 };
+// Independent Product requests must remain top-level even while another
+// Gateway-native request is awaiting its raw response.
+const [, concurrentEnriched] = await Promise.all([
+  window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/sessions?concurrent=1'),
+  window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/model/options?refresh=1'),
+]);
+assert.deepEqual(plain(concurrentEnriched.providers[1].capabilities['gpt-proxy'].reasoning_efforts.map((x) => x.value)), ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'concurrent model inventory must remain capability-enriched');
 const enriched = await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/model/options');
 assert.equal(enriched.providers[0].capabilities['toggle-model'].hws_reasoning_control.control, 'toggle');
 assert.equal(enriched.providers[0].capabilities['unknown-model'].hws_reasoning_control.control, 'auto');
