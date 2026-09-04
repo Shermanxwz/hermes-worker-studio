@@ -9,6 +9,7 @@ THEME_DIR="$HERMES_HOME/dashboard-themes"
 THEME_DEST="$THEME_DIR/hermes-worker-studio.yaml"
 TMP="$PLUGIN_ROOT/.hermes-worker-studio.install.$$"
 BACKUP="$PLUGIN_ROOT/.hermes-worker-studio.backup.$$"
+THEME_STAGE="$THEME_DIR/.hermes-worker-studio.yaml.install.$$"
 THEME_BACKUP="$THEME_DIR/.hermes-worker-studio.yaml.backup.$$"
 CANDIDATE_SHA="${HWS_CANDIDATE_SHA:-}"
 if [[ -z "$CANDIDATE_SHA" ]] && command -v git >/dev/null 2>&1; then
@@ -81,7 +82,7 @@ rollback_install() {
 
   if (( THEME_CHANGED )); then
     if (( THEME_HAD_PREVIOUS )) && [[ -f "$THEME_BACKUP" ]]; then
-      if ! install -m 0644 "$THEME_BACKUP" "$THEME_DEST"; then
+      if ! mv -f "$THEME_BACKUP" "$THEME_DEST"; then
         echo "FATAL: could not restore previous theme from $THEME_BACKUP" >&2
         return 1
       fi
@@ -109,11 +110,13 @@ cleanup() {
   if (( rollback_failed == 0 )); then
     rm -rf "$TMP"
     rm -rf "$BACKUP"
+    rm -f "$THEME_STAGE"
     rm -f "$THEME_BACKUP"
   else
     echo "FATAL: rollback incomplete; recovery artifacts were preserved for manual recovery:" >&2
     [[ -e "$TMP" ]] && echo "  transaction tree: $TMP" >&2
     [[ -e "$BACKUP" ]] && echo "  previous plugin backup: $BACKUP" >&2
+    [[ -e "$THEME_STAGE" ]] && echo "  staged theme: $THEME_STAGE" >&2
     [[ -e "$THEME_BACKUP" ]] && echo "  previous theme backup: $THEME_BACKUP" >&2
   fi
   exit "$status"
@@ -135,7 +138,7 @@ done
 
 mkdir -p "$PLUGIN_ROOT" "$THEME_DIR"
 rm -rf "$TMP" "$BACKUP"
-rm -f "$THEME_BACKUP"
+rm -f "$THEME_STAGE" "$THEME_BACKUP"
 mkdir -p "$TMP/dashboard/dist"
 cp "$ROOT/plugin.yaml" "$ROOT/__init__.py" "$ROOT/schemas.py" "$ROOT/tools.py" "$TMP/"
 cp "$ROOT/dashboard/manifest.json" "$ROOT/dashboard/plugin_api.py" "$ROOT/dashboard/plugin_api_v3.py" "$TMP/dashboard/"
@@ -219,8 +222,9 @@ if [[ -f "$ROOT/themes/hermes-worker-studio.yaml" ]]; then
     cp -p "$THEME_DEST" "$THEME_BACKUP"
     THEME_HAD_PREVIOUS=1
   fi
-  install -m 0644 "$ROOT/themes/hermes-worker-studio.yaml" "$THEME_DEST"
+  install -m 0644 "$ROOT/themes/hermes-worker-studio.yaml" "$THEME_STAGE"
   THEME_CHANGED=1
+  mv -f "$THEME_STAGE" "$THEME_DEST"
 fi
 
 if command -v hermes >/dev/null 2>&1; then
@@ -231,15 +235,15 @@ else
   echo "[4/4] Then run: hermes plugins doctor '$DEST' --ci"
 fi
 
-# Commit point: the staged tree, exact installed tree, theme write and official
-# enable have all succeeded (or Hermes is not installed and the manual gate was
-# explicitly printed). Only now discard the rollback copy.
+# Commit point: the staged tree, exact installed tree, atomic theme replacement
+# and official enable have all succeeded (or Hermes is not installed and the
+# manual gate was explicitly printed). Only now discard rollback copies.
 ROLLBACK_ARMED=0
 if [[ "$SWAP_MODE" == "atomic-exchange" ]]; then
   rm -rf "$TMP"
 fi
 rm -rf "$BACKUP"
-rm -f "$THEME_BACKUP"
+rm -f "$THEME_STAGE" "$THEME_BACKUP"
 trap - EXIT
 
 cat <<EOF
