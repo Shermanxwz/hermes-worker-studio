@@ -7,8 +7,8 @@
 - Reworked the installer into an explicit transaction: existing installs prefer Linux `renameat2(RENAME_EXCHANGE)`, otherwise retain a rollback tree; the previous plugin/theme is not discarded until the exact installed path passes Plugin Doctor and official enable succeeds.
 - Added regression coverage proving installed-tree Doctor and enable failures restore the prior plugin/theme and leave no staging/backup residue.
 - Added `stage_security_closure.py`, an exact-count/fail-closed staged transform that creates private protocol/projection state with mode `0600` + exclusive/no-follow temporary files before rename and maps malformed JSON mutation bodies to HTTP 400.
-- Added a dedicated high-severity `npm audit` gate against the exact frontend test-harness lockfile; the previous documentation claim is now backed by canonical CI.
-- Extended architecture/security/acceptance gates so installer transaction ordering, staged security closure and npm audit cannot silently drift out of the release pipeline.
+- Hardened the npm boundary deterministically: the root package remains a private test-only harness, production dependency fields are forbidden, dev dependencies are exact-pinned, the lock root must match `package.json`, and CI installs with lifecycle scripts disabled. Canonical seal CI no longer depends on the live npm advisory service.
+- Extended architecture/security/acceptance gates so installer transaction ordering, staged security closure and the test-only dependency boundary cannot silently drift out of the release pipeline.
 - Clarified that Git tags and GitHub Releases are optional distribution metadata; exact `main` SHA + three-plane evidence remain the only seal identity.
 
 ### Mixed New API protocol closure
