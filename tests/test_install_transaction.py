@@ -121,6 +121,23 @@ class InstallTransactionTests(unittest.TestCase):
         self.assertIn("restoring previous Worker Studio state", failed.stderr)
         self._assert_no_transaction_leftovers()
 
+    def test_rollback_failure_contract_preserves_recovery_material(self) -> None:
+        source = INSTALL.read_text(encoding="utf-8")
+        for token in (
+            "rollback_failed=0",
+            "rollback_failed=1",
+            "if (( rollback_failed == 0 )); then",
+            "rollback incomplete; recovery artifacts were preserved for manual recovery",
+            "previous plugin backup:",
+            "previous theme backup:",
+            "status=70",
+        ):
+            self.assertIn(token, source)
+        cleanup_start = source.index("cleanup() {")
+        cleanup_end = source.index("trap cleanup EXIT", cleanup_start)
+        cleanup = source[cleanup_start:cleanup_end]
+        self.assertLess(cleanup.index("if (( rollback_failed == 0 )); then"), cleanup.index('rm -rf "$TMP"'))
+
 
 if __name__ == "__main__":
     unittest.main()
