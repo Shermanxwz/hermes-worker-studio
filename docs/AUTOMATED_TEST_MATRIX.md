@@ -14,11 +14,14 @@ A green GitHub workflow proves an exact commit is a repository-level **ARCHIVE C
 | Exact staged artifact | run all deterministic release transforms, then `node --check` + Python compile + closure assertions |
 | Staged security closure | private state is created mode `0600` with exclusive/no-follow temp semantics; malformed JSON maps to HTTP 400 |
 | Installer transaction | post-swap Doctor/enable failure restores the previous plugin and theme; no staging/backup residue remains |
+| npm test-harness boundary | private test-only package; no production dependency fields; exact dev pins; package/lock parity; install scripts disabled |
 | Mounted Product 3 behavior | `npm run test:frontend` |
 | Seal CLIs | acceptance/evidence/upstream/close/finalize help gates |
 | Manifest | JSON parser |
 
 The staged-artifact gate is intentional: checked-in review source is not accepted as proof of the installed candidate. CI reproduces the installer build path (`stage_product_bundle.py`, `stage_mixed_protocol.py`, then `stage_security_closure.py`) and validates the resulting JS/Python. Every release rewrite is exact-count/fail-closed.
+
+The root npm package is not a production package. `verify_contract.py` and the Studio CI job require `hermes-worker-studio-tests` to remain private, reject nonempty `dependencies` / `optionalDependencies` / `peerDependencies`, require exact `x.y.z` devDependency pins, require the lockfile root to match `package.json`, and install with `npm ci --ignore-scripts --no-fund --no-audit`. Canonical seal CI intentionally does not depend on the live npm advisory service, because advisory-service availability is external infrastructure state rather than evidence about the shipped plugin.
 
 Mounted/unit coverage includes:
 
@@ -41,16 +44,6 @@ Mounted/unit coverage includes:
 - staged private-state write hardening and malformed-JSON fail-closed behavior;
 - rollback after failure of the installed-tree Plugin Doctor or official plugin enable command.
 
-## Job: Frontend dependency audit
-
-The exact committed npm lockfile is audited independently from the Studio unit/runtime job. This keeps supply-chain availability from hiding code/test results while still making audit failure a workflow failure.
-
-- `npm audit --audit-level=high --ignore-scripts` is the canonical vulnerability gate;
-- the audit job is read-only and needs no `node_modules` install because npm audits the package/lock graph directly;
-- npm advisory fetch retries/timeouts are explicitly bounded and the audit step itself has a two-minute ceiling;
-- advisory-service timeout/unavailability fails closed rather than being silently skipped;
-- `npm ci --no-audit` in the Studio job suppresses only npm's redundant implicit install-time audit.
-
 ## Job: Pinned Hermes public contracts
 
 Checks the exact Hermes checkout SHA from `tests/upstream-lock.json` and verifies required documented/plugin surfaces. The lock contains Hermes only.
@@ -67,7 +60,7 @@ Installs the exact pinned Hermes snapshot and runs Hermes-owned regression suite
 - committed-secret rejection;
 - second-runtime sentinel rejection across runtime, CSS, installer and transform files.
 
-`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, explicit npm audit gate, evidence schemas and read-only exact-main target workflow.
+`verify_contract.py` additionally locks the sole-Hermes architecture, final CSS chain, deterministic transforms, exact installed artifact, deterministic npm test-harness boundary, evidence schemas and read-only exact-main target workflow.
 
 ## Supported installer transaction
 
@@ -116,7 +109,7 @@ A PR-head CI, a same-name workflow at another path, a skipped viewport test, or 
 
 ## Failure policy
 
-No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, non-green exact-main push CI, high-severity npm audit failure/timeout, private-state hardening drift, or installer rollback regression blocks sealing.
+No flaky bypass, `continue-on-error`, static-only seal or “known failure” exemption is accepted. A staged-transform anchor drift, schema mismatch, target candidate mismatch, unresolved execution route, cleanup failure, missing/skipped required browser pass, non-main candidate, non-green exact-main push CI, npm production-dependency or lock/pin boundary drift, private-state hardening drift, or installer rollback regression blocks sealing.
 
 HTTPS certificate errors are not ignored by default. `HWS_SEAL_IGNORE_HTTPS_ERRORS=1` is an explicit trusted local/test override only.
 
