@@ -298,8 +298,8 @@ def patch_frontend(source: str) -> str:
 
     source = _replace_once(
         source,
-        '协议只接受 Hermes 官方声明，或你点击“官方探测”后的真实 Run 结果；没有证据时显示“未探测”，不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。',
-        '协议只接受 Hermes 官方声明或真实 Run 结果；首次实际使用会自动探测并缓存，“官方探测”按钮用于诊断或主动重试。没有证据时不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。',
+        '协议只接受 Hermes 官方声明，或你点击“测试”后的真实 Run 结果；没有证据时显示“未探测”，不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。',
+        '协议只接受 Hermes 官方声明或真实 Run 结果；首次实际使用会自动探测并缓存，“测试”按钮用于诊断或主动重试。没有证据时不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。',
         "Models-page lazy probe explanation",
     )
     return source

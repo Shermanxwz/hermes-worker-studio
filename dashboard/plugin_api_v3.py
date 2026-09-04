@@ -18,6 +18,7 @@ import copy
 import importlib.util
 import hashlib
 import json
+import logging
 import os
 import pathlib
 import sys
@@ -68,6 +69,8 @@ _PROTOCOL_FILE = pathlib.Path(os.getenv(
     str(_PROTOCOL_ROOT / "protocols.json"),
 ))
 _PROTOCOL_LOCK = threading.RLock()
+_OFFICIAL_CONFIG_LOCK = threading.RLock()
+_CONFIG_ROUTE_UNAVAILABLE = frozenset({404, 405})
 _PROTOCOL_MODES = {
     "chat_completions",
     "codex_responses",
@@ -537,8 +540,67 @@ def _config_object(payload: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+_LOG = logging.getLogger(__name__)
+
+
+def _read_hermes_config_store() -> dict[str, Any]:
+    """Read the same official config store used by Hermes' Dashboard route.
+
+    The pinned Hermes build separates its Dashboard process (which owns
+    ``/api/config``) from the Gateway/API Server process (which owns Runs).
+    The plugin is loaded inside the Dashboard process, so this is the
+    authoritative in-process fallback when the API Server proxy has no config
+    route.  Keep the import lazy: the bridge's standalone tests and older
+    Hermes loaders can still import the module before the full CLI is ready.
+    """
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+    except Exception as exc:  # pragma: no cover - depends on the host Hermes install
+        _LOG.exception("Hermes official config store read failed")
+        raise HTTPException(502, "Hermes official config store is unavailable") from exc
+    if not isinstance(config, dict):
+        raise HTTPException(502, "Hermes official config store returned an invalid object")
+    return config
+
+
+def _write_hermes_config_store_providers(providers: dict[str, dict[str, Any]]) -> None:
+    """Persist only the provider map through Hermes' official config writer.
+
+    ``web_server.update_config`` deep-merges a partial body into the raw YAML
+    before calling ``save_config``.  Mirror that contract here instead of
+    writing a second config file or exporting a second provider registry.
+    """
+    try:
+        from hermes_cli.config import is_managed, read_raw_config, save_config
+
+        if is_managed():
+            raise HTTPException(409, "Hermes configuration is managed and cannot be modified")
+        current = read_raw_config()
+        if not isinstance(current, dict):
+            raise HTTPException(502, "Hermes official config store returned an invalid object")
+        current["providers"] = copy.deepcopy(providers)
+        save_config(current)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - depends on the host Hermes install
+        _LOG.exception("Hermes official config store write failed")
+        raise HTTPException(502, "Hermes official config store could not be updated") from exc
+
+
 def _read_official_config() -> dict[str, Any]:
-    payload = _legacy._hermes_proxy("/api/config")
+    try:
+        payload = _legacy._hermes_proxy("/api/config")
+    except HTTPException as exc:
+        # The API Server intentionally does not expose the Dashboard's config
+        # contract in Hermes 0.20.6.  Only a missing method/route is eligible
+        # for the in-process official-store fallback; auth, transport, and
+        # server errors must remain visible and fail closed.
+        if int(exc.status_code or 0) not in _CONFIG_ROUTE_UNAVAILABLE:
+            raise
+        _LOG.debug("Hermes API Server has no /api/config route; using official Dashboard config store")
+        return _read_hermes_config_store()
     config = _config_object(payload)
     if not isinstance(config, dict):
         raise HTTPException(502, "Hermes /api/config returned an invalid object")
@@ -782,7 +844,15 @@ def _ensure_protocol_aliases(
         # deep-merges this payload, and keeping unrelated sections out of the
         # request prevents an expanded credential or another private setting
         # from being echoed back through an unrelated protocol selection.
-        _legacy._hermes_proxy("/api/config", method="PUT", body={"config": {"providers": providers}})
+        try:
+            _legacy._hermes_proxy("/api/config", method="PUT", body={"config": {"providers": providers}})
+        except HTTPException as exc:
+            if int(exc.status_code or 0) not in _CONFIG_ROUTE_UNAVAILABLE:
+                raise
+            # The fallback is still Hermes-owned: use the same config module
+            # and raw-config deep-merge semantics as web_server.update_config.
+            with _OFFICIAL_CONFIG_LOCK:
+                _write_hermes_config_store_providers(providers)
     return config, aliases
 
 
@@ -973,7 +1043,7 @@ def _probe_protocols_sync(provider: str, model: str) -> dict[str, Any]:
                 },
                 session_required=False,
             )
-            final = _legacy._wait_run(
+            final = _legacy._wait_ephemeral_run(
                 started["id"],
                 float(os.getenv("HERMES_WORKER_STUDIO_PROTOCOL_PROBE_TIMEOUT", "90")),
             )

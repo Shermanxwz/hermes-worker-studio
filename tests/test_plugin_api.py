@@ -21,6 +21,8 @@ class RunProjectionTests(unittest.TestCase):
     def setUp(self):
         with plugin_api._RUNS_LOCK:
             plugin_api._RUNS.clear()
+        with plugin_api._EPHEMERAL_REAPERS_LOCK:
+            plugin_api._EPHEMERAL_REAPERS.clear()
 
     def _seed(self, run_id="run-test", started_at=None):
         now = time.time() if started_at is None else started_at
@@ -115,6 +117,97 @@ class RunProjectionTests(unittest.TestCase):
                 plugin_api._require_runs()
         self.assertEqual(ctx.exception.status_code, 409)
         self.assertIn("no legacy execution fallback", str(ctx.exception.detail))
+
+    def test_ephemeral_probe_cleanup_deletes_only_the_run_session(self):
+        def fake_proxy(path, method="GET", body=None, timeout=None):
+            if method == "DELETE":
+                return {}
+            raise plugin_api.HTTPException(404, "gone")
+
+        with patch.object(plugin_api, "_hermes_proxy", side_effect=fake_proxy) as proxy, patch.object(
+            plugin_api.time, "sleep"
+        ):
+            self.assertTrue(plugin_api._cleanup_ephemeral_run_session("run_probe_123"))
+            self.assertIn(
+                (("/api/sessions/run_probe_123",), {"method": "DELETE"}),
+                [(call.args, call.kwargs) for call in proxy.call_args_list],
+            )
+
+        with patch.object(plugin_api, "_hermes_proxy") as proxy:
+            self.assertFalse(plugin_api._cleanup_ephemeral_run_session("session-user-owned"))
+            proxy.assert_not_called()
+
+    def test_ephemeral_probe_cleanup_retries_when_a_late_session_write_reappears(self):
+        calls = []
+        verification = [
+            plugin_api.HTTPException(404, "gone"),
+            {"id": "run_probe_late"},
+            plugin_api.HTTPException(404, "gone"),
+            plugin_api.HTTPException(404, "gone"),
+        ]
+
+        def fake_proxy(path, method="GET", body=None, timeout=None):
+            calls.append((path, method))
+            if method == "DELETE":
+                return {}
+            result = verification.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+        with patch.object(plugin_api, "_hermes_proxy", side_effect=fake_proxy), patch.object(
+            plugin_api.time, "sleep"
+        ):
+            self.assertTrue(plugin_api._cleanup_ephemeral_run_session("run_probe_late"))
+
+        self.assertEqual(calls.count(("/api/sessions/run_probe_late", "DELETE")), 2)
+
+    def test_ephemeral_wait_cleans_after_terminal_run(self):
+        with patch.object(plugin_api, "_wait_run", return_value={"status": "completed"}), patch.object(
+            plugin_api, "_cleanup_ephemeral_run_session"
+        ) as cleanup, patch.object(plugin_api, "_schedule_ephemeral_run_reaper") as schedule:
+            final = plugin_api._wait_ephemeral_run("run_probe_456", 3)
+        self.assertEqual(final["status"], "completed")
+        cleanup.assert_called_once_with("run_probe_456")
+        schedule.assert_called_once_with("run_probe_456")
+
+    def test_ephemeral_reaper_removes_a_session_that_appears_after_initial_cleanup(self):
+        with patch.object(plugin_api, "_EPHEMERAL_REAPER_GRACE_SECONDS", 0.5), patch.object(
+            plugin_api, "_EPHEMERAL_REAPER_POLL_SECONDS", 0.1
+        ), patch.object(plugin_api, "_ephemeral_session_exists", side_effect=[False, True, False]), patch.object(
+            plugin_api, "_delete_ephemeral_run_session"
+        ) as delete, patch.object(plugin_api.time, "sleep"), patch.object(
+            plugin_api.time, "monotonic", side_effect=[0.0, 0.0, 0.1, 1.0]
+        ):
+            plugin_api._reap_ephemeral_run_session("run_probe_late_title")
+        delete.assert_called_once_with("run_probe_late_title")
+        with plugin_api._EPHEMERAL_REAPERS_LOCK:
+            self.assertNotIn("run_probe_late_title", plugin_api._EPHEMERAL_REAPERS)
+
+    def test_ephemeral_timeout_does_not_delete_an_active_session(self):
+        with patch.object(plugin_api, "_EPHEMERAL_STOP_GRACE_SECONDS", 0), patch.object(
+            plugin_api, "_wait_run", side_effect=plugin_api.HTTPException(504, "timed out")), patch.object(
+            plugin_api, "_hermes_proxy", return_value={"status": "running"}
+        ), patch.object(plugin_api, "_cleanup_ephemeral_run_session") as cleanup:
+            with self.assertRaises(plugin_api.HTTPException):
+                plugin_api._wait_ephemeral_run("run_probe_789", 3)
+        cleanup.assert_not_called()
+
+    def test_ephemeral_timeout_waits_for_official_stop_before_cleanup(self):
+        statuses = [{"status": "stopping"}, {"status": "completed"}]
+
+        with patch.object(plugin_api, "_EPHEMERAL_STOP_GRACE_SECONDS", 1), patch.object(
+            plugin_api, "_wait_run", side_effect=plugin_api.HTTPException(504, "timed out")
+        ), patch.object(plugin_api, "_hermes_proxy", side_effect=lambda *args, **kwargs: statuses.pop(0)), patch.object(
+            plugin_api, "_cleanup_ephemeral_run_session"
+        ) as cleanup, patch.object(plugin_api, "_schedule_ephemeral_run_reaper") as schedule, patch.object(
+            plugin_api.time, "sleep"
+        ):
+            with self.assertRaises(plugin_api.HTTPException):
+                plugin_api._wait_ephemeral_run("run_probe_stopped", 3)
+
+        cleanup.assert_called_once_with("run_probe_stopped")
+        schedule.assert_called_once_with("run_probe_stopped")
 
     def test_poll_cursor_returns_only_new_events(self):
         run_id = self._seed()

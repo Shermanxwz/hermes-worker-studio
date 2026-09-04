@@ -33,11 +33,19 @@ const { createRoot } = await import('react-dom/client');
 const calls = [];
 const patches = [];
 const deleted = [];
+const modelLocks = [];
 let runSerial = 0;
 const polls = new Map();
 let createdTitle = '';
 let latestRunBody = null;
 let includeToolMessages = false;
+let protocolRoutes = [
+  { provider: 'official', model: 'main-model', status: 'unresolved', mode: '', requires_probe: true },
+  { provider: 'official', model: 'worker-model', status: 'unresolved', mode: '', requires_probe: true },
+];
+const bulkProbeCalls = [];
+let holdModelOptions = false;
+const heldModelOptionResolvers = [];
 let config = {
   plugins: { entries: { 'hermes-worker-studio': { settings: { mode: 'AUTO' } } } },
   approvals: { mode: 'smart', timeout: 300, cron_mode: 'approve', single_query_mode: 'approve', unattended_mode: 'approve', mcp_reload_confirm: true, destructive_slash_confirm: true },
@@ -46,7 +54,7 @@ let config = {
 };
 let sessions = [
   { id: 'session-1', title: 'Conversation One', model: 'main-model', message_count: 3, last_active: 1788138000, archived: false },
-  { id: 'session-2', title: 'Conversation Two', model: 'main-model', message_count: 1, last_active: 1788137000, archived: false },
+  { id: 'session-2', title: 'Conversation Two', model: 'worker-model', message_count: 1, last_active: 1788137000, archived: false },
 ];
 
 const modelOptions = {
@@ -56,7 +64,7 @@ const modelOptions = {
     {
       slug: 'official', name: 'Official', authenticated: true, is_current: true,
       models: ['main-model', 'worker-model'],
-      capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], context_window: 128000 }, 'worker-model': {} },
+      capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], context_window: 128000 }, 'worker-model': { reasoning: true } },
     },
     { slug: 'moa', name: 'Mixture of Agents', authenticated: true, models: ['default'] },
   ],
@@ -106,7 +114,22 @@ function responseFor(url, init = {}) {
     if (method === 'PUT') { config = body.config; return { ok: true }; }
     return { config };
   }
-  if (url === '/api/model/options' || url === '/api/model/options?refresh=1') return modelOptions;
+  if (url === '/api/model/options' || url === '/api/model/options?refresh=1') {
+    if (holdModelOptions) return new Promise((resolve) => heldModelOptionResolvers.push(() => resolve(modelOptions)));
+    return modelOptions;
+  }
+  if (url === '/api/plugins/hermes-worker-studio/hermes/protocols') return { routes: protocolRoutes };
+  if (url === '/api/plugins/hermes-worker-studio/hermes/protocols/probe' && method === 'POST') {
+    bulkProbeCalls.push(body);
+    protocolRoutes = protocolRoutes.map((route) => route.provider === body.provider && route.model === body.model
+      ? { ...route, status: 'resolved', mode: 'codex_responses', requires_probe: false }
+      : route);
+    return { ok: true, status: 'resolved', route: { provider: body.provider, model: body.model, status: 'resolved', mode: 'codex_responses' } };
+  }
+  if (url.startsWith('/api/plugins/hermes-worker-studio/hermes/protocol-route?')) {
+    const query = new URL(`http://hws.test${url}`).searchParams;
+    return { provider: query.get('provider'), model: query.get('model'), execution_provider: query.get('provider'), requires_probe: false, status: 'native' };
+  }
   if (url === '/api/model/moa' && method === 'GET') return moaConfig;
   if (url === '/api/skills') return { skills: [{ name: 'base', enabled: true }] };
   if (url === '/api/providers/custom-endpoints') return { endpoints: [] };
@@ -119,7 +142,12 @@ function responseFor(url, init = {}) {
     return created;
   }
   if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-new/context' || url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/context') return { available: false, source: 'unavailable' };
-  if (url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-new/model' || url === '/api/plugins/hermes-worker-studio/hermes/sessions/session-1/model') return { ok: true };
+  if (url.startsWith('/api/plugins/hermes-worker-studio/hermes/sessions/') && url.endsWith('/model')) {
+    const id = decodeURIComponent(url.split('/hermes/sessions/')[1].split('/model')[0]);
+    modelLocks.push({ id, body });
+    sessions = sessions.map((session) => session.id === id ? { ...session, model: body.model } : session);
+    return { ok: true };
+  }
   if (url === '/api/plugins/hermes-worker-studio/hermes/runs-v3') {
     runSerial += 1;
     const id = `run-${runSerial}`;
@@ -210,6 +238,43 @@ await click(byText('.hws3-nav button', '模型'));
 await waitFor(() => window.document.querySelector('.hws3-model-catalog'), 'models page without MOA panel');
 assert.equal(window.document.querySelector('.hws3-moa-page'), null);
 assert.equal(window.document.querySelector('.hws3-moa-panel'), null);
+assert.ok(byText('.hws3-page-head button', '一键测试待测模型（2）'));
+assert.ok([...window.document.querySelectorAll('.hws3-model-actions > button')].every((button) => button.textContent.trim() === '测试'), 'per-model test actions must use one consistent label');
+assert.match(byText('.hws3-model-row', 'worker-model').textContent, /思考：Hermes 返回思考支持 · 档位未公开/);
+const sessionCreateCallsBeforeBulkTest = calls.filter((x) => x.url === '/api/plugins/hermes-worker-studio/hermes/sessions').length;
+await click(byText('.hws3-page-head button', '一键测试待测模型（2）'));
+await waitFor(() => bulkProbeCalls.length === 2, 'bulk protocol probe calls');
+await waitFor(() => byText('.hws3-page', '批量测试完成'), 'bulk protocol probe completion');
+assert.equal(calls.filter((x) => x.url === '/api/plugins/hermes-worker-studio/hermes/sessions').length, sessionCreateCallsBeforeBulkTest, 'model tests must not create conversation sessions');
+assert.ok(bulkProbeCalls.every((call) => call.provider === 'official' && ['main-model', 'worker-model'].includes(call.model)));
+
+// Reopening a session restores its official persisted model instead of the
+// first model in the current provider list. A deliberate dropdown switch is
+// persisted through the same official protocol-resolution + model-lock path.
+await click(byText('.hws3-nav button', '对话'));
+await click([...window.document.querySelectorAll('.hws3-session-row')].find((el) => el.textContent.includes('Conversation Two')));
+await waitFor(() => byText('.hws3-chat-title', 'Conversation Two'), 'open model-pinned session');
+const routeSelects = window.document.querySelectorAll('.hws3-route-compact select');
+assert.equal(routeSelects[1].value, 'worker-model', 'opening a session must restore its persisted model');
+const lockCountBeforeManualSwitch = modelLocks.length;
+setValue(routeSelects[1], 'main-model');
+await waitFor(() => modelLocks.length > lockCountBeforeManualSwitch, 'manual session model lock');
+assert.deepEqual(modelLocks.at(-1), { id: 'session-2', body: { provider: 'official', model: 'main-model', require_model_lock: true } });
+
+// A browser refresh destroys Studio's React state. Re-mount the product and
+// reopen the same official Session to prove the persisted model lock, rather
+// than the in-memory dropdown value, is what wins over the first model.
+root.unmount();
+holdModelOptions = true;
+const refreshedRoot = createRoot(window.document.getElementById('root'));
+await act(async () => { refreshedRoot.render(React.createElement(Registered)); });
+await waitFor(() => window.document.querySelectorAll('.hws3-recents .hws3-session-row').length === 2, 'refreshed recents');
+await click([...window.document.querySelectorAll('.hws3-session-row')].find((el) => el.textContent.includes('Conversation Two')));
+await waitFor(() => byText('.hws3-chat-title', 'Conversation Two'), 'reopen after refresh');
+holdModelOptions = false;
+heldModelOptionResolvers.splice(0).forEach((release) => release());
+await waitFor(() => window.document.querySelectorAll('.hws3-route-compact select')[1]?.value === 'main-model', 'late model inventory restore');
+assert.equal(window.document.querySelectorAll('.hws3-route-compact select')[1].value, 'main-model', 'refresh must keep the manually selected model');
 
 // Mobile drawer state is real React state, not a CSS-only mock.
 await click(window.document.querySelector('.hws3-mobile-bar button[title="菜单"]'));

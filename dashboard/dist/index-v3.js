@@ -179,6 +179,56 @@
     const model = models.includes(options?.model) ? options.model : (models[0] || '');
     return { provider, model, effort: 'auto' };
   }
+  function sessionModelValue(session) {
+    const lock = session?.model_config?.browser_model_lock || session?.browser_model_lock || {};
+    return [session?.model, session?.model_name, session?.route?.model, lock.model, session?.model_config?.model]
+      .map((value) => String(value || '').trim()).find(Boolean) || '';
+  }
+  function sessionProviderHints(session, projection) {
+    const lock = session?.model_config?.browser_model_lock || session?.browser_model_lock || {};
+    const turns = Array.isArray(projection?.turns) ? projection.turns : [];
+    const projected = [...turns].reverse()
+      .map((turn) => turn?.studio_route || turn?.requested_route || turn?.source_route)
+      .find((route) => route && typeof route === 'object');
+    return [
+      session?.provider,
+      session?.model_provider,
+      session?.route?.provider,
+      session?.model_config?.provider,
+      lock.provider,
+      projected?.source_provider,
+      projected?.provider,
+    ].map((value) => String(value || '').trim()).filter(Boolean);
+  }
+  function sessionEffortValue(session, projection) {
+    const lock = session?.model_config?.browser_model_lock || session?.browser_model_lock || {};
+    const lockOptions = lock.model_options && typeof lock.model_options === 'object' ? lock.model_options : {};
+    const turns = Array.isArray(projection?.turns) ? projection.turns : [];
+    const projected = [...turns].reverse()
+      .map((turn) => turn?.studio_route || turn?.requested_route || turn?.source_route)
+      .find((route) => route && typeof route === 'object');
+    return [
+      session?.effort,
+      session?.reasoning_effort,
+      session?.route?.effort,
+      lockOptions.reasoning_effort,
+      lockOptions.reasoning?.effort,
+      projected?.effort,
+      projected?.reasoning,
+    ].map((value) => typeof value === 'string' ? value.trim() : '').find(Boolean) || 'auto';
+  }
+  function routeForSession(options, session, projection = null, preferredProvider = '') {
+    const model = sessionModelValue(session);
+    if (!model) return null;
+    const matches = authenticatedProviders(options).filter((provider) => Array.isArray(provider.models) && provider.models.includes(model));
+    if (!matches.length) return null;
+    const hints = sessionProviderHints(session, projection);
+    const hinted = hints.map((hint) => providerBySlug(options, hint)).find((provider) => provider && provider.models?.includes(model));
+    const preferred = providerBySlug(options, preferredProvider);
+    const selected = hinted || (preferred && matches.some((provider) => provider.slug === preferred.slug) ? preferred : null) || matches.find((provider) => provider.is_current) || matches[0];
+    return normalizeRoute(options, { provider: selected.slug, model, effort: sessionEffortValue(session, projection) });
+  }
+  function routeIdentity(route) { return `${String(route?.provider || '').trim()}\u0000${String(route?.model || '').trim()}`; }
   function modelCapability(options, provider, model) { return providerBySlug(options, provider)?.capabilities?.[model] || {}; }
   function modelApiMode(options, provider, model) {
     const cap = modelCapability(options, provider, model);
@@ -186,7 +236,7 @@
   }
   function reasoningOptions(options, provider, model) {
     const cap = modelCapability(options, provider, model);
-    const candidates = [cap?.reasoning?.options, cap?.reasoning_efforts, cap?.reasoningEfforts, cap?.supported_reasoning_efforts, cap?.supportedReasoningEfforts];
+    const candidates = [cap?.reasoning?.options, cap?.reasoning?.efforts, cap?.reasoning?.supported_efforts, cap?.reasoning?.supportedEfforts, cap?.reasoning_efforts, cap?.reasoningEfforts, cap?.supported_reasoning_efforts, cap?.supportedReasoningEfforts];
     const exact = [];
     for (const values of candidates) {
       if (!Array.isArray(values)) continue;
@@ -196,6 +246,16 @@
       }
     }
     return [{ value: 'auto', description: '使用 Hermes/provider 默认值' }, ...exact];
+  }
+  function reasoningSummary(options, provider, model) {
+    const efforts = reasoningOptions(options, provider, model).filter((item) => item.value !== 'auto');
+    if (efforts.length) return efforts.map((item) => item.value).join(' · ');
+    const cap = modelCapability(options, provider, model);
+    const raw = cap?.reasoning;
+    const rich = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+    if (raw === false || rich.supported === false || cap?.supports_reasoning === false) return '不支持';
+    if (raw === true || (raw && typeof raw === 'object') || cap?.supports_reasoning === true) return 'Hermes 返回思考支持 · 档位未公开';
+    return '上游未声明';
   }
   function normalizeRoute(options, route) {
     const fallback = defaultRoute(options);
@@ -1377,6 +1437,7 @@
     const [message, setMessage] = useState('');
     const [query, setQuery] = useState('');
     const [tests, setTests] = useState({});
+    const [bulkTest, setBulkTest] = useState(null);
     const [config, setConfig] = useState({});
     const [protocolState, setProtocolState] = useState({ loading: true, routes: [], error: '' });
 
@@ -1448,7 +1509,7 @@
       try { await api(`/api/providers/custom-endpoints/${encodeURIComponent(endpoint.id)}/activate`, jinit('POST', {})); await refreshEndpoints(); await refreshOptions(true); await refreshConfig(); setMessage(`已切换到 ${endpoint.name}`); }
       catch (err) { setMessage(errorText(err)); } finally { setBusy(''); }
     }
-    async function testModel(provider, model) {
+    async function testModel(provider, model, { refresh = true } = {}) {
       const key = `${provider}:${model}`; setTests((x) => ({ ...x, [key]: { loading: true } }));
       try {
         const known = protocolState.routes.find((route) => route.provider === provider && route.model === model);
@@ -1474,9 +1535,14 @@
           : await plugin('/hermes/model-probe', jinit('POST', { provider: executionProvider, model }));
         if (provider === 'moa' && !result?.ok) result.error = `${errorText(result.error || result.message)} · MOA 是 Hermes 官方聚合执行模式，需要先配置每个 reference 与 aggregator provider。`;
         setTests((x) => ({ ...x, [key]: result }));
-        if (known && ['unresolved', 'ambiguous'].includes(known.status)) await refreshProtocols();
+        if (refresh && known && ['unresolved', 'ambiguous'].includes(known.status)) await refreshProtocols();
+        return result;
       }
-      catch (err) { setTests((x) => ({ ...x, [key]: { ok: false, error: provider === 'moa' ? `${errorText(err)} · MOA 是 Hermes 官方聚合执行模式，需要先配置每个 reference 与 aggregator provider。` : errorText(err) } })); }
+      catch (err) {
+        const failure = { ok: false, error: provider === 'moa' ? `${errorText(err)} · MOA 是 Hermes 官方聚合执行模式，需要先配置每个 reference 与 aggregator provider。` : errorText(err) };
+        setTests((x) => ({ ...x, [key]: failure }));
+        return failure;
+      }
     }
     async function selectProtocol(provider, model, mode) {
       const key = `${provider}:${model}`; setTests((x) => ({ ...x, [key]: { loading: true } }));
@@ -1485,8 +1551,37 @@
     }
     const needle = query.trim().toLowerCase();
     const rows = authenticatedProviders(modelOptions).filter((provider) => provider.slug !== 'moa' && !isManagedProtocolProvider(provider));
+    const pendingProtocolTests = rows.flatMap((provider) => (provider.models || []).slice(0, 80).map((model) => ({
+      provider: provider.slug,
+      model,
+      route: protocolState.routes.find((item) => item.provider === provider.slug && item.model === model),
+    }))).filter((item) => item.route?.status === 'unresolved');
+    async function testPendingModels() {
+      if (bulkTest || !pendingProtocolTests.length) {
+        if (!bulkTest && !pendingProtocolTests.length) setMessage('当前没有待测试的模型。');
+        return;
+      }
+      const total = pendingProtocolTests.length;
+      if (typeof window.confirm === 'function' && !window.confirm(`将按顺序测试 ${total} 个待确定模型；每个模型最多执行两次官方 Run，可能产生上游用量。继续？`)) return;
+      setMessage('');
+      setBulkTest({ done: 0, total, failures: 0, current: '' });
+      let failures = 0;
+      try {
+        for (const target of pendingProtocolTests) {
+          const key = `${target.provider}:${target.model}`;
+          setBulkTest((state) => ({ ...(state || { done: 0, total, failures: 0 }), current: key }));
+          const result = await testModel(target.provider, target.model, { refresh: false });
+          if (result?.ok !== true && result?.route?.status !== 'resolved') failures += 1;
+          setBulkTest((state) => ({ ...(state || { done: 0, total, failures: 0 }), done: (state?.done || 0) + 1, failures }));
+        }
+        await refreshProtocols();
+        setMessage(failures ? `批量测试完成：${total - failures} 个通过，${failures} 个失败或仍未确定。` : `批量测试完成：${total} 个模型均已确定协议。`);
+      } finally {
+        setBulkTest(null);
+      }
+    }
     return h('section', { className: 'hws3-page' },
-      h('header', { className: 'hws3-page-head' }, h('div', null, h('h2', null, '模型'), h('p', null, 'Hermes 官方模型目录；混合 New API 会按模型真实确认协议')), h(Button, { className: 'ghost', onClick: () => { refreshOptions(true); refreshEndpoints(); refreshConfig(); refreshProtocols(); } }, '刷新')),
+      h('header', { className: 'hws3-page-head' }, h('div', null, h('h2', null, '模型'), h('p', null, 'Hermes 官方模型目录；混合 New API 会按模型真实确认协议 · 探测 Run 结束后自动清理临时会话')), h('div', { className: 'hws3-page-head-actions' }, h(Button, { className: 'primary', disabled: Boolean(bulkTest) || !pendingProtocolTests.length, onClick: testPendingModels, title: pendingProtocolTests.length ? '按顺序对待确定模型执行官方协议探测' : '没有待确定模型' }, bulkTest ? `批量测试中 ${bulkTest.done}/${bulkTest.total}` : `一键测试待测模型${pendingProtocolTests.length ? `（${pendingProtocolTests.length}）` : ''}`), h(Button, { className: 'ghost', disabled: Boolean(bulkTest), onClick: () => { refreshOptions(true); refreshEndpoints(); refreshConfig(); refreshProtocols(); } }, '刷新'))),
       h('section', { className: 'hws3-card' }, h('header', null, h('div', null, h('small', null, 'CUSTOM ENDPOINTS'), h('h3', null, '已保存连接')), h(Pill, null, endpoints.filter((ep) => !String(ep.id || '').startsWith('hws-protocol-')).length)), endpoints.filter((ep) => !String(ep.id || '').startsWith('hws-protocol-')).length ? h('div', { className: 'hws3-endpoints' }, endpoints.filter((ep) => !String(ep.id || '').startsWith('hws-protocol-')).map((ep) => h('div', { className: 'hws3-endpoint', key: ep.id }, h('button', { className: 'main', onClick: () => editEndpoint(ep) }, h('strong', null, ep.name), h('small', null, ep.base_url), h('span', null, ep.model)), ep.is_current ? h(Pill, { tone: 'good' }, '当前') : h(Button, { className: 'ghost small', disabled: busy === `activate:${ep.id}`, onClick: () => activate(ep) }, '使用'), ep.source !== 'direct-config' ? h(Button, { className: 'danger small', disabled: busy === `delete:${ep.id}`, onClick: () => remove(ep) }, '删除') : null))) : h(Empty, { title: '暂无 Custom Endpoint', body: '可以添加 OpenAI-compatible endpoint。' })),
       h('section', { className: 'hws3-card' }, h('header', null, h('div', null, h('small', null, form.id ? 'EDIT' : 'NEW'), h('h3', null, form.id ? '编辑 Endpoint' : '新增 Endpoint'))),
         h('div', { className: 'hws3-form-grid' },
@@ -1497,14 +1592,14 @@
           h('label', null, 'Context（可选）', h('input', { value: form.context_length, inputMode: 'numeric', onChange: (e) => setForm((x) => ({ ...x, context_length: e.target.value })), placeholder: 'Auto' })),
           h('label', { className: 'wide' }, 'API Key', h('input', { type: 'password', autoComplete: 'off', value: form.api_key, onChange: (e) => setForm((x) => ({ ...x, api_key: e.target.value })), placeholder: form.id ? '留空保留现有 Key' : '可选' })),
         ),
-        h('p', { className: 'hws3-field-hint' }, '协议只接受 Hermes 官方声明，或你点击“官方探测”后的真实 Run 结果；没有证据时显示“未探测”，不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。'),
+        h('p', { className: 'hws3-field-hint' }, '协议只接受 Hermes 官方声明，或你点击“测试”后的真实 Run 结果；没有证据时显示“未探测”，不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。'),
         h('div', { className: 'hws3-inline-options' }, h('label', null, h('input', { type: 'checkbox', checked: form.discover_models, onChange: (e) => setForm((x) => ({ ...x, discover_models: e.target.checked })) }), ' 自动发现模型'), h('label', null, h('input', { type: 'checkbox', checked: form.make_default, onChange: (e) => setForm((x) => ({ ...x, make_default: e.target.checked })) }), ' 用于新对话')),
         h('div', { className: 'hws3-actions' }, h(Button, { className: 'ghost', disabled: busy === 'validate' || !form.base_url.trim(), onClick: validate }, busy === 'validate' ? '测试中…' : '测试'), h(Button, { className: 'primary', disabled: busy === 'save', onClick: save }, busy === 'save' ? '保存中…' : '保存'), form.id ? h(Button, { className: 'ghost', onClick: () => { setForm(EMPTY); setDiscovered([]); } }, '新建') : null),
       ),
       message ? h('div', { className: 'hws3-result' }, message) : null,
       h('input', { className: 'hws3-search', value: query, onChange: (e) => setQuery(e.target.value), placeholder: '搜索 Provider / Model…' }),
       protocolState.error && !/Unhandled fetchJSON call|404|Not Found/i.test(protocolState.error) ? h('div', { className: 'hws3-result' }, 'Hermes 协议状态暂不可用；未做协议猜测。') : null,
-      h('div', { className: 'hws3-model-catalog' }, rows.map((provider) => { const models = (provider.models || []).filter((m) => !needle || `${provider.name} ${provider.slug} ${m}`.toLowerCase().includes(needle)); if (!models.length) return null; return h('section', { className: 'hws3-card', key: provider.slug }, h('header', null, h('div', null, h('small', null, provider.slug), h('h3', null, provider.name || provider.slug)), h('div', { className: 'hws3-provider-badges' }, h(Pill, null, 'Hermes Auto'), provider.is_current ? h(Pill, { tone: 'good' }, '当前') : null)), models.slice(0, 80).map((model) => { const key = `${provider.slug}:${model}`; const test = tests[key]; const declaredMode = modelApiMode(modelOptions, provider.slug, model); const route = protocolState.routes.find((item) => item.provider === provider.slug && item.model === model) || (declaredMode ? { status: 'declared', mode: declaredMode } : null); const testOk = test?.ok === true || test?.route?.status === 'resolved'; const probeNeeded = route && ['unresolved', 'ambiguous'].includes(route.status); return h('div', { className: 'hws3-model-row', key: model }, h('div', null, h('strong', null, model), h('small', null, `协议：${protocolStatusLabel(route)} · 思考：${reasoningOptions(modelOptions, provider.slug, model).map((x) => x.value).join(' · ')}`)), test?.loading ? h(Spinner) : test ? h('div', { className: 'hws3-model-result' }, h(Pill, { tone: testOk ? 'good' : route?.status === 'ambiguous' ? 'neutral' : 'bad' }, testOk ? 'Run 通过' : route?.status === 'ambiguous' ? '需选择协议' : '失败'), !testOk && (test.error || test.route?.error) ? h('small', null, shortText(test.error || test.route.error, 180)) : null) : null, h('div', { className: 'hws3-model-actions' }, h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => testModel(provider.slug, model) }, probeNeeded ? '官方探测' : '真实 Run 测试'), route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'chat_completions') }, '选 Chat') : null, route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'codex_responses') }, '选 Responses') : null)); })); })),
+      h('div', { className: 'hws3-model-catalog' }, rows.map((provider) => { const models = (provider.models || []).filter((m) => !needle || `${provider.name} ${provider.slug} ${m}`.toLowerCase().includes(needle)); if (!models.length) return null; return h('section', { className: 'hws3-card', key: provider.slug }, h('header', null, h('div', null, h('small', null, provider.slug), h('h3', null, provider.name || provider.slug)), h('div', { className: 'hws3-provider-badges' }, h(Pill, null, 'Hermes Auto'), provider.is_current ? h(Pill, { tone: 'good' }, '当前') : null)), models.slice(0, 80).map((model) => { const key = `${provider.slug}:${model}`; const test = tests[key]; const declaredMode = modelApiMode(modelOptions, provider.slug, model); const route = protocolState.routes.find((item) => item.provider === provider.slug && item.model === model) || (declaredMode ? { status: 'declared', mode: declaredMode } : null); const testOk = test?.ok === true || test?.route?.status === 'resolved'; const probeNeeded = route && ['unresolved', 'ambiguous'].includes(route.status); return h('div', { className: 'hws3-model-row', key: model }, h('div', null, h('strong', null, model), h('small', null, `协议：${protocolStatusLabel(route)} · 思考：${reasoningSummary(modelOptions, provider.slug, model)}`)), test?.loading ? h(Spinner) : test ? h('div', { className: 'hws3-model-result' }, h(Pill, { tone: testOk ? 'good' : route?.status === 'ambiguous' ? 'neutral' : 'bad' }, testOk ? 'Run 通过' : route?.status === 'ambiguous' ? '需选择协议' : '失败'), !testOk && (test.error || test.route?.error) ? h('small', null, shortText(test.error || test.route.error, 180)) : null) : null, h('div', { className: 'hws3-model-actions' }, h(Button, { className: 'ghost small', disabled: test?.loading, title: probeNeeded ? '使用 Hermes 官方真实 Run 确定该模型的协议' : '使用已经确定的协议执行真实 Run', onClick: () => testModel(provider.slug, model) }, '测试'), route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'chat_completions') }, '选 Chat') : null, route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'codex_responses') }, '选 Responses') : null)); })); })),
     );
   }
 
@@ -1889,13 +1984,52 @@
     const skillBeforeRef = useRef([]);
     const sessionOpenRef = useRef(0);
     const attachInProgressRef = useRef(false);
+    const routePersistChainRef = useRef(Promise.resolve());
+    const routeChangeRef = useRef(0);
+    const sessionRouteRestoreRef = useRef(null);
     const sending = Boolean(run && !TERMINAL_RUN_STATES.has(run.status));
     const projectedRunActive = turnRuns.some(projectedTurnIsActive);
     const projectedRunNeedsReconciliation = turnRuns.some((turn) => projectedTurnNeedsReconciliation(turn, messages));
 
     useEffect(() => { ensureBranding(); document.documentElement.dataset.hwsStudio = 'true'; return () => { delete document.documentElement.dataset.hwsStudio; }; }, []);
     const refreshConfig = useCallback(async () => { const cfg = unwrapConfig(await api('/api/config')); setConfig(cfg); return cfg; }, []);
-    const refreshOptions = useCallback(async (refresh = false) => { const data = await api(`/api/model/options${refresh ? '?refresh=1' : ''}`); setModelOptions(data); setChatRoute((route) => normalizeRoute(data, route?.model ? route : defaultRoute(data))); return data; }, []);
+    const refreshOptions = useCallback(async (refresh = false) => {
+      const data = await api(`/api/model/options${refresh ? '?refresh=1' : ''}`);
+      setModelOptions(data);
+      setChatRoute((route) => {
+        const pending = sessionRouteRestoreRef.current;
+        const restored = pending?.session?.id
+          ? routeForSession(data, pending.session, pending.projection, route?.provider)
+          : null;
+        return restored || normalizeRoute(data, route?.model ? route : defaultRoute(data));
+      });
+      return data;
+    }, []);
+    const restoreSessionRoute = useCallback((session, projection = null) => {
+      const id = session?.id || session?.session_id;
+      if (!id) return null;
+      const pending = { session: { ...session, id }, projection };
+      sessionRouteRestoreRef.current = pending;
+      if (!modelOptions) return null;
+      const restored = routeForSession(modelOptions, pending.session, projection, chatRoute?.provider);
+      if (restored) setChatRoute(restored);
+      return restored;
+    }, [modelOptions, chatRoute?.provider]);
+    useEffect(() => {
+      if (!current?.id || !modelOptions) return;
+      // Opening a session and refreshing Hermes' model inventory can finish in
+      // either order. Re-apply the persisted route once both are present. A
+      // pending manual change is intentionally preferred over the old
+      // `current` snapshot, so a background inventory refresh cannot undo a
+      // deliberate dropdown selection while its official model lock is being
+      // written.
+      const pending = sessionRouteRestoreRef.current;
+      const source = pending?.session?.id === current.id ? pending.session : current;
+      const projection = pending?.session?.id === current.id ? pending.projection : null;
+      const restored = routeForSession(modelOptions, source, projection, chatRoute?.provider);
+      if (!restored) return;
+      setChatRoute((route) => routeIdentity(route) === routeIdentity(restored) && route.effort === restored.effort ? route : restored);
+    }, [current, modelOptions, chatRoute?.provider]);
     const refreshRecent = useCallback(async () => {
       setRecent((x) => ({ ...x, loading: true, error: '' }));
       try { const data = await api(`/api/sessions?limit=${RECENT_LIMIT}&offset=0&order=recent&archived=exclude`); const sessions = data.sessions || []; setRecent({ loading: false, sessions, error: '' }); return sessions; }
@@ -2193,8 +2327,10 @@
       if (!id) return;
       const requestToken = sessionOpenRef.current + 1;
       sessionOpenRef.current = requestToken;
+      routeChangeRef.current += 1;
       cancelRunPoll();
       const s = { ...row, id };
+      restoreSessionRoute(s);
       setCurrent(s); setView('chat'); setRun(null); setTurnRuns([]); setMessages([]); setContextSnapshot(null); setStreamText(''); setSkillDiff(null); setTimelineExpanded(false); setAttachments([]);
       try {
         // Load the official messages before exposing the recovered projection.
@@ -2205,6 +2341,7 @@
           loadMessages(s),
         ]);
         if (sessionOpenRef.current !== requestToken) return;
+        restoreSessionRoute(s, projection);
         let officialMessages = initialOfficialMessages;
         let turns = Array.isArray(projection?.turns) ? projection.turns : [];
         let restoredRun = null;
@@ -2247,7 +2384,7 @@
         if (sessionOpenRef.current === requestToken) setTurnRuns([]);
       }
       if (sessionOpenRef.current === requestToken) loadContext(s);
-    }, [cancelRunPoll, loadMessages, loadContext, reconcileSessionProjection, attachProjectedRun, pollAttachedRun, pollProjectedRecovery]);
+    }, [cancelRunPoll, loadMessages, loadContext, reconcileSessionProjection, attachProjectedRun, pollAttachedRun, pollProjectedRecovery, restoreSessionRoute]);
     useEffect(() => { Promise.all([refreshRecent(), refreshConfig(), refreshOptions(false), plugin('/health').then(setHealth)]).catch((err) => setGlobalError(errorText(err))); }, []);
     useEffect(() => { if (!sending && !projectedRunActive) return undefined; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [sending, projectedRunActive]);
     useEffect(() => {
@@ -2383,11 +2520,36 @@
         throw error;
       }
       if (resolved?.requires_probe) {
-        throw new Error(`模型 “${normalized.provider} / ${normalized.model}” 尚未确定使用 Chat Completions 还是 Responses。请先进入“模型”页面点击“官方探测”。`);
+        throw new Error(`模型 “${normalized.provider} / ${normalized.model}” 尚未确定使用 Chat Completions 还是 Responses。请先进入“模型”页面点击“测试”。`);
       }
       return { ...normalized, provider: resolved?.execution_provider || normalized.provider, source_provider: normalized.provider, protocol: resolved };
     }, [modelOptions]);
     const lockRuntime = useCallback(async (session, route) => { const normalized = { provider: String(route?.provider || '').trim(), model: String(route?.model || '').trim(), effort: route?.effort || 'auto' }; if (!session?.id || !normalized.model || !normalized.provider) return normalized; await plugin(`/hermes/sessions/${encodeURIComponent(session.id)}/model`, jinit('POST', { provider: normalized.provider, model: normalized.model, require_model_lock: true })); return normalized; }, []);
+    const changeChatRoute = useCallback((nextRoute) => {
+      const normalized = normalizeRoute(modelOptions, nextRoute);
+      const previous = normalizeRoute(modelOptions, chatRoute);
+      setChatRoute(normalized);
+      if (!current?.id || routeIdentity(previous) === routeIdentity(normalized)) return;
+      const session = { ...current };
+      const requestToken = ++routeChangeRef.current;
+      sessionRouteRestoreRef.current = { session: { ...session, provider: normalized.provider, model: normalized.model, effort: normalized.effort }, projection: null };
+      setGlobalError('');
+      routePersistChainRef.current = routePersistChainRef.current.catch(() => {}).then(async () => {
+        try {
+          await assertMoaReady(modelOptions, normalized);
+          const executionRoute = await resolveExecutionRoute(normalized);
+          if (executionRoute?.requires_probe) throw new Error(`模型 “${normalized.provider} / ${normalized.model}” 尚未确定协议，请先在“模型”页面点击“测试”。`);
+          await lockRuntime(session, executionRoute);
+          if (routeChangeRef.current !== requestToken) return;
+          setCurrent((value) => value && value.id === session.id ? { ...value, provider: normalized.provider, model: normalized.model, effort: normalized.effort } : value);
+        } catch (err) {
+          if (routeChangeRef.current !== requestToken) return;
+          sessionRouteRestoreRef.current = { session, projection: null };
+          setChatRoute(previous);
+          setGlobalError(`保存会话模型失败：${errorText(err)}`);
+        }
+      });
+    }, [modelOptions, chatRoute, current, resolveExecutionRoute, lockRuntime]);
 
     const send = useCallback(async (forcedText = null) => {
       const sourceText = forcedText == null ? draft : forcedText;
@@ -2403,6 +2565,7 @@
       setGlobalError(''); setStreamText(''); setSkillDiff(null);
       try {
         try { skillBeforeRef.current = await api('/api/skills'); } catch (_) { skillBeforeRef.current = []; }
+        await routePersistChainRef.current.catch(() => {});
         const route = normalizeRoute(modelOptions, chatRoute);
         if (text.startsWith('/')) {
           setTimelineExpanded(false);
@@ -2440,7 +2603,7 @@
 
     const stopRun = useCallback(async () => { if (!run?.id) return; try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/stop`, jinit('POST', {})); } catch (err) { setGlobalError(`停止 Run 失败：${errorText(err)}`); } }, [run?.id]);
     const approveRun = useCallback(async (choice) => { if (!run?.id) return; try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/approval`, jinit('POST', { choice })); } catch (err) { setGlobalError(`审批提交失败：${errorText(err)}`); } }, [run?.id]);
-    const newConversation = useCallback(() => { sessionOpenRef.current += 1; cancelRunPoll(); setCurrent(null); setMessages([]); setRun(null); setTurnRuns([]); setContextSnapshot(null); setStreamText(''); setDraft(''); setSlashItems([]); setAttachments([]); setSkillDiff(null); setView('chat'); }, [cancelRunPoll]);
+    const newConversation = useCallback(() => { sessionOpenRef.current += 1; routeChangeRef.current += 1; sessionRouteRestoreRef.current = null; cancelRunPoll(); setCurrent(null); setMessages([]); setRun(null); setTurnRuns([]); setContextSnapshot(null); setStreamText(''); setDraft(''); setSlashItems([]); setAttachments([]); setSkillDiff(null); setView('chat'); }, [cancelRunPoll]);
 
     function askRename(session = current) { if (!session?.id) return; setModalInput(sessionTitle(session)); setModal({ type: 'rename', session }); }
     function askDelete(session = current) { if (!session?.id) return; setModal({ type: 'delete', session }); }
@@ -2472,7 +2635,7 @@
       : view === 'moa' ? h(MoaPage, { modelOptions, refreshOptions, onUseMoa: useMoa, onOpenSession: openSession })
       : view === 'unattended' ? h(UnattendedPage, { config, refreshConfig })
       : view === 'history' ? h(HistoryPage, { onOpenSession: openSession, onSessionMutation: refreshRecent })
-      : h(Conversation, { session: current, messages, loading: messagesLoading, run, turnRuns, contextSnapshot, streamText, draft, setDraft, onSend: send, sending, commandBusy, modelOptions, chatRoute, setChatRoute: (route) => setChatRoute(normalizeRoute(modelOptions, route)), now, onStop: stopRun, onApprove: approveRun, skillDiff, timelineExpanded, setTimelineExpanded, attachments, setAttachments, onRename: () => askRename(current), onArchive: () => toggleArchive(current), onDelete: () => askDelete(current), slashItems, slashIndex, setSlashIndex, onSlashSelect: (item) => { const token = slashCommandText(item); if (!token) return; setSlashItems([]); send(token); } });
+      : h(Conversation, { session: current, messages, loading: messagesLoading, run, turnRuns, contextSnapshot, streamText, draft, setDraft, onSend: send, sending, commandBusy, modelOptions, chatRoute, setChatRoute: changeChatRoute, now, onStop: stopRun, onApprove: approveRun, skillDiff, timelineExpanded, setTimelineExpanded, attachments, setAttachments, onRename: () => askRename(current), onArchive: () => toggleArchive(current), onDelete: () => askDelete(current), slashItems, slashIndex, setSlashIndex, onSlashSelect: (item) => { const token = slashCommandText(item); if (!token) return; setSlashItems([]); send(token); } });
 
     return h('div', { className: 'hws3-root' },
       h(Sidebar, { view, setView, recent, current, openSession, newConversation, refreshRecent, ready, mode, mobileOpen, setMobileOpen, onRename: askRename, onArchive: toggleArchive, onDelete: askDelete }),

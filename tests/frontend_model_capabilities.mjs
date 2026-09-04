@@ -68,6 +68,8 @@ const api = window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITIES__;
 assert.equal(api.version, 2);
 assert.equal(api.descriptor({ reasoning: false }).control, 'none');
 assert.equal(api.descriptor({ reasoning: true }).control, 'auto', 'bare reasoning:true must not invent a disable control');
+assert.equal(api.reasoningLabel(api.descriptor({ reasoning: true })), 'Hermes 返回思考支持 · 档位未公开', 'boolean support must not be presented as a fake Auto effort');
+assert.equal(api.reasoningLabel(api.descriptor({ reasoning: false })), '不支持');
 assert.equal(api.descriptor({ reasoning: true, can_disable_reasoning: true }).control, 'toggle');
 assert.equal(api.descriptor({ reasoning: { supported: true, control: 'fixed', can_disable: false } }).control, 'fixed');
 assert.deepEqual(plain(api.descriptor({ reasoning: { supported: true, options: ['low', 'high'], can_disable: true } }).efforts.map((x) => x.value)), ['low', 'high']);

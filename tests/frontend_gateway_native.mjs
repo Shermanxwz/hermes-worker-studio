@@ -160,6 +160,8 @@ const run = await SDK.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v
       { type: 'file_url', file_url: { url: 'data:application/pdf;base64,JVBERi0=', name: 'doc.pdf', kind: 'pdf' } },
       { type: 'file_url', file_url: { url: 'data:text/plain;base64,aGk=', name: 'readme.txt', kind: 'file' } },
     ] }],
+    provider: 'source-provider',
+    model: 'model-x',
   }),
 });
 assert.equal(run.status, 'running');
@@ -167,15 +169,19 @@ assert.equal(run.session_id, 'stored-1');
 assert.equal(run.source, 'hermes_gateway_jsonrpc');
 assert.deepEqual(sent.slice(0, 6).map((x) => x.method), [
   'session.resume',
+  'config.set',
   'image.attach_bytes',
   'pdf.attach',
   'file.attach',
   'session.usage',
-  'prompt.submit',
 ]);
 const firstResume = sent.find((x) => x.method === 'session.resume');
 assert.equal(firstResume.params.close_on_disconnect, false);
 assert.equal(firstResume.params.omit_messages, true);
+assert.equal(firstResume.params.eager_build, true, 'a new session must be built before its route is applied');
+const firstModelSet = sent.find((x) => x.method === 'config.set' && x.params.key === 'model');
+assert.equal(firstModelSet.params.session_id, 'runtime-1');
+assert.equal(firstModelSet.params.value, 'model-x --provider source-provider --session');
 const prompt = sent.find((x) => x.method === 'prompt.submit');
 assert.match(prompt.params.text, /^处理三个附件/);
 assert.match(prompt.params.text, /readme\.txt → @file:attachments\/readme\.txt/);

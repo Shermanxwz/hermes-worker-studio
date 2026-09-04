@@ -822,7 +822,15 @@
   async function startGatewayRun(body) {
     const storedSessionId = String(body?.session_id || '').trim();
     if (!storedSessionId) throw new Error('session_id is required');
-    const { runtime: runtimeId, resumed } = await resumeStored(storedSessionId, { omitMessages: true });
+    // A freshly created browser session may still be in Hermes' deferred
+    // agent-build window.  If we only resume lazily, the following model
+    // config.set can race that build: the build snapshots the source provider
+    // (Chat) and prompt.submit starts before the selected protocol alias is
+    // applied.  That is exactly how a Responses-only model can produce a
+    // /v1/chat/completions 500 on its first message while succeeding on retry.
+    // Build the official session before applying the explicit route so the
+    // order is durable: session.resume(eager_build) -> config.set -> prompt.submit.
+    const { runtime: runtimeId, resumed } = await resumeStored(storedSessionId, { omitMessages: true, eagerBuild: true });
     const parsed = parseStudioInput(body?.input);
     const gw = await getGateway();
     await applyRuntimeSelection(gw, runtimeId, body);

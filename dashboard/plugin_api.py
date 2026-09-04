@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import pathlib
 import shlex
@@ -27,6 +28,8 @@ from typing import Any, Iterable
 from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter()
+
+_LOG = logging.getLogger(__name__)
 
 _JSON_LIMIT = 4 * 1024 * 1024
 _TIMEOUT = float(os.getenv("HERMES_WORKER_STUDIO_HTTP_TIMEOUT", "30"))
@@ -418,6 +421,222 @@ def _wait_run(run_id: str, timeout_seconds: float) -> dict[str, Any]:
     raise HTTPException(504, "Hermes run timed out while Studio was waiting for verification")
 
 
+def _is_ephemeral_run_id(run_id: Any) -> bool:
+    """Recognize the exact ID shape Hermes assigns to a run-only session.
+
+    Hermes' public ``/v1/runs`` endpoint uses ``run_<uuid>`` as the session
+    ID when a caller omits ``session_id``.  Keep this check deliberately
+    narrow: the cleanup path must never turn an arbitrary user/session ID
+    into a DELETE request.
+    """
+    value = str(run_id or "").strip()
+    return value.startswith("run_") and len(value) > len("run_")
+
+
+_EPHEMERAL_CLEANUP_DELAYS = (0.20, 0.40, 0.80, 1.60)
+_EPHEMERAL_CLEANUP_VERIFY_DELAY = 0.15
+_EPHEMERAL_REAPER_GRACE_SECONDS = max(
+    5.0,
+    float(os.getenv("HERMES_WORKER_STUDIO_EPHEMERAL_REAPER_GRACE_SECONDS", "45")),
+)
+_EPHEMERAL_REAPER_POLL_SECONDS = max(
+    0.25,
+    float(os.getenv("HERMES_WORKER_STUDIO_EPHEMERAL_REAPER_POLL_SECONDS", "1")),
+)
+# A timed-out probe has already received the official Stop request, but Hermes
+# may report ``stopping`` for a short interval while its executor unwinds. Do
+# not delete during that interval; wait for an official terminal state, then
+# run the same exact-ID cleanup used by the normal completion path.
+_EPHEMERAL_STOP_GRACE_SECONDS = max(
+    0.0,
+    float(os.getenv("HERMES_WORKER_STUDIO_EPHEMERAL_STOP_GRACE_SECONDS", "15")),
+)
+_EPHEMERAL_REAPERS: set[str] = set()
+_EPHEMERAL_REAPERS_LOCK = threading.RLock()
+
+
+def _ephemeral_session_path(run_id: str) -> str:
+    return f"/api/sessions/{urllib.parse.quote(str(run_id).strip(), safe='')}"
+
+
+def _ephemeral_session_exists(run_id: str) -> bool | None:
+    """Return whether Hermes still exposes the exact disposable session.
+
+    ``/v1/runs/{id}`` can become terminal just before the background agent has
+    finished materialising its session row. A DELETE at that instant returns
+    success while the late row write can make the session reappear. Keep the
+    check narrow and tri-state: an API/read failure must not be mistaken for
+    proof that a session is gone.
+    """
+    path = _ephemeral_session_path(run_id)
+    try:
+        _hermes_proxy(path)
+        return True
+    except HTTPException as exc:
+        if int(exc.status_code or 0) in {404, 410}:
+            return False
+        _LOG.warning("Hermes probe session cleanup verification failed (%s): %s", exc.status_code, exc.detail)
+    except Exception:
+        _LOG.warning("Hermes probe session cleanup verification failed", exc_info=True)
+    return None
+
+
+def _delete_ephemeral_run_session(run_id: str) -> bool:
+    """Delete exactly one disposable probe session; a missing row is success."""
+    path = _ephemeral_session_path(run_id)
+    try:
+        _hermes_proxy(path, method="DELETE")
+        return True
+    except HTTPException as exc:
+        if int(exc.status_code or 0) in {404, 410}:
+            return True
+        _LOG.warning("Hermes probe session cleanup failed (%s): %s", exc.status_code, exc.detail)
+    except Exception:
+        _LOG.warning("Hermes probe session cleanup failed", exc_info=True)
+    return False
+
+
+def _cleanup_ephemeral_run_session(run_id: str) -> bool:
+    """Delete the temporary Hermes session created by a probe Run.
+
+    Probes are intentionally submitted through Hermes' official Runs API, so
+    Hermes creates a normal session row for them.  The probe itself is
+    disposable; remove only the exact run/session ID after the Run reaches a
+    terminal state.  Cleanup is fail-open so a transient DELETE failure does
+    not hide the actual probe result.
+    """
+    if not _is_ephemeral_run_id(run_id):
+        return False
+    for attempt, delay in enumerate(_EPHEMERAL_CLEANUP_DELAYS, start=1):
+        # Give Hermes' completed Run worker a short chance to finish its final
+        # session/title write before the first DELETE. Later delays handle the
+        # rarer case where that write races the delete itself.
+        time.sleep(delay)
+        _delete_ephemeral_run_session(run_id)
+
+        # A successful DELETE is not enough evidence: the row may be inserted
+        # by the still-unwinding Run worker immediately afterwards. Verify twice
+        # with a small guard interval and retry if it reappears.
+        time.sleep(_EPHEMERAL_CLEANUP_VERIFY_DELAY)
+        present = _ephemeral_session_exists(run_id)
+        if present is False:
+            time.sleep(_EPHEMERAL_CLEANUP_VERIFY_DELAY)
+            if _ephemeral_session_exists(run_id) is False:
+                return True
+        elif present is None:
+            continue
+
+        if attempt < len(_EPHEMERAL_CLEANUP_DELAYS):
+            _LOG.info("Hermes probe session %s is still present after cleanup attempt %d; retrying", run_id, attempt)
+    _LOG.warning("Hermes probe session cleanup could not verify deletion for %s", run_id)
+    return False
+
+
+def _reap_ephemeral_run_session(run_id: str) -> None:
+    """Keep watching one completed probe for a late Hermes title/session write.
+
+    Hermes creates the API-session row from a background title-generation path.
+    That write can happen well after the official Run is terminal and after the
+    first DELETE has been verified.  Watch only this exact probe ID for a short
+    bounded grace period, deleting it if it materialises.  This is deliberately
+    asynchronous so a batch test does not wait for the title worker's latency.
+    """
+    if not _is_ephemeral_run_id(run_id):
+        return
+    deadline = time.monotonic() + _EPHEMERAL_REAPER_GRACE_SECONDS
+    try:
+        while time.monotonic() < deadline:
+            present = _ephemeral_session_exists(run_id)
+            if present is True:
+                _delete_ephemeral_run_session(run_id)
+                # Allow a concurrent DELETE/insert pair to settle before the
+                # next exact-ID check; the loop still continues until grace ends.
+                time.sleep(_EPHEMERAL_CLEANUP_VERIFY_DELAY)
+            time.sleep(_EPHEMERAL_REAPER_POLL_SECONDS)
+        if _ephemeral_session_exists(run_id) is True:
+            _delete_ephemeral_run_session(run_id)
+            _LOG.warning("Hermes probe session %s appeared at reaper deadline; deletion was requested", run_id)
+    except Exception:
+        # A reaper must never affect the already-returned probe result.
+        _LOG.warning("Hermes probe session reaper failed for %s", run_id, exc_info=True)
+    finally:
+        with _EPHEMERAL_REAPERS_LOCK:
+            _EPHEMERAL_REAPERS.discard(str(run_id).strip())
+
+
+def _schedule_ephemeral_run_reaper(run_id: str) -> bool:
+    """Start at most one bounded exact-ID reaper for a disposable probe."""
+    if not _is_ephemeral_run_id(run_id):
+        return False
+    normalized = str(run_id).strip()
+    with _EPHEMERAL_REAPERS_LOCK:
+        if normalized in _EPHEMERAL_REAPERS:
+            return False
+        _EPHEMERAL_REAPERS.add(normalized)
+    try:
+        threading.Thread(
+            target=_reap_ephemeral_run_session,
+            args=(normalized,),
+            name=f"hermes-worker-studio-reaper-{normalized[-8:]}",
+            daemon=True,
+        ).start()
+        return True
+    except Exception:
+        with _EPHEMERAL_REAPERS_LOCK:
+            _EPHEMERAL_REAPERS.discard(normalized)
+        _LOG.warning("Could not start Hermes probe session reaper for %s", normalized, exc_info=True)
+        return False
+
+
+def _cleanup_ephemeral_run_if_terminal(run_id: str) -> bool:
+    """Clean a stopped probe only after Hermes proves that it ended.
+
+    ``_wait_run`` has already requested the official Stop when it times out.
+    The first status read can therefore still be ``running`` or ``stopping``;
+    a single read would leave a disposable session in History. Poll only this
+    exact run ID for the bounded stop grace period. An unknown/error response
+    remains fail-closed and leaves the session intact.
+    """
+    if not _is_ephemeral_run_id(run_id):
+        return False
+    path = f"/v1/runs/{urllib.parse.quote(str(run_id).strip(), safe='')}"
+    deadline = time.monotonic() + _EPHEMERAL_STOP_GRACE_SECONDS
+    status = ""
+    while True:
+        try:
+            current = _hermes_proxy(path)
+        except Exception:
+            _LOG.warning("Could not verify timed-out probe Run state; leaving its session intact", exc_info=True)
+            return False
+        status = str(current.get("status") or "").strip().lower() if isinstance(current, dict) else ""
+        if status in _TERMINAL_RUN_STATES:
+            try:
+                return _cleanup_ephemeral_run_session(run_id)
+            finally:
+                _schedule_ephemeral_run_reaper(run_id)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            _LOG.warning("Timed-out probe Run %s is still %s; leaving its session intact", run_id, status or "active")
+            return False
+        time.sleep(min(_EPHEMERAL_REAPER_POLL_SECONDS, remaining))
+
+
+def _wait_ephemeral_run(run_id: str, timeout_seconds: float) -> dict[str, Any]:
+    """Wait for a disposable probe Run and remove its temporary session."""
+    try:
+        final = _wait_run(run_id, timeout_seconds)
+    except HTTPException:
+        # _wait_run already sends the official stop request on timeout.  Do
+        # not DELETE a session while Hermes still reports the Run as active.
+        _cleanup_ephemeral_run_if_terminal(run_id)
+        raise
+    try:
+        _cleanup_ephemeral_run_session(run_id)
+    finally:
+        _schedule_ephemeral_run_reaper(run_id)
+    return final
+
+
 @router.get("/health")
 def health() -> dict[str, Any]:
     try:
@@ -551,7 +770,7 @@ async def hermes_model_probe(request: Request) -> dict[str, Any]:
         run_body["provider"] = provider
     started = await asyncio.to_thread(_start_native_run, run_body, session_required=False)
     final = await asyncio.to_thread(
-        _wait_run,
+        _wait_ephemeral_run,
         started["id"],
         float(os.getenv("HERMES_WORKER_STUDIO_MODEL_PROBE_TIMEOUT", "90")),
     )
@@ -587,7 +806,7 @@ async def hermes_unattended_probe(request: Request) -> dict[str, Any]:
         raise HTTPException(502, "Hermes unattended probe did not return run_id")
     try:
         final = await asyncio.to_thread(
-            _wait_run,
+            _wait_ephemeral_run,
             run_id,
             float(os.getenv("HERMES_WORKER_STUDIO_UNATTENDED_PROBE_TIMEOUT", "90")),
         )

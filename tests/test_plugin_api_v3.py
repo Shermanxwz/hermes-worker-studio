@@ -310,6 +310,30 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertTrue(route["requires_probe"])
         self.assertEqual(route["execution_provider"], "")
 
+    def test_official_config_read_falls_back_only_when_api_server_route_is_missing(self):
+        fallback = {"providers": {"new-api": {"api": "https://gateway.example/v1"}}}
+
+        with patch.object(
+            plugin_api_v3._legacy,
+            "_hermes_proxy",
+            side_effect=HTTPException(status_code=404, detail="Hermes API Server: Not Found"),
+        ), patch.object(plugin_api_v3, "_read_hermes_config_store", return_value=fallback) as read_store:
+            self.assertIs(plugin_api_v3._read_official_config(), fallback)
+
+        read_store.assert_called_once_with()
+
+    def test_official_config_read_does_not_hide_non_missing_api_server_errors(self):
+        with patch.object(
+            plugin_api_v3._legacy,
+            "_hermes_proxy",
+            side_effect=HTTPException(status_code=500, detail="config backend failed"),
+        ), patch.object(plugin_api_v3, "_read_hermes_config_store") as read_store:
+            with self.assertRaises(HTTPException) as raised:
+                plugin_api_v3._read_official_config()
+
+        self.assertEqual(raised.exception.status_code, 500)
+        read_store.assert_not_called()
+
     def test_protocol_alias_is_written_through_official_config_without_touching_source(self):
         source = {
             "name": "New API",
@@ -340,6 +364,38 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertEqual(updated["providers"][alias]["models"], {"gpt-responses": {"context_length": 128000}})
         self.assertEqual(writes[0][0], "/api/config")
         self.assertEqual(set(writes[0][1]["config"]), {"providers"})
+
+    def test_protocol_alias_write_falls_back_to_hermes_config_store_when_api_server_has_no_config_route(self):
+        source = {
+            "name": "New API",
+            "api": "https://gateway.example/v1",
+            "key_env": "NEW_API_KEY",
+            "models": {"gpt-responses": {}},
+        }
+        config = {"providers": {"new-api": source}}
+        stored = {"model": {"default": "MiniMax-M3"}, "providers": {"new-api": source}}
+
+        with patch.object(
+            plugin_api_v3._legacy,
+            "_hermes_proxy",
+            side_effect=HTTPException(status_code=404, detail="Hermes API Server: Not Found"),
+        ), patch.object(plugin_api_v3, "_read_hermes_config_store", return_value=stored), patch.object(
+            plugin_api_v3, "_write_hermes_config_store_providers"
+        ) as write_store:
+            updated, aliases = plugin_api_v3._ensure_protocol_aliases(
+                config,
+                "new-api",
+                "gpt-responses",
+                ("codex_responses",),
+            )
+
+        alias = aliases["codex_responses"]
+        self.assertIn(alias, updated["providers"])
+        write_store.assert_called_once()
+        written_providers = write_store.call_args.args[0]
+        self.assertIn("new-api", written_providers)
+        self.assertEqual(written_providers[alias]["transport"], "codex_responses")
+        self.assertEqual(stored["providers"], {"new-api": source})
 
     def test_real_protocol_probe_resolves_one_supported_wire_mode(self):
         config = {

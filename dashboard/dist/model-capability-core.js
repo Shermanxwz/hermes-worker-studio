@@ -122,12 +122,12 @@
     if (d.control === 'toggle') return '开关';
     if (d.control === 'effort') return `强度 · ${d.efforts.map((x) => x.value).join(' / ')}`;
     if (d.control === 'toggle_effort') return `开关 + 强度 · ${d.efforts.map((x) => x.value).join(' / ')}`;
-    return 'Auto · 上游未声明可编辑控件';
+    return d.supported === true ? 'Hermes 返回思考支持 · 档位未公开' : '上游未声明';
   }
 
   function ReasoningControl({ descriptor: d, effort, disabled, onChange }) {
     if (d.control === 'none') return h('span', { className: 'hws3-pill', title: 'Hermes 官方 model inventory 声明不支持 reasoning' }, '思考 · 不支持');
-    if (d.control === 'auto') return h('span', { className: 'hws3-pill', title: 'Hermes 未公开可编辑 reasoning 控件；Studio 不猜测' }, '思考 · Auto');
+    if (d.control === 'auto') return h('span', { className: 'hws3-pill', title: d.supported === true ? 'Hermes 当前能力目录返回思考支持；上游没有公开可编辑的强度 vocabulary，Studio 不猜测档位' : 'Hermes 未声明可编辑 reasoning 控件；Studio 不猜测' }, d.supported === true ? '思考 · Hermes 返回支持（档位未公开）' : '思考 · 上游未声明');
     if (d.control === 'fixed') return h('span', { className: 'hws3-pill', title: 'Hermes/provider 声明 reasoning 不可关闭' }, '思考 · 始终开启');
     const enabled = effort !== 'none';
     const toggle = d.canDisable === true ? h('label', { className: 'hws3-reasoning-toggle' }, h('span', null, '思考'), h('input', { type: 'checkbox', checked: enabled, disabled, 'aria-label': '开启思考', onChange: (e) => onChange(e.target.checked ? (d.efforts[0]?.value || d.defaultEffort) : 'none') }), h('b', null, enabled ? '开启' : '关闭')) : null;

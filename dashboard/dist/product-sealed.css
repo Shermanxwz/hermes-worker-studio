@@ -116,6 +116,7 @@ html:has(.hws3-root) #root>[data-layout-variant]>header,html[data-hws-studio="tr
 
 /* Independent MOA surface: the catalog is Hermes-owned, while this page is the product entry point. */
 .hws3-moa-page-head{align-items:flex-start}
+.hws3-page-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}.hws3-page-head-actions .hws3-button{min-height:34px}
 .hws3-moa-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
 .hws3-moa-page-actions .hws3-button{min-height:34px}
 .hws3-moa-flow{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr) 28px minmax(0,1fr);align-items:center;gap:8px;margin-bottom:14px;padding:14px}
