@@ -150,7 +150,7 @@ CI 会独立生成**同一份 staged JS/Python**，再执行 `node --check` / Py
 
 安装是事务式的：staged Plugin Doctor 先通过，已有安装优先通过 Linux `renameat2(RENAME_EXCHANGE)` 做原子目录交换；不支持时保留旧树后替换。旧插件和旧 theme 一直保留到**实际安装路径**再次通过 Plugin Doctor 且官方 `hermes plugins enable` 成功，之后才进入 commit point。任何 post-swap 失败都会恢复上一份 plugin/theme，并清理 staging/backup 残留。
 
-Canonical CI 还会对 exact npm lockfile 执行显式 `npm audit --audit-level=high`；`npm ci --no-audit` 只用于关闭安装过程中的隐式重复审计。
+根 npm 包只是 `private` 的前端测试 harness：生产 `dependencies` / `optionalDependencies` / `peerDependencies` 必须为空，devDependencies 必须精确 `x.y.z` pin，`package-lock.json` 根依赖必须与 `package.json` 一致，CI 使用 `npm ci --ignore-scripts --no-audit`。Canonical seal CI 不依赖 npm 在线 advisory 服务，因此第三方审计服务超时不会改变代码/封存判定。
 
 ## Desktop / Mobile 产品闭环
 
