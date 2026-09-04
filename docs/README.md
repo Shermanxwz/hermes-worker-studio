@@ -6,6 +6,7 @@
 - `PRODUCT_CLOSURE.md` — no-feature product/engineering closure scope and invariants
 - `UPSTREAM_CONTRACTS.md` — public Hermes contracts consumed by Studio
 - `MODEL_CAPABILITY_SEAL.md` — sealed model/provider/reasoning capability flow across Main, Worker, Verifier and MOA
+- `NEW_API_REASONING_CAPABILITIES.md` — New API / OpenAI-compatible reasoning-effort metadata overlay, precedence, runtime and fail-closed seal
 - `HERMES_DASHBOARD_EXCLUSIVE_SHELL.md` — final official Dashboard shell contract required for sealing
 - `SECURITY.md` — trust, credential, artifact and self-hosted runner boundaries
 - `AUTOMATED_TEST_MATRIX.md` — repository CI + exact-main seal evidence matrix
