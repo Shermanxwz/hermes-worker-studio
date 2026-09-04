@@ -130,16 +130,51 @@ for token in (
 if installer.find('hermes plugins doctor "$DEST" --ci') > installer.find("hermes plugins enable hermes-worker-studio"):
     fail("installed-tree Plugin Doctor must run before official enable so validation failure remains rollback-safe")
 
+# npm exists only as a private frontend test harness. Seal correctness must not
+# depend on a live third-party advisory endpoint: production npm dependency
+# fields are forbidden, test dependencies are exact-pinned, install scripts are
+# disabled in CI, and the committed lock root must match package.json exactly.
+try:
+    package = json.loads(read("package.json"))
+except Exception as exc:
+    package = {}
+    fail(f"invalid package.json: {exc}")
+if package.get("name") != "hermes-worker-studio-tests" or package.get("private") is not True:
+    fail("root npm package must remain the private hermes-worker-studio-tests harness")
+for field in ("dependencies", "optionalDependencies", "peerDependencies"):
+    if package.get(field):
+        fail(f"production npm dependency field must stay empty: {field}")
+dev_dependencies = package.get("devDependencies") or {}
+if not isinstance(dev_dependencies, dict) or not dev_dependencies:
+    fail("frontend test harness must keep an explicit devDependency set")
+else:
+    for name, version in dev_dependencies.items():
+        parts = str(version).split(".")
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            fail(f"test dependency must be exact x.y.z pin: {name}={version}")
+try:
+    package_lock = json.loads(read("package-lock.json"))
+except Exception as exc:
+    package_lock = {}
+    fail(f"invalid package-lock.json: {exc}")
+if package_lock.get("lockfileVersion") != 3:
+    fail("package-lock.json must remain lockfileVersion 3")
+lock_root = (package_lock.get("packages") or {}).get("") or {}
+if lock_root.get("devDependencies") != dev_dependencies:
+    fail("package-lock root devDependencies must exactly match package.json")
+
 ci = read(".github/workflows/ci.yml")
 for token in (
-    "High-severity frontend dependency audit",
-    "npm audit --audit-level=high --ignore-scripts",
+    "Test-only npm dependency boundary",
+    "npm ci --ignore-scripts --no-fund --no-audit",
     'python scripts/stage_security_closure.py "$tmp/plugin_api_v3.py"',
     '! grep -Fq "await request.json()" "$tmp/plugin_api_v3.py"',
     "scripts/stage_security_closure.py",
 ):
     if token not in ci:
         fail(f"canonical CI lost seal hardening gate: {token}")
+if "npm audit" in ci:
+    fail("canonical CI must not depend on the live npm advisory service")
 
 if errors:
     print("Model capability / seal-hardening architecture verification FAILED:")
