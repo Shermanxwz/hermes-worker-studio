@@ -3,11 +3,15 @@ name: Upstream Hermes exclusive-shell seal
 on:
   push:
     branches:
-      - upstream/hermes-exclusive-shell-seal
+      - main
+    paths:
+      - "upstream/hermes-exclusive-shell/**"
+      - ".github/workflows/upstream-exclusive-shell.yml"
   pull_request:
     paths:
       - "upstream/hermes-exclusive-shell/**"
       - ".github/workflows/upstream-exclusive-shell.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
