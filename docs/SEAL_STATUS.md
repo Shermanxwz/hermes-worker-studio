@@ -6,6 +6,8 @@ Product: **Hermes Worker Studio 3.0** — Hermes-native single-runtime product s
 
 This file intentionally does **not** hard-code a current PR number or treat an older target capture as proof for newer code. Development changes are merged first; the only final seal identity is the exact current **`main` HEAD** supplied to the real-target workflow / `seal_close.py`.
 
+Repository branch policy is equally strict: **`main` is the only long-lived source of truth**. Feature, seal and upstream-contribution branches are temporary transport only; once their evidence or code is preserved on `main`, they carry no authoritative state and should be deleted.
+
 ## Current repository engineering state
 
 The repository has reached code-level archive-candidate closure around these invariants:
@@ -29,7 +31,8 @@ The repository has reached code-level archive-candidate closure around these inv
 - final verdict is `hermes-worker-studio.seal-verdict.v2`;
 - each browser project independently reads the running candidate SHA rather than relying on post-test report stamping;
 - final GitHub verification is exact-main and read-only; it cannot merge a PR or mutate repository contents;
-- production security gates reject bearer-secret leaks, second-runtime residue and mutation-capable real-target workflow drift.
+- production security gates reject bearer-secret leaks, second-runtime residue and mutation-capable real-target workflow drift;
+- the route-scoped exclusive-shell upstream candidate is preserved on `main` under `upstream/hermes-exclusive-shell/`; GitHub Actions run `33796062929` proved the candidate against Hermes `63279301bcbdc185c1b07b98a9312eb0c862f26d` with backend, typecheck, focused DOM/cache tests, lint, full Web tests and production build all green.
 
 Repository CI can prove these code and integration contracts, but **CI success alone never changes this status to SEALED**.
 
@@ -79,7 +82,8 @@ A PR head is never the final sealed identity:
 
 ```text
 PR CI green
-  -> merge code into main
+  -> merge code/evidence into main
+  -> delete temporary branch
   -> main push CI green
   -> ARCHIVE CANDIDATE
   -> seal exact current main on real target
@@ -92,7 +96,7 @@ The manual `Seal Real Hermes Target` workflow verifies `origin/main == candidate
 
 `SEALED` requires **fresh evidence for the exact current `main` SHA**, not reuse of the 2026-09-01 capture:
 
-- all intended code already merged to `main`;
+- all intended code and retained contribution evidence already merged to `main`;
 - exact-main push CI green;
 - deterministic candidate install and loaded SHA read-back;
 - target evidence v2 with `installed_candidate_verified=true`;
@@ -104,7 +108,7 @@ The manual `Seal Real Hermes Target` workflow verifies `origin/main == candidate
 - desktop native `/sessions` return-path pass;
 - seal-verdict v2 `eligible=true`;
 - read-only finalizer confirms current main has not moved and canonical exact-main push CI is green;
-- required upstream route-scoped exclusive-shell contract (`NousResearch/hermes-agent#100149`, or an equivalent documented replacement in the pinned Hermes revision) passes the upstream gate.
+- required upstream route-scoped exclusive-shell contract (`NousResearch/hermes-agent#100149`, or an equivalent documented replacement in the pinned Hermes revision) is merged into official Hermes and passes the upstream gate after Worker Studio repins to that official revision.
 
 The canonical command is:
 
