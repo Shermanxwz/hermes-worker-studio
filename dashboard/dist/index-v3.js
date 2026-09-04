@@ -273,7 +273,30 @@
     }
     return [{ value: 'auto', description: '使用 Hermes/provider 默认值' }, ...exact];
   }
-  function reasoningSummary(options, provider, model) {
+  function configuredModelReasoning(config, provider, model) {
+    const root = unwrapConfig(config);
+    const providers = root && typeof root.providers === 'object' && !Array.isArray(root.providers) ? root.providers : {};
+    const wanted = String(provider || '').trim().toLowerCase();
+    for (const [key, entry] of Object.entries(providers)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const identities = [key, entry.name, entry.slug, ...(Array.isArray(entry.aliases) ? entry.aliases : [])]
+        .map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
+      if (!identities.includes(wanted)) continue;
+      const models = entry.models && typeof entry.models === 'object' && !Array.isArray(entry.models) ? entry.models : {};
+      const metadata = models[model];
+      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+      const reasoning = metadata.hws_reasoning && typeof metadata.hws_reasoning === 'object' && !Array.isArray(metadata.hws_reasoning)
+        ? metadata.hws_reasoning
+        : metadata;
+      return { ...reasoning, hws_native_reasoning: metadata.hws_native_reasoning };
+    }
+    return {};
+  }
+  function reasoningSummary(options, provider, model, config = null) {
+    const configured = configuredModelReasoning(config, provider, model);
+    if (configured.hws_native_reasoning === 'minimax_openai') return '原生 thinking · adaptive（档位未公开）';
+    if (configured.supports_reasoning === false || configured.reasoning_control === 'none') return '不支持';
+    if (configured.reasoning_control === 'fixed' && configured.supports_reasoning === true) return '始终开启';
     const efforts = reasoningOptions(options, provider, model).filter((item) => item.value !== 'auto');
     if (efforts.length) return efforts.map((item) => item.value).join(' · ');
     const cap = modelCapability(options, provider, model);
@@ -1625,7 +1648,7 @@
       message ? h('div', { className: 'hws3-result' }, message) : null,
       h('input', { className: 'hws3-search', value: query, onChange: (e) => setQuery(e.target.value), placeholder: '搜索 Provider / Model…' }),
       protocolState.error && !/Unhandled fetchJSON call|404|Not Found/i.test(protocolState.error) ? h('div', { className: 'hws3-result' }, 'Hermes 协议状态暂不可用；未做协议猜测。') : null,
-      h('div', { className: 'hws3-model-catalog' }, rows.map((provider) => { const models = (provider.models || []).filter((m) => !needle || `${provider.name} ${provider.slug} ${m}`.toLowerCase().includes(needle)); if (!models.length) return null; return h('section', { className: 'hws3-card', key: provider.slug }, h('header', null, h('div', null, h('small', null, provider.slug), h('h3', null, provider.name || provider.slug)), h('div', { className: 'hws3-provider-badges' }, h(Pill, null, 'Hermes Auto'), provider.is_current ? h(Pill, { tone: 'good' }, '当前') : null)), models.slice(0, 80).map((model) => { const key = `${provider.slug}:${model}`; const test = tests[key]; const declaredMode = modelApiMode(modelOptions, provider.slug, model); const route = protocolState.routes.find((item) => item.provider === provider.slug && item.model === model) || (declaredMode ? { status: 'declared', mode: declaredMode } : null); const testOk = test?.ok === true || test?.route?.status === 'resolved'; const probeNeeded = route && ['unresolved', 'ambiguous'].includes(route.status); return h('div', { className: 'hws3-model-row', key: model }, h('div', null, h('strong', null, model), h('small', null, `协议：${protocolStatusLabel(route)} · 思考：${reasoningSummary(modelOptions, provider.slug, model)}`)), test?.loading ? h(Spinner) : test ? h('div', { className: 'hws3-model-result' }, h(Pill, { tone: testOk ? 'good' : route?.status === 'ambiguous' ? 'neutral' : 'bad' }, testOk ? 'Run 通过' : route?.status === 'ambiguous' ? '需选择协议' : '失败'), !testOk && (test.error || test.route?.error) ? h('small', null, shortText(test.error || test.route.error, 180)) : null) : null, h('div', { className: 'hws3-model-actions' }, h(Button, { className: 'ghost small', disabled: test?.loading, title: probeNeeded ? '使用 Hermes 官方真实 Run 确定该模型的协议' : '使用已经确定的协议执行真实 Run', onClick: () => testModel(provider.slug, model) }, '测试'), route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'chat_completions') }, '选 Chat') : null, route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'codex_responses') }, '选 Responses') : null)); })); })),
+      h('div', { className: 'hws3-model-catalog' }, rows.map((provider) => { const models = (provider.models || []).filter((m) => !needle || `${provider.name} ${provider.slug} ${m}`.toLowerCase().includes(needle)); if (!models.length) return null; return h('section', { className: 'hws3-card', key: provider.slug }, h('header', null, h('div', null, h('small', null, provider.slug), h('h3', null, provider.name || provider.slug)), h('div', { className: 'hws3-provider-badges' }, h(Pill, null, 'Hermes Auto'), provider.is_current ? h(Pill, { tone: 'good' }, '当前') : null)), models.slice(0, 80).map((model) => { const key = `${provider.slug}:${model}`; const test = tests[key]; const declaredMode = modelApiMode(modelOptions, provider.slug, model); const route = protocolState.routes.find((item) => item.provider === provider.slug && item.model === model) || (declaredMode ? { status: 'declared', mode: declaredMode } : null); const testOk = test?.ok === true || test?.route?.status === 'resolved'; const probeNeeded = route && ['unresolved', 'ambiguous'].includes(route.status); return h('div', { className: 'hws3-model-row', key: model }, h('div', null, h('strong', null, model), h('small', null, `协议：${protocolStatusLabel(route)} · 思考：${reasoningSummary(modelOptions, provider.slug, model, config)}`)), test?.loading ? h(Spinner) : test ? h('div', { className: 'hws3-model-result' }, h(Pill, { tone: testOk ? 'good' : route?.status === 'ambiguous' ? 'neutral' : 'bad' }, testOk ? 'Run 通过' : route?.status === 'ambiguous' ? '需选择协议' : '失败'), !testOk && (test.error || test.route?.error) ? h('small', null, shortText(test.error || test.route.error, 180)) : null) : null, h('div', { className: 'hws3-model-actions' }, h(Button, { className: 'ghost small', disabled: test?.loading, title: probeNeeded ? '使用 Hermes 官方真实 Run 确定该模型的协议' : '使用已经确定的协议执行真实 Run', onClick: () => testModel(provider.slug, model) }, '测试'), route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'chat_completions') }, '选 Chat') : null, route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'codex_responses') }, '选 Responses') : null)); })); })),
     );
   }
 
