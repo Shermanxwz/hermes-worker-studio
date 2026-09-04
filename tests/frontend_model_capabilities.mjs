@@ -171,6 +171,13 @@ assert.equal(enriched.providers[0].capabilities['unknown-model'].reasoning_effor
 assert.deepEqual(plain(enriched.providers[0].capabilities['effort-model'].reasoning_efforts.map((x) => x.value)), ['none', 'low', 'high']);
 assert.deepEqual(plain(enriched.providers[1].capabilities['gpt-proxy'].reasoning_efforts.map((x) => x.value)), ['none', 'low', 'medium', 'high', 'xhigh', 'max']);
 
+// Product 3 reads /api/config and /api/model/options concurrently. A later
+// config observation must not erase the already enriched model snapshot.
+const enrichedSnapshot = api._runtime.modelOptions;
+await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/config');
+assert.equal(api._runtime.modelOptions, enrichedSnapshot, 'config GET must not invalidate enriched model capabilities');
+assert.deepEqual(plain(api._runtime.modelOptions.providers[1].capabilities['gpt-proxy'].reasoning_efforts.map((x) => x.value)), ['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+
 const configReadsBeforeRefresh = calls.filter((x) => x.url === '/api/config' && x.method === 'GET').length;
 await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/model/options?refresh=1');
 const configReadsAfterRefresh = calls.filter((x) => x.url === '/api/config' && x.method === 'GET').length;

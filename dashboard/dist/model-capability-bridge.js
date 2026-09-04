@@ -172,7 +172,10 @@
       }
       if (path === '/api/config' && method === 'GET') {
         hermesConfig = result && typeof result === 'object' ? clone(result) : null;
-        modelOptions = null;
+        // Product 3 loads config and model options concurrently. A config
+        // read is an observation, not a mutation: clearing an already
+        // enriched model snapshot here lets the slower response erase the
+        // capability data that the model picker just received.
       } else if (isConfigWrite(path, method)) {
         hermesConfig = undefined;
         modelOptions = null;
