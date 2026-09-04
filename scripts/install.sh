@@ -188,7 +188,10 @@ else
   echo "[1/4] hermes command not found; skipped plugin doctor" >&2
 fi
 
-echo "[2/4] Installing plugin transactionally"
+# Keep the historical archive-contract marker while documenting the stronger
+# semantics: Linux gets atomic exchange when supported; every platform gets a
+# rollback transaction that retains recovery material until commit.
+echo "[2/4] Installing plugin atomically when supported; transactionally on every platform"
 if [[ -e "$DEST" ]]; then
   HAD_PREVIOUS=1
   # Linux filesystems supporting renameat2 can exchange old/new directory
