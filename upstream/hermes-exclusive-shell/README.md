@@ -1,7 +1,8 @@
 # Hermes Dashboard route-scoped exclusive shell contribution
 
-This directory is a sealed upstream-contribution harness for
-NousResearch/hermes-agent issue #100149.
+This directory is the canonical upstream-contribution evidence for
+NousResearch/hermes-agent issue #100149. It lives on `main`; no long-lived
+feature branch is authoritative for this work.
 
 ## Exact upstream baseline
 
@@ -74,7 +75,7 @@ Dashboard chrome before the active plugin route is resolved.
 
 The focused jsdom App test verifies the actual rendered contract, not only the
 resolver: pending discovery has no native chrome, `/` exclusive renders the
-plugin without shell slots/sidebar, and a standard `/sessions` override renders
+plugin without shell slots/sidebar, and a standard `/sessions` route renders
 inside the normal Hermes shell again.
 
 ## Validation
@@ -86,7 +87,13 @@ class, TypeScript typecheck, focused resolver/cache/jsdom DOM tests, ESLint on
 all changed Web sources, the full Hermes Web Vitest regression suite, and a
 production Web build.
 
-This branch is staging evidence only. It does **not** make Worker Studio
-globally SEALED until an equivalent typed, documented, runtime-enforced and
-upstream-tested contract is merged into official Hermes and Worker Studio pins
-that official revision.
+The sealed candidate was validated successfully in GitHub Actions run
+`33796062929` at contribution commit
+`eb5d3066775958c5094d719230ee2c651f78e50f`. The harness and its CI definition
+are now retained on canonical `main` so branch deletion cannot erase the proof.
+
+This evidence does **not** make Worker Studio globally `SEALED` by itself. The
+remaining external condition is an equivalent typed, documented,
+runtime-enforced and upstream-tested contract merged into official Hermes,
+followed by Worker Studio pinning that official revision and re-running the
+exact-main seal gates.
