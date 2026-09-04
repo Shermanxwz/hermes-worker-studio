@@ -72,7 +72,7 @@ All transforms are build mechanics only. Security/architecture gates prohibit th
 
 The installer runs Hermes Plugin Doctor against the staged tree before replacement. If an existing plugin is installed, Linux `renameat2(RENAME_EXCHANGE)` is preferred for an atomic directory-name exchange; otherwise the old tree is preserved in a rollback location before replacement. The old plugin remains recoverable until the **exact installed path** passes Plugin Doctor and the official enable command succeeds. The theme also has a transaction backup. Post-swap failure restores the previous plugin/theme and deletes transaction residue before returning the original failure code.
 
-The exact npm lockfile is subject to a dedicated `npm audit --audit-level=high` CI gate. `npm ci --no-audit` only disables npm's redundant implicit install audit and is not a security bypass.
+The root npm package is a private test harness, not part of the shipped plugin. Canonical CI rejects production npm dependency fields, requires exact `x.y.z` devDependency pins, requires the committed lockfile root to match `package.json`, and installs with `npm ci --ignore-scripts --no-fund --no-audit`. Seal correctness does not depend on the availability of npm's live advisory endpoint; external advisory checks may be used diagnostically but are not canonical seal evidence.
 
 The final CSS chain is local plugin static content only; no remote stylesheet/font/script dependency is introduced by product closure.
 
@@ -109,7 +109,7 @@ CI rejects:
 - model-name/URL protocol guessing as a routing contract;
 - obvious committed credentials;
 - release transforms gaining external/process capability;
-- high-severity npm dependency audit findings;
+- npm production-dependency, non-exact-pin or package/lock boundary drift;
 - private-state permission/write hardening drift;
 - malformed-JSON fail-closed drift;
 - installer post-swap rollback regressions;
