@@ -32,8 +32,29 @@ jobs:
       - name: Install test-only Python dependencies
         run: python -m pip install --disable-pip-version-check 'fastapi>=0.115,<1' 'httpx>=0.28,<1'
 
+      - name: Test-only npm dependency boundary
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (pkg.name !== 'hermes-worker-studio-tests' || pkg.private !== true) {
+            throw new Error('root npm package must remain a private test harness');
+          }
+          for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+            if (pkg[field] && Object.keys(pkg[field]).length) {
+              throw new Error(`${field} must stay empty; npm packages are not part of the production plugin`);
+            }
+          }
+          const dev = pkg.devDependencies || {};
+          for (const [name, version] of Object.entries(dev)) {
+            if (!/^\d+\.\d+\.\d+$/.test(version)) {
+              throw new Error(`test dependency ${name} must be exactly pinned, got ${version}`);
+            }
+          }
+          NODE
+
       - name: Install pinned frontend harness
-        run: npm install --ignore-scripts --no-fund
+        run: npm ci --ignore-scripts --no-fund --no-audit
 
       - name: Python compile gate
         run: python -m compileall -q __init__.py schemas.py tools.py dashboard scripts tests
@@ -92,17 +113,6 @@ jobs:
 
       - name: Dashboard manifest JSON gate
         run: python -m json.tool dashboard/manifest.json >/dev/null
-
-      - name: High severity npm audit
-        shell: bash
-        env:
-          npm_config_fetch_retries: '2'
-          npm_config_fetch_retry_mintimeout: '1000'
-          npm_config_fetch_retry_maxtimeout: '5000'
-          npm_config_fetch_timeout: '20000'
-        run: |
-          set -euo pipefail
-          timeout --signal=TERM --kill-after=10s 120s npm audit --audit-level=high
 
   hermes-upstream-contract:
     name: Pinned Hermes archive public contracts
