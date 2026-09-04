@@ -35,7 +35,11 @@ Hermes Hardline Blocklist remains permanent. Studio cannot and does not bypass i
 
 Studio does not read Hermes SQLite or private state files. Conversation/session data is obtained through official APIs. Browser Run projection, protocol-route state and lifecycle handle convenience state are bounded/disposable; authoritative execution/session/model truth remains Hermes.
 
-Protocol-route and projection files use atomic replacement and restrictive file permissions. They contain routing/projection metadata, not provider credentials or hidden reasoning.
+The supported staged artifact routes protocol/projection writes through one private JSON writer. Temporary files are created with `O_CREAT|O_EXCL`, add `O_NOFOLLOW` when the platform exposes it, and receive mode `0600` **at creation time** before any payload bytes are written. File content is flushed/fsync'd before `os.replace`; directory fsync is attempted where supported. This removes the former create-then-chmod permission window.
+
+These files contain routing/projection metadata, not provider credentials or hidden reasoning.
+
+Malformed JSON requests on Product 3 mutation routes are caught at the bridge boundary and become explicit HTTP 400 responses. They may not depend on host-global exception translation or escape as an accidental server error.
 
 ## Model and protocol integrity
 
@@ -58,9 +62,17 @@ Real-target evidence uses schema `hermes-worker-studio.seal-evidence.v2` and rec
 
 ## Supported artifact / supply boundary
 
-The supported installer stages a temporary product tree, stamps the exact candidate SHA, applies deterministic exact-count transforms, runs Hermes Plugin Doctor, then atomically swaps the install.
+The supported installer stages a temporary product tree, stamps the exact candidate SHA and applies three deterministic exact-count transforms:
 
-`stage_product_bundle.py` and `stage_mixed_protocol.py` are build transforms only. Security/architecture gates prohibit them from gaining network, socket, request-library or subprocess ownership. CI separately builds and syntax-checks the transformed JS/Python, and installer tests assert the exact installed file set.
+- `stage_product_bundle.py` — attachment/interaction/accessibility closure;
+- `stage_mixed_protocol.py` — mixed Chat/Responses per-model compatibility;
+- `stage_security_closure.py` — private-state write hardening and malformed-JSON fail-closed handling.
+
+All transforms are build mechanics only. Security/architecture gates prohibit them from gaining network, socket, request-library or subprocess ownership. CI separately builds and syntax-checks the transformed JS/Python, asserts the security tokens and runs Bandit over all transform code.
+
+The installer runs Hermes Plugin Doctor against the staged tree before replacement. If an existing plugin is installed, Linux `renameat2(RENAME_EXCHANGE)` is preferred for an atomic directory-name exchange; otherwise the old tree is preserved in a rollback location before replacement. The old plugin remains recoverable until the **exact installed path** passes Plugin Doctor and the official enable command succeeds. The theme also has a transaction backup. Post-swap failure restores the previous plugin/theme and deletes transaction residue before returning the original failure code.
+
+The exact npm lockfile is subject to a dedicated `npm audit --audit-level=high` CI gate. `npm ci --no-audit` only disables npm's redundant implicit install audit and is not a security bypass.
 
 The final CSS chain is local plugin static content only; no remote stylesheet/font/script dependency is introduced by product closure.
 
@@ -70,7 +82,7 @@ The real-target seal workflow is deliberately **manual-only and read-only toward
 
 - runner labels must include `self-hosted` and `hermes-seal`;
 - permissions are only `actions: read` and `contents: read`;
-- no `pull-requests: write`, `contents: write`, PR merge, branch update, mark-ready mutation or release mutation is allowed;
+- no `pull-requests: write`, `contents: write`, PR merge, branch update, mark-ready mutation, tag mutation or release mutation is allowed;
 - before any target work, the checkout SHA and fetched `origin/main` must both equal the requested candidate;
 - target evidence is captured only after changes have already landed on canonical `main`;
 - the final GitHub verifier is read-only and confirms that `main` did not move and that the exact-main push CI came from `.github/workflows/ci.yml` and passed.
@@ -97,6 +109,10 @@ CI rejects:
 - model-name/URL protocol guessing as a routing contract;
 - obvious committed credentials;
 - release transforms gaining external/process capability;
+- high-severity npm dependency audit findings;
+- private-state permission/write hardening drift;
+- malformed-JSON fail-closed drift;
+- installer post-swap rollback regressions;
 - staged artifact syntax/closure drift;
 - target/seal schema drift;
 - missing/skipped required viewport evidence;
