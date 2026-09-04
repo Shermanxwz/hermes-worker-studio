@@ -71,7 +71,11 @@ def _write_private_json(path: pathlib.Path, payload: Any) -> None:
 async def _read_request_json(request: Request) -> Any:
     """Return decoded JSON, mapping malformed bodies to an explicit HTTP 400."""
     try:
-        return await request.json()
+        # Keep this helper outside the transform's exact endpoint-call token so
+        # the seven staged endpoint reads can be replaced without recursively
+        # rewriting the helper itself.
+        decoder = request.json
+        return await decoder()
     except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
         raise HTTPException(400, "request body must contain valid JSON") from exc
 '''
