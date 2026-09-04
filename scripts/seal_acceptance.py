@@ -10,8 +10,11 @@ Optional real model execution is enabled with ``--run``. The real-run gate is
 intentionally stronger than a plain echo: it requires Hermes' own ``todo`` tool
 to evolve a three-step canonical plan through multiple revisions, requires the
 Studio Run projection to surface a real todo event, verifies the actual resolved
-execution route, and verifies a final marker. Nothing changes approval policy;
-the harness never enables Full Access on its own.
+execution route, and verifies a final marker. When ``--reasoning-effort`` is
+supplied, the route must explicitly publish that vocabulary through Hermes model
+metadata or the official provider config overlay, and the concrete effort is
+sent through Hermes ``/v1/runs.model_options.reasoning_effort``. Nothing changes
+approval policy; the harness never enables Full Access on its own.
 """
 from __future__ import annotations
 
@@ -31,6 +34,12 @@ TERMINAL = {"completed", "failed", "cancelled", "canceled", "stopped", "incomple
 PLUGIN = "/api/plugins/hermes-worker-studio"
 TARGET_EVIDENCE_SCHEMA = "hermes-worker-studio.seal-evidence.v2"
 _EXECUTABLE_ROUTE_STATES = {"native", "declared", "resolved", "manual"}
+_REASONING_LIST_KEYS = (
+    "reasoning_efforts",
+    "reasoningEfforts",
+    "supported_reasoning_efforts",
+    "supportedReasoningEfforts",
+)
 
 
 class AcceptanceError(RuntimeError):
@@ -195,6 +204,143 @@ def pick_route(model_options: dict[str, Any], provider: str, model: str) -> tupl
     raise AcceptanceError("No usable non-MOA provider/model found in Hermes /api/model/options")
 
 
+def _effort_values(meta: Any) -> tuple[bool, list[str]]:
+    if not isinstance(meta, dict):
+        return False, []
+    rich = meta.get("reasoning") if isinstance(meta.get("reasoning"), dict) else {}
+    lists: list[Any] = [
+        rich.get("options"),
+        rich.get("efforts"),
+        rich.get("supported_efforts"),
+        rich.get("supportedEfforts"),
+    ]
+    lists.extend(meta.get(key) for key in _REASONING_LIST_KEYS)
+    present = any(isinstance(items, list) for items in lists)
+    values: list[str] = []
+    for items in lists:
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            value = str(item if isinstance(item, str) else (item.get("value") if isinstance(item, dict) else "") or "").strip()
+            if value and value.lower() != "auto" and value not in values:
+                values.append(value)
+    return present, values
+
+
+def _reasoning_disabled(meta: Any) -> bool | None:
+    if not isinstance(meta, dict):
+        return None
+    rich = meta.get("reasoning") if isinstance(meta.get("reasoning"), dict) else {}
+    supported = rich.get("supported") if "supported" in rich else meta.get("supports_reasoning")
+    if meta.get("reasoning") is False or supported is False:
+        return True
+    return False if meta.get("reasoning") is True or supported is True else None
+
+
+def _can_disable_reasoning(meta: Any, values: list[str]) -> bool | None:
+    if not isinstance(meta, dict):
+        return None
+    rich = meta.get("reasoning") if isinstance(meta.get("reasoning"), dict) else {}
+    value = rich.get("can_disable")
+    if value is None:
+        value = rich.get("canDisable")
+    if value is None:
+        value = meta.get("can_disable_reasoning")
+    if value is None:
+        value = meta.get("canDisableReasoning")
+    if value is True or value is False:
+        return value
+    if any(item.lower() == "none" for item in values):
+        return True
+    control = str(rich.get("control") or meta.get("reasoning_control") or "").strip().lower()
+    if control in {"toggle", "toggle_effort"}:
+        return True
+    if control == "fixed":
+        return False
+    return None
+
+
+def _option_provider(model_options: dict[str, Any], provider: str) -> dict[str, Any] | None:
+    wanted = provider.strip().lower()
+    for row in model_options.get("providers") or []:
+        if not isinstance(row, dict):
+            continue
+        aliases = [row.get("slug"), row.get("name"), *(row.get("aliases") or [])]
+        if wanted in {str(item or "").strip().lower() for item in aliases}:
+            return row
+    return None
+
+
+def _config_provider(config: dict[str, Any], provider: str) -> dict[str, Any] | None:
+    providers = config.get("providers") if isinstance(config, dict) else None
+    if not isinstance(providers, dict):
+        return None
+    wanted = provider.strip().lower()
+    for key, row in providers.items():
+        if not isinstance(row, dict):
+            continue
+        aliases = [key, row.get("slug"), row.get("name"), *(row.get("aliases") or [])]
+        if wanted in {str(item or "").strip().lower() for item in aliases}:
+            return row
+    return None
+
+
+def validate_reasoning_declaration(
+    *,
+    model_options: dict[str, Any],
+    config: dict[str, Any],
+    provider: str,
+    model: str,
+    effort: str,
+) -> dict[str, Any]:
+    """Require an explicit effort vocabulary before a real-target reasoning run.
+
+    This mirrors the product's fail-closed source precedence but intentionally
+    stays narrower than the browser renderer: a seal for a concrete *effort*
+    must find that exact token in an explicit vocabulary. A boolean
+    ``reasoning: true`` is never sufficient.
+    """
+    requested = effort.strip()
+    require(requested and requested.lower() != "auto", "real-target reasoning seal requires a concrete non-Auto effort")
+    provider_row = _option_provider(model_options, provider)
+    require(provider_row is not None, f"provider {provider!r} is absent from Hermes model options")
+    caps = provider_row.get("capabilities") if isinstance(provider_row.get("capabilities"), dict) else {}
+    native = caps.get(model) if isinstance(caps.get(model), dict) else {}
+    if _reasoning_disabled(native) is True:
+        raise AcceptanceError(f"Hermes model metadata explicitly disables reasoning for {provider}/{model}")
+    present, values = _effort_values(native)
+    if present:
+        can_disable = _can_disable_reasoning(native, values)
+        allowed = requested in values or (requested.lower() == "none" and can_disable is True)
+        require(allowed, f"Hermes model metadata does not explicitly allow reasoning effort {requested!r} for {provider}/{model}: {values}")
+        return {"source": "hermes.model_options", "values": values, "can_disable": can_disable}
+
+    configured = _config_provider(config, provider)
+    model_entry = None
+    if isinstance(configured, dict) and isinstance(configured.get("models"), dict):
+        candidate = configured["models"].get(model)
+        model_entry = candidate if isinstance(candidate, dict) else None
+    sources = []
+    if isinstance(model_entry, dict):
+        exact = model_entry.get("hws_reasoning") if isinstance(model_entry.get("hws_reasoning"), dict) else model_entry
+        sources.append(("hermes.provider_config.model", exact))
+    if isinstance(configured, dict) and isinstance(configured.get("hws_reasoning_defaults"), dict):
+        sources.append(("hermes.provider_config.defaults", configured["hws_reasoning_defaults"]))
+    for source, metadata in sources:
+        if _reasoning_disabled(metadata) is True:
+            raise AcceptanceError(f"{source} explicitly disables reasoning for {provider}/{model}")
+        present, values = _effort_values(metadata)
+        if not present:
+            continue
+        can_disable = _can_disable_reasoning(metadata, values)
+        allowed = requested in values or (requested.lower() == "none" and can_disable is True)
+        require(allowed, f"{source} does not explicitly allow reasoning effort {requested!r} for {provider}/{model}: {values}")
+        return {"source": source, "values": values, "can_disable": can_disable}
+    raise AcceptanceError(
+        f"No explicit reasoning effort vocabulary is published for {provider}/{model}; refusing to seal {requested!r} by inference"
+    )
+
+
 def validate_started_route(started: Any, provider: str, model: str) -> dict[str, Any]:
     """Prove that the real Run start resolved the requested source route safely."""
     if provider.strip().lower() == "moa":
@@ -306,6 +452,10 @@ def _validate_real_plan(
 
 def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
     client = Client(args.url, args.api_key, args.http_timeout)
+    reasoning_effort = str(args.reasoning_effort or "").strip()
+    if reasoning_effort:
+        require(args.run, "--reasoning-effort requires --run")
+        require(bool(str(args.provider or "").strip()) and bool(str(args.model or "").strip()), "--reasoning-effort requires explicit --provider and --model")
     evidence: dict[str, Any] = {
         "schema": TARGET_EVIDENCE_SCHEMA,
         "started_at": time.time(),
@@ -344,6 +494,11 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
         "model": model_options.get("model"),
         "provider_count": len(model_options.get("providers") or []),
     }
+    config: dict[str, Any] = {}
+    if reasoning_effort:
+        _, raw_config = client.request("/api/config")
+        require(isinstance(raw_config, dict), "Hermes /api/config is not an object")
+        config = raw_config.get("config") if isinstance(raw_config.get("config"), dict) else raw_config
 
     client.request("/api/sessions?limit=1&offset=0&order=recent&archived=exclude")
 
@@ -385,6 +540,15 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
 
         if args.run:
             provider, model = pick_route(model_options, args.provider, args.model)
+            reasoning_declaration = None
+            if reasoning_effort:
+                reasoning_declaration = validate_reasoning_declaration(
+                    model_options=model_options,
+                    config=config,
+                    provider=provider,
+                    model=model,
+                    effort=reasoning_effort,
+                )
             marker = f"HWS_SEAL_RUN_OK_{stamp.replace('-', '_')}"
             prompt = (
                 "This is a Hermes Worker Studio acceptance test. You MUST use the Hermes todo tool and no other tool. "
@@ -394,10 +558,13 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                 "(1) remember the token ALPHA, (2) remember the token BETA, (3) verify ALPHA followed by BETA is ALPHABETA. "
                 f"After the todo list is fully completed, reply with exactly {marker} and nothing else."
             )
+            run_body: dict[str, Any] = {"session_id": created_id, "input": prompt, "provider": provider, "model": model}
+            if reasoning_effort:
+                run_body["model_options"] = {"reasoning_effort": reasoning_effort}
             _, started = client.request(
                 f"{PLUGIN}/hermes/runs-v3",
                 method="POST",
-                body={"session_id": created_id, "input": prompt, "provider": provider, "model": model},
+                body=run_body,
                 expected=(200, 202),
             )
             run_id = str(started.get("id") or started.get("run_id") or "") if isinstance(started, dict) else ""
@@ -415,6 +582,14 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                 "event_names": sorted({str(x.get("event")) for x in (final.get("events") or []) if isinstance(x, dict)}),
                 **plan_evidence,
             }
+            if reasoning_effort:
+                evidence["checks"]["real_run"]["reasoning"] = {
+                    "requested_effort": reasoning_effort,
+                    "model_options_sent": {"reasoning_effort": reasoning_effort},
+                    "declaration": reasoning_declaration,
+                    "run_completed": True,
+                    "boundary": "Studio -> Hermes /v1/runs model_options; provider wire semantics are separately pinned by Hermes transport tests",
+                }
 
     finally:
         if created_id:
@@ -442,6 +617,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--run", action="store_true", help="Run the real Hermes model + canonical three-step todo evolution gate")
     parser.add_argument("--provider", default=os.getenv("HWS_SEAL_PROVIDER", ""))
     parser.add_argument("--model", default=os.getenv("HWS_SEAL_MODEL", ""))
+    parser.add_argument("--reasoning-effort", default=os.getenv("HWS_SEAL_REASONING_EFFORT", ""), help="Optional concrete reasoning effort; requires explicit provider/model and --run")
     parser.add_argument("--run-timeout", type=float, default=180.0)
     parser.add_argument("--evidence", default="", help="Write JSON evidence to this path")
     return parser.parse_args(argv)
