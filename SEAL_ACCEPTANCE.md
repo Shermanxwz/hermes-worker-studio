@@ -26,7 +26,7 @@ The exact repository candidate must be green for ordinary CI:
 
 - Studio static + unit + Product 3 mounted UI runtime;
 - exact staged release artifact syntax/closure gate;
-- explicit high-severity npm dependency audit against the exact lockfile;
+- deterministic private npm test-harness boundary: no production npm dependencies, exact devDependency pins, package/lock parity, and lifecycle scripts disabled during CI install;
 - installer transaction tests, including rollback after installed-tree Doctor/enable failure;
 - staged private-state/JSON security closure tests;
 - Gateway-native durable reconnect, no-wait input and arbitrary-file attachment tests;
@@ -37,7 +37,7 @@ The exact repository candidate must be green for ordinary CI:
 - official Hermes Web branding provenance;
 - final seal verifier/unit contracts.
 
-Ordinary CI answers **“is this exact repository candidate healthy?”**. It must not stay permanently red merely because a known future seal-required upstream contract has not landed yet.
+Ordinary CI answers **“is this exact repository candidate healthy?”**. It must not stay permanently red merely because a known future seal-required upstream contract has not landed yet, or because a third-party advisory service is unavailable.
 
 Hermes remains the only execution, session, model, approval, input-request, Skills/MCP and Worker source of truth.
 
