@@ -151,6 +151,8 @@ for (const token of [
 
 assert.ok(!js.includes("title: 'New conversation'"), 'fixed duplicate session title must never return');
 assert.ok(!js.includes('API_SERVER_KEY'), 'browser UI source must never see Hermes bearer secrets');
+assert.ok(js.includes('function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }'), 'Product 3 must resolve the SDK fetch layer at call time so capability enrichment is not bypassed during dynamic loading');
+assert.ok(!js.includes('const fetchJSON = SDK.fetchJSON;'), 'Product 3 must not capture the pre-bridge SDK fetch layer');
 
 for (const token of [
   'MAX_ATTACHMENT_BYTES',

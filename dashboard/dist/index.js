@@ -10,7 +10,9 @@
   const React = SDK.React;
   const h = React.createElement;
   const { useCallback, useEffect, useMemo, useRef, useState } = SDK.hooks;
-  const fetchJSON = SDK.fetchJSON;
+  // Resolve the SDK method at call time so dynamically installed capability
+  // layers are honored even when this bundle executes before they finish.
+  function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }
   const PLUGIN = '/api/plugins/hermes-worker-studio';
   const RECENT_LIMIT = 10;
   const CHAT_MESSAGE_LIMIT = 40;

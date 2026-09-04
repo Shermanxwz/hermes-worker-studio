@@ -10,7 +10,13 @@
   const React = SDK.React;
   const h = React.createElement;
   const { useCallback, useEffect, useMemo, useRef, useState } = SDK.hooks;
-  const fetchJSON = SDK.fetchJSON;
+  // Resolve the SDK method at call time. The manifest entry loads the
+  // capability bridge before this bundle in the normal path, but Hermes may
+  // execute Product 3 before the bridge's dynamic layer finishes loading.
+  // Capturing SDK.fetchJSON here would permanently bypass capability
+  // enrichment (including the explicit reasoning vocabulary from /api/config)
+  // on that first render.
+  function fetchJSON(path, init) { return SDK.fetchJSON(path, init); }
   const PLUGIN = '/api/plugins/hermes-worker-studio';
   const PROJECT_MARK_PATH = '/dashboard-plugins/hermes-worker-studio/dist/project-mark.png';
   const RECENT_LIMIT = 10;
