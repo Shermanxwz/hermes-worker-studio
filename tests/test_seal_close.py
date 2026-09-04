@@ -18,12 +18,13 @@ SPEC.loader.exec_module(seal)
 CANDIDATE = "a" * 40
 
 
-def args(root: pathlib.Path, *, provider: str = "", model: str = "") -> argparse.Namespace:
+def args(root: pathlib.Path, *, provider: str = "", model: str = "", reasoning_effort: str = "") -> argparse.Namespace:
     return argparse.Namespace(
         url="http://127.0.0.1:19119",
         api_key="",
         provider=provider,
         model=model,
+        reasoning_effort=reasoning_effort,
         http_timeout=30.0,
         run_timeout=180.0,
         evidence_dir=root / ".seal",
@@ -45,6 +46,13 @@ class SealCloseContractTests(unittest.TestCase):
                 seal.close(args(pathlib.Path(tmp), provider="custom", model=""))
             with self.assertRaises(seal.SealCloseError):
                 seal.close(args(pathlib.Path(tmp), provider="", model="model-only"))
+
+    def test_reasoning_effort_requires_explicit_provider_and_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(seal, "require_clean_candidate", return_value=CANDIDATE):
+            with self.assertRaises(seal.SealCloseError):
+                seal.close(args(pathlib.Path(tmp), reasoning_effort="xhigh"))
+            with self.assertRaises(seal.SealCloseError):
+                seal.close(args(pathlib.Path(tmp), provider="newapi", model="gpt-reasoner", reasoning_effort="auto"))
 
 
 if __name__ == "__main__":
