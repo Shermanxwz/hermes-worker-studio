@@ -6,6 +6,14 @@ The preferred implementation is a **public Hermes Dashboard Plugin contract**. H
 
 Upstream tracking: https://github.com/NousResearch/hermes-agent/issues/100149
 
+## Current upstream-candidate evidence
+
+Worker Studio now keeps a fully reproducible upstream contribution candidate on canonical `main` under `upstream/hermes-exclusive-shell/`. It targets Hermes commit `63279301bcbdc185c1b07b98a9312eb0c862f26d` and is validated by `.github/workflows/upstream-exclusive-shell.yml`.
+
+GitHub Actions run `33796062929` completed successfully for contribution commit `eb5d3066775958c5094d719230ee2c651f78e50f`, covering backend manifest validation, TypeScript, focused resolver/cache/jsdom DOM tests, ESLint, the full Hermes Web Vitest suite and a production Web build.
+
+That proves the proposed additive contract is implementable and regression-safe against that exact upstream source shape. It is **candidate evidence, not official upstream truth**: Product 3 remains non-sealed until an equivalent public contract is merged into `NousResearch/hermes-agent`, Worker Studio pins the merged official revision, and the exact-main real-target seal is rerun.
+
 ## Required UX
 
 ```text
