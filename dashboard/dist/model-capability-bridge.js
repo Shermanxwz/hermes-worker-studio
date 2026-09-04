@@ -12,10 +12,13 @@
   const moaOverrides = new Map();
   const runRoutes = new Map();
   let modelOptions = null;
+  let hermesConfig;
   let moaConfig = null;
 
   const parseBody = (init) => { try { return init?.body ? (typeof init.body === 'string' ? JSON.parse(init.body) : init.body) : null; } catch (_) { return null; } };
   const withBody = (init, body) => ({ ...(init || {}), headers: { ...((init || {}).headers || {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const isModelOptionsPath = (path) => path === '/api/model/options' || String(path || '').startsWith('/api/model/options?');
+  const isConfigWrite = (path, method) => path === '/api/config' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
 
   class GatewayRpc {
     constructor() { this.ws = null; this.opening = null; this.pending = new Map(); this.seq = 0; }
@@ -60,10 +63,28 @@
   const moaKey = (preset, kind, index) => `${preset}|${kind}|${kind === 'reference' ? index : ''}`;
 
   const base = SDK.fetchJSON.bind(SDK);
-  async function ensureModelOptions() {
+
+  async function ensureHermesConfig(refresh = false) {
+    if (refresh) hermesConfig = undefined;
+    if (hermesConfig !== undefined) return hermesConfig;
+    try {
+      const raw = await base('/api/config');
+      hermesConfig = raw && typeof raw === 'object' ? raw : null;
+    } catch (_) {
+      // Some API-server-only or older Hermes surfaces do not expose the
+      // Dashboard config contract. Missing config metadata is a capability
+      // miss, never permission to invent a reasoning vocabulary.
+      hermesConfig = null;
+    }
+    return hermesConfig;
+  }
+
+  async function ensureModelOptions(refresh = false) {
+    if (refresh) modelOptions = null;
     if (modelOptions) return modelOptions;
-    const raw = await base('/api/model/options');
-    modelOptions = API.enrichModelOptions(raw);
+    const suffix = refresh ? '?refresh=1' : '';
+    const [raw, config] = await Promise.all([base(`/api/model/options${suffix}`), ensureHermesConfig(refresh)]);
+    modelOptions = API.enrichModelOptions(raw, config);
     return modelOptions;
   }
 
@@ -101,7 +122,7 @@
       reasoning: checked?.value || 'auto',
       reasoning_semantic: checked?.semantic || 'auto',
       reasoning_control: checked?.descriptor?.control || 'auto',
-      source: 'hermes.model_options+gateway.config.set',
+      source: 'hermes.model_options+provider_config+gateway.config.set',
     };
   }
   const attachRoute = (result, meta) => meta && result && typeof result === 'object' && !Array.isArray(result) ? { ...result, source_route: clone(meta) } : result;
@@ -115,6 +136,11 @@
       let nextInit = init;
       let pending = null;
       const method = String(init?.method || 'GET').toUpperCase();
+      const refreshModelOptions = isModelOptionsPath(path) && /(?:^|[?&])refresh=1(?:&|$)/.test(String(path));
+      if (top && refreshModelOptions) {
+        modelOptions = null;
+        hermesConfig = undefined;
+      }
       if (top && path === RUNS && method === 'POST') {
         const body = parseBody(init) || {};
         pending = await sourceRoute(body);
@@ -138,10 +164,18 @@
         const match = String(path || '').match(RUN_RE);
         if (match) result = attachRoute(result, runRoutes.get(decodeURIComponent(match[1])));
       }
-      if (path === '/api/model/options' || String(path).startsWith('/api/model/options?')) {
-        modelOptions = API.enrichModelOptions(result);
+      if (isModelOptionsPath(path)) {
+        const config = await ensureHermesConfig(refreshModelOptions);
+        modelOptions = API.enrichModelOptions(result, config);
         queueMicrotask(() => window.__HWS_MODEL_CAPABILITY_DOM_REFRESH__?.());
         return modelOptions;
+      }
+      if (path === '/api/config' && method === 'GET') {
+        hermesConfig = result && typeof result === 'object' ? clone(result) : null;
+        modelOptions = null;
+      } else if (isConfigWrite(path, method)) {
+        hermesConfig = undefined;
+        modelOptions = null;
       }
       if ((path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'GET') moaConfig = clone(result);
       if ((path === MOA_PLUGIN || path === MOA_OFFICIAL) && method === 'PUT') { moaConfig = clone(result); moaOverrides.clear(); }
@@ -153,7 +187,7 @@
 
   API.applyMoaOverrides = applyMoaOverrides;
   API._runtime = {
-    get modelOptions() { return modelOptions; }, get moaConfig() { return moaConfig; }, moaOverrides, runRoutes,
-    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute, ensureModelOptions,
+    get modelOptions() { return modelOptions; }, get hermesConfig() { return hermesConfig; }, get moaConfig() { return moaConfig; }, moaOverrides, runRoutes,
+    moaKey, setMoaOverride: (key, value) => moaOverrides.set(key, value), applyReasoning, sourceRoute, ensureModelOptions, ensureHermesConfig,
   };
 })();
