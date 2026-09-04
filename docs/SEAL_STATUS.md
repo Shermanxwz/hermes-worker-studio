@@ -6,7 +6,7 @@ Product: **Hermes Worker Studio 3.0** — Hermes-native single-runtime product s
 
 This file intentionally does **not** hard-code a current PR number or treat an older target capture as proof for newer code. Development changes are merged first; the only final seal identity is the exact current **`main` HEAD** supplied to the real-target workflow / `seal_close.py`.
 
-Repository branch policy is equally strict: **`main` is the only long-lived source of truth**. Feature, seal and upstream-contribution branches are temporary transport only; once their evidence or code is preserved on `main`, they carry no authoritative state and should be deleted.
+Repository branch policy is equally strict: **`main` is the only long-lived source of truth**. Feature, seal and upstream-contribution branches are temporary transport only; once their evidence or code is preserved on `main`, they carry no authoritative state and should be deleted. A Git tag or GitHub Release is optional distribution metadata and is not part of seal eligibility.
 
 ## Current repository engineering state
 
@@ -22,16 +22,19 @@ The repository has reached code-level archive-candidate closure around these inv
 - reasoning effort is emitted only from explicit upstream capability metadata;
 - Session/history/search/archive, config, Custom Endpoints, MOA, Skills/Plugins/MCP ownership remain on official Hermes surfaces;
 - there is no second model registry, planner, tokenizer, worker daemon, queue or persistence database;
-- candidate installation is atomic and candidate-SHA stamped;
+- candidate installation is candidate-SHA stamped and transactionally rollback-safe; existing installs prefer `renameat2(RENAME_EXCHANGE)`, while the portable fallback retains the previous tree until post-swap validation commits;
+- the exact installed path must pass Plugin Doctor before official enable, and post-swap Doctor/enable failure restores the previous plugin/theme without transaction residue;
 - deterministic release transforms are exact-count/fail-closed and independently built/syntax-checked in CI;
+- staged private protocol/projection state uses exclusive/no-follow mode-`0600` temporary files before rename; malformed JSON mutation bodies fail closed as HTTP 400;
+- the exact npm lockfile has an explicit high-severity `npm audit` gate rather than a documentation-only claim;
 - final UI stylesheet is `product-closure.css`, layered over sealed/base CSS without changing the existing visual language;
 - desktop, phone portrait and compact landscape real-target UI projects cover every existing first-level Studio page;
 - keyboard focus, dialog Escape/focus lifecycle, disclosure/menu state, touch-only action discoverability and reduced-motion behavior are contract-tested;
 - target evidence is `hermes-worker-studio.seal-evidence.v2` and includes the actual resolved execution route;
 - final verdict is `hermes-worker-studio.seal-verdict.v2`;
 - each browser project independently reads the running candidate SHA rather than relying on post-test report stamping;
-- final GitHub verification is exact-main and read-only; it cannot merge a PR or mutate repository contents;
-- production security gates reject bearer-secret leaks, second-runtime residue and mutation-capable real-target workflow drift;
+- final GitHub verification is exact-main and read-only; it cannot merge a PR, create a tag/Release or mutate repository contents;
+- production security gates reject bearer-secret leaks, second-runtime residue, staged-security drift and mutation-capable real-target workflow drift;
 - the route-scoped exclusive-shell upstream candidate is preserved on `main` under `upstream/hermes-exclusive-shell/`; GitHub Actions run `33796062929` proved the candidate against Hermes `63279301bcbdc185c1b07b98a9312eb0c862f26d` with backend, typecheck, focused DOM/cache tests, lint, full Web tests and production build all green.
 
 Repository CI can prove these code and integration contracts, but **CI success alone never changes this status to SEALED**.
@@ -94,7 +97,7 @@ The manual `Seal Real Hermes Target` workflow verifies `origin/main == candidate
 
 ## What remains before SEALED
 
-`SEALED` requires **fresh evidence for the exact current `main` SHA**, not reuse of the 2026-09-01 capture:
+After local engineering closure, `SEALED` still requires **fresh evidence for the exact current `main` SHA**, not reuse of the 2026-09-01 capture:
 
 - all intended code and retained contribution evidence already merged to `main`;
 - exact-main push CI green;
@@ -116,4 +119,4 @@ The canonical command is:
 python scripts/seal_close.py --url http://127.0.0.1:19119
 ```
 
-Only when all of those checks close on the same exact current `main` SHA may this project be called `SEALED`.
+Only when all of those checks close on the same exact current `main` SHA may this project be called `SEALED`. No Git tag or GitHub Release is required.
