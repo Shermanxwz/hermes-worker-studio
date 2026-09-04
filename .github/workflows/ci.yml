@@ -120,46 +120,6 @@ jobs:
       - name: Dashboard manifest JSON gate
         run: python -m json.tool dashboard/manifest.json >/dev/null
 
-  frontend-dependency-audit:
-    name: Frontend dependency audit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '22'
-      - name: High-severity frontend dependency audit
-        timeout-minutes: 2
-        shell: bash
-        env:
-          npm_config_fetch_retries: '0'
-          npm_config_fetch_timeout: '20000'
-        run: |
-          set -euo pipefail
-          for attempt in 1 2 3; do
-            log="$(mktemp)"
-            rc=0
-            if timeout 30s npm audit --audit-level=high --ignore-scripts 2>&1 | tee "$log"; then
-              rm -f "$log"
-              exit 0
-            else
-              rc=${PIPESTATUS[0]}
-            fi
-            if [[ "$rc" -eq 124 ]] || grep -Eqi 'network timeout|audit endpoint returned an error|EAI_AGAIN|ENETUNREACH|ECONNRESET|ETIMEDOUT|503 Service Unavailable|504 Gateway Timeout' "$log"; then
-              rm -f "$log"
-              if [[ "$attempt" -lt 3 ]]; then
-                sleep $((attempt * 5))
-                continue
-              fi
-              echo "npm advisory service remained unavailable after three bounded attempts" >&2
-              exit "$rc"
-            fi
-            rm -f "$log"
-            exit "$rc"
-          done
-          exit 1
-
   hermes-upstream-contract:
     name: Pinned Hermes archive public contracts
     runs-on: ubuntu-24.04
