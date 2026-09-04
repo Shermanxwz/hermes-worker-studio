@@ -11,7 +11,7 @@ The pass is deliberately constrained: no new product surface, model client, exec
 - **Install parity:** installer tests assert the exact installed file set, candidate SHA stamping, all release transforms and post-swap rollback behavior.
 - **Transactional replacement:** an existing install is retained until the exact installed tree passes Plugin Doctor and official enable; failure restores the previous plugin/theme. Linux atomic directory exchange is preferred when available.
 - **Private-state security:** staged projection/protocol writes create mode-`0600` exclusive/no-follow temporary files before rename; malformed JSON mutations fail explicitly as HTTP 400.
-- **Dependency evidence:** the exact npm lockfile has a dedicated high-severity audit gate in canonical CI.
+- **Dependency evidence:** npm is test-only: production dependency fields are forbidden, devDependencies are exact-pinned, the committed lock root must match `package.json`, and CI installs with lifecycle scripts disabled. Seal CI does not depend on a live advisory endpoint.
 - **Desktop/mobile UI:** every existing first-level Studio page is part of the real-target viewport/overflow matrix.
 - **Interaction semantics:** focus visibility, dialog Escape/focus lifecycle, disclosure/menu state, accessible names and touch-only discoverability are explicit contracts.
 - **Responsive bounds:** phone portrait and compact landscape must remain inside the actual dynamic viewport and safe areas.
