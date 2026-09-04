@@ -14,6 +14,9 @@ class RealTargetSealWorkflowContractTests(unittest.TestCase):
             "workflow_dispatch:",
             "candidate_sha:",
             "Exact 40-character current main HEAD SHA already green in push CI",
+            "reasoning_effort:",
+            "HWS_SEAL_REASONING_EFFORT",
+            "--reasoning-effort",
             "runs-on: [self-hosted, hermes-seal]",
             "scripts/seal_close.py",
             "scripts/github_finalize_seal.py",
@@ -43,6 +46,18 @@ class RealTargetSealWorkflowContractTests(unittest.TestCase):
             "--pr ",
         ):
             self.assertNotIn(forbidden, text)
+
+    def test_reasoning_seal_is_explicit_and_cannot_be_silently_defaulted(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        closer = (ROOT / "scripts" / "seal_close.py").read_text(encoding="utf-8")
+        acceptance = (ROOT / "scripts" / "seal_acceptance.py").read_text(encoding="utf-8")
+        self.assertIn("reasoning_effort:", workflow)
+        self.assertIn("required: false", workflow)
+        self.assertIn('if [[ -n "${HWS_SEAL_REASONING_EFFORT:-}" ]]', workflow)
+        self.assertIn("--reasoning-effort", closer)
+        self.assertIn("--reasoning-effort requires explicit --provider and --model", closer)
+        self.assertIn("real-target reasoning seal requires a concrete non-Auto effort", acceptance)
+        self.assertIn('run_body["model_options"] = {"reasoning_effort": reasoning_effort}', acceptance)
 
     def test_finalizer_runs_only_after_real_target_seal_and_verdict(self) -> None:
         text = WORKFLOW.read_text(encoding="utf-8")
