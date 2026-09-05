@@ -494,6 +494,64 @@
     }
     return [];
   }
+  function meaningfulWorkEvent(event) {
+    const name = String(event?.event || '').toLowerCase();
+    if (!name) return false;
+    if (['run.steered', 'run.interrupted', 'run.failed', 'run.error', 'run.cancelled', 'run.canceled', 'run.stopped', 'context.compaction', 'context.compacted'].includes(name)) return true;
+    return ['tool.', 'subagent.', 'delegation.', 'approval.', 'clarify.', 'mcp.', 'sudo.', 'secret.', 'terminal.', 'reasoning.', 'thinking.', 'skill.'].some((prefix) => name.startsWith(prefix));
+  }
+  function hasMeaningfulWork(run) {
+    if (!run) return false;
+    if (run.error || officialPlan(run).length) return true;
+    return (run.events || []).some(meaningfulWorkEvent);
+  }
+  function shouldRenderWorkTimeline(run) {
+    if (!run) return false;
+    const status = String(run.status || '').toLowerCase();
+    return !TERMINAL_RUN_STATES.has(status) || hasMeaningfulWork(run);
+  }
+  function isConversationTurnUser(message) {
+    return message?.role === 'user' && !/^\s*\[system:/i.test(messageText(message));
+  }
+  function hasToolPayload(message) {
+    return message?.role === 'tool'
+      || (message?.role === 'assistant' && Array.isArray(message?.tool_calls) && message.tool_calls.length > 0);
+  }
+  function buildToolSummaryGroups(messages, turnMapping, activeRun, sessionId, runInMessages) {
+    const groups = [];
+    let current = null;
+    const flush = () => {
+      if (current?.rows.length) groups.push(current);
+      current = null;
+    };
+    (messages || []).forEach((message, index) => {
+      if (isConversationTurnUser(message)) flush();
+      if (!current && hasToolPayload(message)) current = { startIndex: index, rows: [], indexes: [], assistantIds: [] };
+      if (!current) return;
+      if (message?.role === 'assistant' && message?.id && messageText(message)) current.assistantIds.push(String(message.id));
+      if (hasToolPayload(message)) {
+        current.rows.push(message);
+        current.indexes.push(index);
+      }
+    });
+    flush();
+
+    const activeSession = String(activeRun?.storedSessionId || activeRun?.session_id || '').trim();
+    const activeRunCanOwnLastGroup = Boolean(activeRun && !runInMessages && (!sessionId || activeSession === String(sessionId)));
+    const byStart = new Map();
+    const hidden = new Set();
+    groups.forEach((group, groupIndex) => {
+      const mappedRun = group.assistantIds
+        .map((id) => turnMapping?.byMessageId?.get(id))
+        .find(Boolean);
+      const lifecycleAvailable = Boolean(mappedRun && (hasMeaningfulWork(mappedRun) || !TERMINAL_RUN_STATES.has(String(mappedRun.status || '').toLowerCase())));
+      const activeLifecycleAvailable = activeRunCanOwnLastGroup && groupIndex === groups.length - 1;
+      group.indexes.forEach((index) => hidden.add(index));
+      if (lifecycleAvailable || activeLifecycleAvailable) return;
+      byStart.set(group.startIndex, { rows: group.rows, detailSource: 'hermes-history' });
+    });
+    return { byStart, hidden };
+  }
 
   // Historical projections created before assistant_message_id was persisted
   // still need to attach their official Hermes lifecycle to the right
@@ -1162,7 +1220,7 @@
     );
   }
 
-  function ToolActivityGroup({ rows, searchQuery = '', compact = false }) {
+  function ToolActivityGroup({ rows, searchQuery = '', compact = false, detailSource = 'hermes-history' }) {
     const calls = rows.flatMap((msg) => Array.isArray(msg?.tool_calls) ? msg.tool_calls : []);
     const results = rows.filter((msg) => msg?.role === 'tool');
     const toolNames = [...new Set([
@@ -1171,12 +1229,12 @@
     ].map((name) => String(name).trim()).filter(Boolean))];
     const complete = calls.length > 0 ? results.length >= calls.length : results.length > 0;
     if (compact) {
-      return h('section', { className: `hws3-tool-activity hws3-tool-activity-compact ${complete ? 'complete' : 'running'}`, 'data-tool-activity': 'summary', 'data-tool-detail-source': 'work-timeline' },
+      return h('section', { className: `hws3-tool-activity hws3-tool-activity-compact ${complete ? 'complete' : 'running'}`, 'data-tool-activity': 'summary', 'data-tool-detail-source': detailSource },
         h('div', { className: 'hws3-tool-compact-row' },
           h('span', { className: 'hws3-tool-compact-state', 'aria-hidden': 'true' }, complete ? '✓' : h(Spinner)),
           h('div', null,
             h('strong', null, `工具 · ${toolNames.join(' · ') || 'Hermes 工具'}`),
-            h('small', null, `${complete ? '已完成' : '进行中'} · ${calls.length} 次调用 · ${results.length} 个结果 · 官方详情在下方工作过程中`),
+            h('small', null, `${complete ? '已完成' : '进行中'} · ${calls.length} 次调用 · ${results.length} 个结果 · ${detailSource === 'work-timeline' ? '官方详情在下方工作过程中' : '原始详情保留在 Hermes 完整历史'}`),
           ),
         ),
       );
@@ -1323,7 +1381,7 @@
   }
 
   function WorkTimeline({ run, expanded, setExpanded, now, skillDiff, onApprove }) {
-    if (!run) return null;
+    if (!shouldRenderWorkTimeline(run)) return null;
     const rawStatus = String(run.status || '').toLowerCase();
     // A projection written by an older refresh race can briefly retain the
     // later `incomplete` reconciliation after an earlier official
@@ -1451,8 +1509,9 @@
     };
 
     const showSlash = draft.trimStart().startsWith('/') && slashItems.length > 0 && !sending && !commandBusy;
-    const runInMessages = Boolean(run && TERMINAL_RUN_STATES.has(String(run.status || '').toLowerCase()) && (messages || []).some((msg) => msg?.role === 'assistant'));
     const turnMapping = mapTurnRunsToMessages(turnRuns, messages);
+    const runInMessages = Boolean(run && TERMINAL_RUN_STATES.has(String(run.status || '').toLowerCase()) && turnMapping.mappedRuns.has(String(run.id || '')));
+    const toolSummaryGroups = buildToolSummaryGroups(visibleMessages, turnMapping, run, session?.id, runInMessages);
     const fallbackProjectedRun = !run
       ? [...turnRuns].reverse().find((turn) => projectedTurnIsActive(turn) && !turnMapping.mappedRuns.has(String(turn?.id || '')))
       : null;
@@ -1479,24 +1538,13 @@
           session ? h('button', { className: 'danger', title: '删除', onClick: onDelete }, '⌫') : null,
         ),
       ),
-        h('div', { className: 'hws3-transcript', ref: transcriptRef, onScroll: (e) => { const el = e.currentTarget; const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80; followIntentRef.current = near; setFollowing(near); } },
+      h('div', { className: 'hws3-transcript', ref: transcriptRef, onScroll: (e) => { const el = e.currentTarget; const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80; followIntentRef.current = near; setFollowing(near); } },
         loading ? h('div', { className: 'hws3-loading' }, h(Spinner), ' 正在读取消息…') : null,
         !loading && !(messages || []).length && !run ? h('div', { className: 'hws3-welcome' }, h(HermesMark), h('h1', null, '今天想让 Hermes 做什么？'), h('p', null, '原生 Runs · 原生 Worker · 原生 Skills · 原生审批')) : null,
-        visibleMessages.flatMap((msg, i, rows) => {
-          if (msg?.role === 'tool') {
-            let previous = i - 1;
-            while (previous >= 0 && rows[previous]?.role === 'tool') previous -= 1;
-            if (previous >= 0 && rows[previous]?.role === 'assistant' && Array.isArray(rows[previous]?.tool_calls) && rows[previous].tool_calls.length) return [];
-          }
-          if (msg?.role === 'assistant' && Array.isArray(msg?.tool_calls) && msg.tool_calls.length) {
-            let end = i + 1;
-            while (end < rows.length && (rows[end]?.role === 'tool' || (rows[end]?.role === 'assistant' && Array.isArray(rows[end]?.tool_calls) && rows[end].tool_calls.length))) end += 1;
-            // Hermes messages remain authoritative, but the detailed command
-            // and result are already represented by the same Run lifecycle
-            // below. Keep only a compact acknowledgement here so one official
-            // tool event is not presented twice in the conversation.
-            return [h(ToolActivityGroup, { rows: rows.slice(i, end), compact: true, key: `tools-${msg?.id || i}` })];
-          }
+        visibleMessages.flatMap((msg, i) => {
+          const toolSummary = toolSummaryGroups.byStart.get(i);
+          if (toolSummary) return [h(ToolActivityGroup, { rows: toolSummary.rows, compact: true, detailSource: toolSummary.detailSource, key: `tools-${i}` })];
+          if (toolSummaryGroups.hidden.has(i)) return [];
           const nodes = [h(MessageBubble, { msg, key: msg?.id || `${msg?.role}-${i}` })];
           if (msg?.role === 'assistant') {
             const turn = turnMapping.byMessageId.get(String(msg?.id || ''));

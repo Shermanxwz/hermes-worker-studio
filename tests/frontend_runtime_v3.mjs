@@ -93,8 +93,14 @@ function responseFor(url, init = {}) {
   if (url === '/api/sessions/session-1/messages?limit=10&offset=0&order=latest') return { messages: includeToolMessages
     ? [
       { id: 'm1', role: 'user', content: 'hello' },
-      { id: 'm-tool-call', role: 'assistant', content: '', tool_calls: [{ id: 'call-1', function: { name: 'terminal', arguments: 'pwd' } }] },
-      { id: 'm-tool-result', role: 'tool', tool_name: 'terminal', content: '/workspace' },
+      { id: 'm-tool-call-1', role: 'assistant', content: '', tool_calls: [
+        { id: 'call-1', function: { name: 'execute_code', arguments: 'probe-a' } },
+        { id: 'call-2', function: { name: 'execute_code', arguments: 'probe-b' } },
+      ] },
+      { id: 'm-tool-result-1', role: 'tool', tool_name: 'execute_code', content: 'result-a' },
+      { id: 'm-tool-result-2', role: 'tool', tool_name: 'execute_code', content: 'result-b' },
+      { id: 'm-tool-call-2', role: 'assistant', content: '', tool_calls: [{ id: 'call-3', function: { name: 'execute_code', arguments: 'probe-c' } }] },
+      { id: 'm-tool-result-3', role: 'tool', tool_name: 'execute_code', content: 'result-c' },
       { id: 'm2', role: 'assistant', content: 'hi' },
     ]
     : [{ id: 'm1', role: 'user', content: 'hello' }, { id: 'm2', role: 'assistant', content: 'hi' }] };
@@ -164,6 +170,22 @@ function responseFor(url, init = {}) {
     const id = url.split('/hermes/runs/')[1].split('?')[0];
     const count = (polls.get(id) || 0) + 1;
     polls.set(id, count);
+    if (id === 'run-2') {
+      if (count === 1) return {
+        id, session_id: 'session-new', status: 'running', started_at: 1002, elapsed_ms: 200, last_seq: 2,
+        events: [
+          { seq: 1, event: 'run.started', data: {}, at: 1002 },
+          { seq: 2, event: 'assistant.delta', data: { delta: 'live ' }, at: 1002.2 },
+        ],
+      };
+      return {
+        id, session_id: 'session-new', status: 'completed', started_at: 1002, ended_at: 1003, elapsed_ms: 1000, last_seq: 4, output: 'done',
+        events: [
+          { seq: 3, event: 'message.complete', data: {}, at: 1002.8 },
+          { seq: 4, event: 'run.completed', data: {}, at: 1003 },
+        ],
+      };
+    }
     if (count === 1) return {
       id, session_id: id === 'run-1' ? 'session-new' : 'session-1', status: 'running', started_at: 1000, elapsed_ms: 500, last_seq: 4,
       events: [
@@ -314,6 +336,7 @@ assert.ok(byText('.hws3-plan-list', 'Finish'));
 await waitFor(() => polls.get('run-1') >= 2, 'run completion');
 
 // Clipboard image path reaches the v3 structured input transport.
+const workCardsBeforeSimpleRun = window.document.querySelectorAll('.hws3-work').length;
 const png = new window.File([new Uint8Array([137, 80, 78, 71])], 'paste.png', { type: 'image/png' });
 const paste = new window.Event('paste', { bubbles: true, cancelable: true });
 Object.defineProperty(paste, 'clipboardData', { value: { files: [png] } });
@@ -328,14 +351,18 @@ assert.equal(parts[0].type, 'text');
 assert.equal(parts[1].type, 'image_url');
 assert.ok(parts[1].image_url.url.startsWith('data:image/png;base64,'));
 await waitFor(() => polls.get('run-2') >= 2, 'image run completion');
+await act(async () => { await sleep(25); });
+assert.equal(window.document.querySelectorAll('.hws3-work').length, workCardsBeforeSimpleRun, 'completed runs without tools, plans, approvals, context compaction or errors must not leave a work card');
 
 // Open an existing session and exercise the complete official Session CRUD surface.
 includeToolMessages = true;
 await click([...window.document.querySelectorAll('.hws3-session-row')].find((el) => el.textContent.includes('Conversation One')));
 await waitFor(() => byText('.hws3-chat-title', 'Conversation One'), 'open existing session');
 await waitFor(() => window.document.querySelector('.hws3-tool-activity-compact'), 'compact official tool activity');
+assert.equal(window.document.querySelectorAll('.hws3-tool-activity-compact').length, 1, 'one user turn must render one aggregated tool summary');
+assert.match(window.document.querySelector('.hws3-tool-activity-compact').textContent, /3 次调用 · 3 个结果/);
 assert.equal(window.document.querySelectorAll('.hws3-tool-activity-compact .hws3-tool-card').length, 0, 'conversation tool summary must not repeat raw command/result cards');
-assert.match(window.document.querySelector('.hws3-tool-activity-compact').textContent, /官方详情在下方工作过程中/);
+assert.match(window.document.querySelector('.hws3-tool-activity-compact').textContent, /原始详情保留在 Hermes 完整历史/);
 assert.equal(window.document.querySelector('.hws3-chat-search'), null, 'content search belongs only to Complete History');
 await click(byText('.hws3-nav button', '完整历史'));
 const historySearch = window.document.querySelector('.hws3-history-search-label input');

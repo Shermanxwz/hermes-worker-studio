@@ -14,6 +14,7 @@ The pass is deliberately constrained: no new product surface, model client, exec
 - **Dependency evidence:** npm is test-only: production dependency fields are forbidden, devDependencies are exact-pinned, the committed lock root must match `package.json`, and CI installs with lifecycle scripts disabled. Seal CI does not depend on a live advisory endpoint.
 - **Desktop/mobile UI:** every existing first-level Studio page is part of the real-target viewport/overflow matrix.
 - **Interaction semantics:** focus visibility, dialog Escape/focus lifecycle, disclosure/menu state, accessible names and touch-only discoverability are explicit contracts.
+- **Conversation signal quality:** tool calls are aggregated once per Hermes prompt turn; when an official Run lifecycle is available, its single WorkTimeline is the authoritative detail surface; completed turns with no tool, plan, approval, compaction, reasoning or error signal do not leave a redundant work card.
 - **Responsive bounds:** phone portrait and compact landscape must remain inside the actual dynamic viewport and safe areas.
 - **Motion:** reduced-motion preference applies to all Studio-owned transitions/animations.
 - **Protocol integrity:** mixed Chat/Responses routing remains real-probe based, cached, concurrency-deduplicated and fail-closed without name/URL guessing.
