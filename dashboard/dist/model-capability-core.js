@@ -166,7 +166,7 @@
   function applyNativeReasoningConstraint(capability, modelEntry) {
     if (!isObject(modelEntry) || String(modelEntry.hws_native_reasoning || '').trim() !== 'minimax_openai') return capability;
     const cap = isObject(capability) ? { ...capability } : {};
-    // The current native MiniMax adapter always emits thinking.type=adaptive.
+    // The explicitly selected native adapter currently emits thinking.type=adaptive.
     // That wire-level fact is stronger than optional capability metadata: until
     // execution can vary per Run, Studio must expose a fixed-on control and
     // must never advertise off/effort states that the request path cannot apply.
