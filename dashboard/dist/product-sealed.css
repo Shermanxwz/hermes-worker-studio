@@ -176,6 +176,7 @@ html:has(.hws3-root) #root>[data-layout-variant]>header,html[data-hws-studio="tr
 /* Model-level official context override. The input is intentionally part of
  * each inventory row; its save handler writes Hermes config.providers[*].models[*].context_length. */
 .hws3-model-row{grid-template-columns:minmax(0,1fr) auto auto minmax(190px,.38fr);align-items:center;min-height:52px;gap:9px}
+.hws3-model-row>.hws3-model-result{grid-column:2}.hws3-model-row>.hws3-model-actions{grid-column:3}.hws3-model-row>.hws3-model-context{grid-column:4}
 .hws3-model-context{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px 6px;align-items:end;min-width:0}
 .hws3-model-context label{display:grid;gap:3px;min-width:0;color:var(--hws-muted);font-size:9px}
 .hws3-model-context input{width:100%;min-width:0;min-height:30px;border:1px solid var(--hws-border);border-radius:8px;background:var(--hws-bg);color:var(--hws-text);padding:6px 7px;outline:0;font-size:10px;font-variant-numeric:tabular-nums}
@@ -219,6 +220,6 @@ html:has(.hws3-root) #root>[data-layout-variant]>header,html[data-hws-studio="tr
 .hws3-work-head{gap:6px;padding:6px 8px;font-size:10px}.hws3-work-head strong{font-size:10px}.hws3-work-head>span,.hws3-work-head small{font-size:8px}.hws3-work-body{padding:3px 8px 7px}.hws3-work-event{gap:6px;padding:5px 0}.hws3-work-event strong{font-size:9px}.hws3-work-event small,.hws3-work-event time{font-size:8px}
 .hws3-history-detail-messages .hws3-message{margin-bottom:10px}
 
-@media(max-width:1100px){.hws3-model-row{grid-template-columns:minmax(0,1fr) auto minmax(180px,.42fr)}.hws3-model-row>.hws3-model-actions{grid-column:2}.hws3-model-row>.hws3-model-context{grid-column:3}}
+@media(max-width:1100px){.hws3-model-row{grid-template-columns:minmax(0,1fr) auto auto minmax(180px,.42fr)}.hws3-model-row>.hws3-model-result{grid-column:2}.hws3-model-row>.hws3-model-actions{grid-column:3}.hws3-model-row>.hws3-model-context{grid-column:4}}
 @media(max-width:820px){.hws3-model-row{grid-template-columns:minmax(0,1fr) auto}.hws3-model-row>.hws3-model-result{grid-column:2}.hws3-model-row>.hws3-model-actions{grid-column:2}.hws3-model-row>.hws3-model-context{grid-column:1/-1}.hws3-model-context{grid-template-columns:minmax(0,1fr) auto}}
 @media(max-width:540px){.hws3-model-row>.hws3-model-result{grid-column:1/-1;justify-items:start}.hws3-model-result small{text-align:left}.hws3-model-row>.hws3-model-actions{grid-column:1/-1}.hws3-model-row>.hws3-model-context{grid-column:1/-1}.hws3-model-context input{min-height:32px}}
