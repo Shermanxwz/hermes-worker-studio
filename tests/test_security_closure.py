@@ -12,6 +12,13 @@ MIXED = ROOT / "scripts" / "stage_mixed_protocol.py"
 SECURITY = ROOT / "scripts" / "stage_security_closure.py"
 FRONTEND = ROOT / "dashboard" / "dist" / "index-v3.js"
 BACKEND = ROOT / "dashboard" / "plugin_api_v3.py"
+GATEWAY_PARTS = (
+    "model-capability-core.js",
+    "model-capability-bridge.js",
+    "model-capability-dom.js",
+    "protocol-runtime.js",
+    "gateway-native-core.js",
+)
 
 
 class SecurityClosureTests(unittest.TestCase):
@@ -20,10 +27,18 @@ class SecurityClosureTests(unittest.TestCase):
         root = pathlib.Path(tmp.name)
         frontend = root / "index-v3.js"
         backend = root / "plugin_api_v3.py"
+        gateway = root / "gateway-native.js"
         frontend.write_bytes(FRONTEND.read_bytes())
         backend.write_bytes(BACKEND.read_bytes())
+        gateway.write_text(
+            "".join(
+                (ROOT / "dashboard" / "dist" / name).read_text(encoding="utf-8")
+                for name in GATEWAY_PARTS
+            ),
+            encoding="utf-8",
+        )
         subprocess.run(
-            [sys.executable, str(MIXED), str(frontend), str(backend)],
+            [sys.executable, str(MIXED), str(frontend), str(backend), str(gateway)],
             cwd=ROOT,
             check=True,
             text=True,
