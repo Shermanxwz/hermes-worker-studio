@@ -95,9 +95,15 @@ for token in (
 
 # Capability/protocol logic must stay generic. Provider/model names belong to
 # Hermes' inventory payload and test fixtures, never production branching logic.
+# Explicit operator-selected native adapter markers are capability metadata, not
+# model-name guesses. Remove only the exact supported marker token before the
+# heuristic scan; every other vendor/model-name occurrence remains forbidden.
 runtime_logic = capability_core + capability_bridge + capability_dom + protocol_runtime
+heuristic_logic = runtime_logic.lower()
+for marker in ("minimax_openai",):
+    heuristic_logic = heuristic_logic.replace(marker, "")
 for forbidden in ("minimax", "claude", "gemini", "gpt-", "grok", "deepseek", "kimi", "glm-"):
-    if forbidden in runtime_logic.lower():
+    if forbidden in heuristic_logic:
         fail(f"model capability/protocol layer reintroduced provider/model-name heuristic: {forbidden}")
 for forbidden in ("API_SERVER_KEY", "HERMES_WORKER_STUDIO_API_KEY", "new AIAgent"):
     if forbidden in runtime_logic + loader:

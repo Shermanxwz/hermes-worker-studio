@@ -163,6 +163,32 @@
     return { capability: cap, changed };
   }
 
+  function applyNativeReasoningConstraint(capability, modelEntry) {
+    if (!isObject(modelEntry) || String(modelEntry.hws_native_reasoning || '').trim() !== 'minimax_openai') return capability;
+    const cap = isObject(capability) ? { ...capability } : {};
+    // The explicitly selected native adapter currently emits thinking.type=adaptive.
+    // That wire-level fact is stronger than optional capability metadata: until
+    // execution can vary per Run, Studio must expose a fixed-on control and
+    // must never advertise off/effort states that the request path cannot apply.
+    cap.reasoning = {
+      supported: true,
+      control: 'fixed',
+      can_disable: false,
+      source: 'hermes.provider_config.model+native.minimax_openai',
+    };
+    cap.supports_reasoning = true;
+    cap.can_disable_reasoning = false;
+    cap.reasoning_control = 'fixed';
+    cap.reasoning_source = 'hermes.provider_config.model+native.minimax_openai';
+    delete cap.reasoning_efforts;
+    delete cap.reasoningEfforts;
+    delete cap.supported_reasoning_efforts;
+    delete cap.supportedReasoningEfforts;
+    delete cap.default_reasoning_effort;
+    delete cap.defaultReasoningEffort;
+    return cap;
+  }
+
   function overlayFromHermesConfig(capability, providerConfig, model) {
     if (!isObject(providerConfig)) return capability;
     const models = isObject(providerConfig.models) ? providerConfig.models : {};
@@ -172,7 +198,7 @@
     const defaults = explicitReasoningMetadata(providerConfig.hws_reasoning_defaults, 'hermes.provider_config.defaults');
     let result = mergeExplicitReasoning(capability, exact).capability;
     result = mergeExplicitReasoning(result, defaults).capability;
-    return result;
+    return applyNativeReasoningConstraint(result, modelEntry);
   }
 
   const descriptor = (options, provider, model) => modelCapability(options, provider, model)?.hws_reasoning_control || descriptorFromCapability(modelCapability(options, provider, model));
@@ -294,6 +320,6 @@
 
   window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITIES__ = {
     version: 2, descriptor: descriptorFromCapability, enrichModelOptions, reasoningValueFromModelOptions, reasoningLabel: label, validateReasoning, hermesDefaultEffort: HERMES_DEFAULT_EFFORT, source: 'Hermes public model/options + official provider config + Gateway config.set',
-    _internal: { clone, providerRows, providerBySlug, modelsFor, descriptor, modelCapability, allowedReasoningValues, SmartCompactRouteSelector, configObject, configProvider, explicitReasoningMetadata, overlayFromHermesConfig },
+    _internal: { clone, providerRows, providerBySlug, modelsFor, descriptor, modelCapability, allowedReasoningValues, SmartCompactRouteSelector, configObject, configProvider, explicitReasoningMetadata, applyNativeReasoningConstraint, overlayFromHermesConfig },
   };
 })();
