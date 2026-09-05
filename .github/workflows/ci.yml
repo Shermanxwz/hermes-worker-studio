@@ -111,7 +111,7 @@ jobs:
           grep -Fq "event.key === 'Escape'" "$tmp/index-v3.js"
           grep -Fq "@router.post(\"/hermes/protocols/resolve\")" "$tmp/plugin_api_v3.py"
           grep -Fq "reasoning_state\": \"disabled\"" "$tmp/plugin_api_v3.py"
-          grep -Fq "-reasoning-off" "$tmp/plugin_api_v3.py"
+          grep -Fq -- "-reasoning-off" "$tmp/plugin_api_v3.py"
           grep -Fq "def _write_private_json" "$tmp/plugin_api_v3.py"
           grep -Fq "os.O_EXCL" "$tmp/plugin_api_v3.py"
           grep -Fq "os.open(temporary, flags, 0o600)" "$tmp/plugin_api_v3.py"
