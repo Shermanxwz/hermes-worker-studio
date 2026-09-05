@@ -322,6 +322,81 @@ class MixedProtocolStageTransformTests(unittest.TestCase):
         self.assertEqual(config["providers"][adaptive_alias]["extra_body"]["thinking"], {"type": "adaptive"})
         self.assertEqual(config["providers"][disabled_alias]["extra_body"]["thinking"], {"type": "disabled"})
 
+    def test_minimax_disabled_run_reaches_official_runs_with_disabled_alias(self):
+        module = self._load_staged_backend()
+        source = {
+            "name": "New API",
+            "api": "https://newapi.invalid/v1",
+            "transport": "chat_completions",
+            "models": {
+                "model-off": {
+                    "hws_native_reasoning": "minimax_openai",
+                    "hws_reasoning": {
+                        "supports_reasoning": True,
+                        "can_disable_reasoning": True,
+                        "reasoning_control": "toggle",
+                    },
+                }
+            },
+        }
+        config = {"providers": {"new-api": source}}
+        options = {
+            "providers": [{
+                "slug": "new-api",
+                "authenticated": True,
+                "models": ["model-off"],
+                "capabilities": {"model-off": {"reasoning": True}},
+            }]
+        }
+        submitted: dict[str, object] = {}
+
+        def proxy(path: str, method: str = "GET", body=None, **_kwargs):
+            if path.startswith("/api/sessions/"):
+                return {"messages": []}
+            if path == "/api/config" and method == "PUT":
+                return {"ok": True}
+            if path == "/v1/runs" and method == "POST":
+                submitted.update(copy.deepcopy(body))
+                return {"id": "run-minimax-disabled", "status": "running"}
+            return {}
+
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(module, "_PROTOCOL_FILE", pathlib.Path(directory) / "protocols.json"), \
+             patch.object(module, "_read_official_config", side_effect=lambda: config), \
+             patch.object(module, "_read_official_model_options", return_value=options), \
+             patch.object(module._legacy, "_require_runs", return_value={
+                 "submission": True,
+                 "events": False,
+                 "stop": True,
+                 "approval": True,
+                 "steer": True,
+             }), \
+             patch.object(module._legacy, "_hermes_proxy", side_effect=proxy):
+            module._save_route_state("new-api", "model-off", {
+                "source_provider": "new-api",
+                "source_model": "model-off",
+                "mode": "chat_completions",
+                "status": "resolved",
+                "execution_provider": "stale-alias",
+            })
+            result = module._start_native_run_v3({
+                "session_id": "session-minimax-disabled",
+                "input": "answer without thinking",
+                "provider": "new-api",
+                "model": "model-off",
+                "model_options": {"reasoning_effort": "none"},
+            })
+
+        execution_provider = str(submitted["provider"])
+        self.assertTrue(execution_provider.endswith("-reasoning-off"))
+        self.assertEqual(submitted["model"], "model-off")
+        self.assertEqual(submitted["model_options"], {"reasoning_effort": "none"})
+        self.assertEqual(result["source_route"]["execution_provider"], execution_provider)
+        self.assertEqual(result["source_route"]["native_reasoning"], "disabled")
+        self.assertEqual(result["source_route"]["native_reasoning_source"], "hws_native_reasoning:minimax_openai")
+        self.assertEqual(config["providers"][execution_provider]["extra_body"]["thinking"], {"type": "disabled"})
+        self.assertEqual(config["providers"][execution_provider]["extra_body"]["reasoning_split"], True)
+
     def test_minimax_binary_rejects_fake_effort_and_non_chat_route(self):
         module = self._load_staged_backend()
         config = {
