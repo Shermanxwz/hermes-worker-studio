@@ -245,7 +245,7 @@ assert.equal(window.document.querySelector('.hws3-moa-page'), null);
 assert.equal(window.document.querySelector('.hws3-moa-panel'), null);
 assert.ok(byText('.hws3-page-head button', '一键测试待测模型（2）'));
 assert.ok([...window.document.querySelectorAll('.hws3-model-actions > button')].every((button) => button.textContent.trim() === '测试'), 'per-model test actions must use one consistent label');
-assert.match(byText('.hws3-model-row', 'worker-model').textContent, /思考：Hermes 返回思考支持 · 档位未公开/);
+assert.match(byText('.hws3-model-row', 'worker-model').textContent, /思考：支持 · 强度：未公开/);
 const sessionCreateCallsBeforeBulkTest = calls.filter((x) => x.url === '/api/plugins/hermes-worker-studio/hermes/sessions').length;
 await click(byText('.hws3-page-head button', '一键测试待测模型（2）'));
 await waitFor(() => bulkProbeCalls.length === 2, 'bulk protocol probe calls');

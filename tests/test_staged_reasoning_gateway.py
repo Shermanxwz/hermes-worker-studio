@@ -71,7 +71,7 @@ assert.equal(descriptor.canDisable, true);
 assert.equal(descriptor.source, 'hermes.provider_config.model+native.minimax_openai.binary');
 assert.deepEqual(descriptor.efforts, []);
 assert.deepEqual(cap.reasoning_efforts.map((row) => row.value), ['none', 'medium']);
-assert.equal(api.reasoningLabel(descriptor), '开关');
+assert.match(api.reasoningLabel(descriptor), /支持.*强度：未公开.*可关闭/);
 const off = api.validateReasoning(enriched, 'new-api', 'opaque-thinking-model', 'none');
 assert.equal(off.semantic, 'off');
 const on = api.validateReasoning(enriched, 'new-api', 'opaque-thinking-model', 'medium');

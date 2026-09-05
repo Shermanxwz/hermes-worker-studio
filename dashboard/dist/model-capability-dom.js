@@ -22,7 +22,7 @@
     if (root?.dataset.hwsSignature === sig) return;
     if (!root) { root = document.createElement('div'); root.className = 'hws3-moa-reasoning-capability'; slotNode.appendChild(root); }
     root.dataset.hwsSignature = sig; root.textContent = '';
-    const title = document.createElement('small'); title.textContent = `思考 · ${API.reasoningLabel(d)}`; root.appendChild(title);
+    const title = document.createElement('small'); title.textContent = `思考：${API.reasoningLabel(d)}`; root.appendChild(title);
     if (['none', 'fixed', 'auto'].includes(d.control)) return;
     const enabledEffort = d.efforts[0]?.value || d.defaultEffort || 'medium';
     if (d.canDisable === true) {

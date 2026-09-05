@@ -11,6 +11,14 @@ The transport and the capability-discovery plane are separate:
 - Pinned Hermes may therefore publish a model as `reasoning: true` without `reasoning_efforts` / `can_disable_reasoning`.
 - Worker Studio deliberately refuses to invent controls from model names, so a bare support boolean remains `Auto/read-only`.
 
+The UI separates two independent facts: **思考：支持/不支持/未确认** answers
+whether Hermes has a reliable reasoning declaration, while **强度：** reports
+the published effort vocabulary. Therefore **强度：未公开** means reasoning is
+declared supported but no public low/medium/high-style vocabulary is available;
+it does not mean reasoning is unsupported. A protocol line such as “已真实探测”
+only proves the request transport (Chat Completions or Responses), not reasoning
+support itself.
+
 The closure implemented here fixes the missing metadata **without** adding a built-in GPT/Claude/Gemini model table and without changing the execution engine.
 
 ## Context-window metadata

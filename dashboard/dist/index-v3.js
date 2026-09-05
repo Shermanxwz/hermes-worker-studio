@@ -269,12 +269,15 @@
     const configured = cap?.hws_reasoning_control && typeof cap.hws_reasoning_control === 'object' ? cap.hws_reasoning_control : {};
     const canDisable = configured.canDisable === true || configured.can_disable === true || rich.can_disable === true || rich.canDisable === true || cap.can_disable_reasoning === true || cap.canDisableReasoning === true;
     let control = String(configured.control || rich.control || cap.reasoning_control || '').trim().toLowerCase();
+    const declaredEfforts = reasoningOptions(options, provider, model).filter((item) => !['auto', 'none'].includes(item.value));
     if (!control) {
-      const declaredEfforts = reasoningOptions(options, provider, model).filter((item) => !['auto', 'none'].includes(item.value));
       control = canDisable ? (declaredEfforts.length ? 'toggle_effort' : 'toggle') : declaredEfforts.length ? 'effort' : cap.reasoning === false ? 'none' : cap.reasoning === true ? 'auto' : '';
     }
     const defaultEffort = String(configured.defaultEffort || configured.default_effort || rich.default_effort || rich.defaultEffort || cap.default_reasoning_effort || '').trim() || 'medium';
-    return { control, canDisable, defaultEffort };
+    const supported = typeof configured.supported === 'boolean' ? configured.supported
+      : cap.reasoning === false || rich.supported === false || cap.supports_reasoning === false ? false
+        : cap.reasoning === true || (cap.reasoning && typeof cap.reasoning === 'object') || rich.supported === true || cap.supports_reasoning === true || declaredEfforts.length ? true : null;
+    return { control, canDisable, defaultEffort, supported, efforts: declaredEfforts, source: String(configured.source || rich.source || cap.reasoning_source || '').trim() };
   }
   function modelApiMode(options, provider, model) {
     const cap = modelCapability(options, provider, model);
@@ -344,18 +347,14 @@
     };
   }
   function reasoningSummary(options, provider, model, config = null) {
-    const configured = configuredModelReasoning(config, provider, model);
-    if (configured.hws_native_reasoning === 'minimax_openai') return '原生 thinking · adaptive（档位未公开）';
-    if (configured.supports_reasoning === false || configured.reasoning_control === 'none') return '不支持';
-    if (configured.reasoning_control === 'fixed' && configured.supports_reasoning === true) return '始终开启';
-    const efforts = reasoningOptions(options, provider, model).filter((item) => item.value !== 'auto');
-    if (efforts.length) return efforts.map((item) => item.value).join(' · ');
-    const cap = modelCapability(options, provider, model);
-    const raw = cap?.reasoning;
-    const rich = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
-    if (raw === false || rich.supported === false || cap?.supports_reasoning === false) return '不支持';
-    if (raw === true || (raw && typeof raw === 'object') || cap?.supports_reasoning === true) return 'Hermes 返回思考支持 · 档位未公开';
-    return '上游未声明';
+    const d = reasoningDescriptor(options, provider, model);
+    const rendered = window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITIES__?.reasoningLabel?.(d);
+    if (rendered) return rendered;
+    if (d.supported === false || d.control === 'none') return '不支持 · 强度：不适用';
+    if (d.supported !== true) return '未确认（Hermes 未声明） · 强度：未确认';
+    if (d.control === 'fixed') return `支持 · 强度：${d.source.includes('minimax_openai') ? 'adaptive' : '固定'}固定开启`;
+    if (d.efforts.length) return `支持 · 强度：${d.efforts.map((item) => item.value).join(' / ')}${d.canDisable ? ' · 可关闭' : ''}`;
+    return `支持 · 强度：未公开${d.canDisable ? ' · 可关闭' : ''}`;
   }
   function normalizeRoute(options, route) {
     const fallback = defaultRoute(options);
@@ -1225,9 +1224,10 @@
     const enabledEffort = descriptor.defaultEffort !== 'none' && scaleValues.some((item) => item.value === descriptor.defaultEffort)
       ? descriptor.defaultEffort
       : scaleValues.find((item) => item.value !== 'auto')?.value || 'auto';
-    if (descriptor.control === 'none') return h(Pill, null, '思考 · 不支持');
-    if (descriptor.control === 'fixed') return h(Pill, null, '思考 · 始终开启');
-    if (!toggle && scaleValues.length <= 1) return h(Pill, null, '思考 Auto');
+    if (descriptor.supported === false || descriptor.control === 'none') return h(Pill, { title: 'Hermes 明确声明该模型不支持 reasoning' }, '思考：不支持 · 强度：不适用');
+    if (descriptor.supported !== true) return h(Pill, { title: 'Hermes 没有声明该模型是否支持 reasoning；Studio 不猜测' }, '思考：未确认 · 强度：未确认');
+    if (descriptor.control === 'fixed') return h(Pill, { title: 'Hermes 明确声明该模型支持 reasoning，但当前运行时不可关闭' }, '思考：支持 · 强度：固定开启');
+    if (!toggle && scaleValues.length <= 1) return h(Pill, { title: 'Hermes 声明支持 reasoning，但没有公开可编辑的强度档位' }, '思考：支持 · 强度：未公开');
     const switchControl = toggle ? h(ReasoningSwitch, { enabled, disabled, onChange: (next) => onChange(next ? enabledEffort : 'none') }) : null;
     if (toggleOnly) return h('div', { className: 'hws3-reasoning-control hws3-reasoning-capability', 'data-hws-control': descriptor.control }, switchControl);
     const title = current.description || '仅使用 Hermes 上游声明的推理强度';
@@ -1783,6 +1783,7 @@
           h('label', { className: 'wide' }, 'API Key', h('input', { type: 'password', autoComplete: 'off', value: form.api_key, onChange: (e) => setForm((x) => ({ ...x, api_key: e.target.value })), placeholder: form.id ? '留空保留现有 Key' : '可选' })),
         ),
         h('p', { className: 'hws3-field-hint' }, '协议只接受 Hermes 官方声明或真实 Run 结果；首次使用会自动探测。若 New API 的 /models 没有返回 context_length，请填该模型官方上下文窗口；留空时 Studio 不把模型名目录回退值当作官方上限。凭据只保留在 Hermes 服务端。'),
+        h('p', { className: 'hws3-field-hint hws3-reasoning-legend' }, '思考：支持 = Hermes 明确声明可用；不支持 = Hermes 明确声明不可用；未确认 = Hermes 没有可靠声明。强度：未公开 = 支持思考但上游没有公开强度档位。协议“已真实探测”只代表接口协议，不代表思考能力已被真实验证。'),
         h('div', { className: 'hws3-inline-options' }, h('label', null, h('input', { type: 'checkbox', checked: form.discover_models, onChange: (e) => setForm((x) => ({ ...x, discover_models: e.target.checked })) }), ' 自动发现模型'), h('label', null, h('input', { type: 'checkbox', checked: form.make_default, onChange: (e) => setForm((x) => ({ ...x, make_default: e.target.checked })) }), ' 用于新对话')),
         h('div', { className: 'hws3-actions' }, h(Button, { className: 'ghost', disabled: busy === 'validate' || !form.base_url.trim(), onClick: validate }, busy === 'validate' ? '测试中…' : '测试'), h(Button, { className: 'primary', disabled: busy === 'save', onClick: save }, busy === 'save' ? '保存中…' : '保存'), form.id ? h(Button, { className: 'ghost', onClick: () => { setForm(EMPTY); setDiscovered([]); } }, '新建') : null),
       ),

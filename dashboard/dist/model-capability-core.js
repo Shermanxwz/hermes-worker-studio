@@ -315,13 +315,23 @@
     return { provider, model, effort: allowed.has(route?.effort) ? route.effort : 'auto', descriptor: d, providers: auth.length ? auth : providerRows(options).filter((p) => Array.isArray(p?.models) && p.models.length) };
   }
 
+  function evidenceLabel(d) {
+    const source = String(d?.source || '').toLowerCase();
+    if (source.includes('provider_config')) return 'Hermes 配置声明';
+    if (source.includes('model.options')) return 'Hermes 模型目录声明';
+    if (source.includes('run')) return 'Hermes 真实 Run';
+    return 'Hermes 声明';
+  }
   function label(d) {
-    if (d.control === 'none') return '不支持';
-    if (d.control === 'fixed') return '始终开启';
-    if (d.control === 'toggle') return '开关';
-    if (d.control === 'effort') return `强度 · ${d.efforts.map((x) => x.value).join(' / ')}`;
-    if (d.control === 'toggle_effort') return `开关 + 强度 · ${d.efforts.map((x) => x.value).join(' / ')}`;
-    return d.supported === true ? 'Hermes 返回思考支持 · 档位未公开' : '上游未声明';
+    if (d.supported === false || d.control === 'none') return `不支持（${evidenceLabel(d)}） · 强度：不适用`;
+    if (d.supported !== true) return '未确认（Hermes 未声明） · 强度：未确认';
+    const evidence = evidenceLabel(d);
+    if (d.control === 'fixed') {
+      const fixedMode = String(d.source || '').includes('minimax_openai') ? 'adaptive' : '固定';
+      return `支持（${evidence}） · 强度：${fixedMode}固定开启`;
+    }
+    if (d.efforts.length) return `支持（${evidence}） · 强度：${d.efforts.map((x) => x.value).join(' / ')}${d.canDisable === true ? ' · 可关闭' : ''}`;
+    return `支持（${evidence}） · 强度：未公开${d.canDisable === true ? ' · 可关闭' : ''}`;
   }
 
   function enabledEffort(d) { return d.efforts[0]?.value || d.defaultEffort || HERMES_DEFAULT_EFFORT; }
@@ -349,9 +359,9 @@
   }
 
   function ReasoningControl({ descriptor: d, effort, disabled, onChange }) {
-    if (d.control === 'none') return h('span', { className: 'hws3-pill', title: 'Hermes 官方 model inventory 声明不支持 reasoning' }, '思考 · 不支持');
-    if (d.control === 'auto') return h('span', { className: 'hws3-pill', title: d.supported === true ? 'Hermes 当前能力目录返回思考支持；上游没有公开可编辑的强度 vocabulary，Studio 不猜测档位' : 'Hermes 未声明可编辑 reasoning 控件；Studio 不猜测' }, d.supported === true ? '思考 · Hermes 返回支持（档位未公开）' : '思考 · 上游未声明');
-    if (d.control === 'fixed') return h('span', { className: 'hws3-pill', title: 'Hermes/provider 声明 reasoning 不可关闭' }, '思考 · 始终开启');
+    if (d.control === 'none') return h('span', { className: 'hws3-pill', title: 'Hermes 官方 model inventory 声明不支持 reasoning' }, '思考：不支持 · 强度：不适用');
+    if (d.control === 'auto') return h('span', { className: 'hws3-pill', title: d.supported === true ? 'Hermes 当前能力目录声明支持思考，但没有公开可编辑的强度 vocabulary；协议真实 Run 探测不等于思考能力探测' : 'Hermes 未声明 reasoning 支持；Studio 不猜测' }, d.supported === true ? '思考：支持 · 强度：未公开' : '思考：未确认 · 强度：未确认');
+    if (d.control === 'fixed') return h('span', { className: 'hws3-pill', title: 'Hermes/provider 声明 reasoning 支持但不可关闭' }, '思考：支持 · 强度：固定开启');
     const enabled = effort !== 'none';
     const toggle = d.canDisable === true ? h(ReasoningSwitch, { enabled, disabled, onChange: (next) => onChange(next ? enabledEffort(d) : 'none') }) : null;
     if (d.control === 'toggle') return h('div', { className: 'hws3-reasoning-capability', 'data-hws-control': d.control }, toggle);
