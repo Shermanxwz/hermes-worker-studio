@@ -92,20 +92,33 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           cp dashboard/dist/index-v3.js "$tmp/index-v3.js"
           cp dashboard/plugin_api_v3.py "$tmp/plugin_api_v3.py"
+          cat \
+            dashboard/dist/model-capability-core.js \
+            dashboard/dist/model-capability-bridge.js \
+            dashboard/dist/model-capability-dom.js \
+            dashboard/dist/protocol-runtime.js \
+            dashboard/dist/gateway-native-core.js \
+            > "$tmp/gateway-native.js"
           python scripts/stage_product_bundle.py "$tmp/index-v3.js"
-          python scripts/stage_mixed_protocol.py "$tmp/index-v3.js" "$tmp/plugin_api_v3.py"
+          python scripts/stage_mixed_protocol.py "$tmp/index-v3.js" "$tmp/plugin_api_v3.py" "$tmp/gateway-native.js"
           python scripts/stage_security_closure.py "$tmp/plugin_api_v3.py"
           node --check "$tmp/index-v3.js"
+          node --check "$tmp/gateway-native.js"
           python -m py_compile "$tmp/plugin_api_v3.py"
           grep -Fq "resolveProtocolExecutionRoute" "$tmp/index-v3.js"
+          grep -Fq "reasoning_effort: normalized.effort || 'auto'" "$tmp/index-v3.js"
           grep -Fq "role: 'alert'" "$tmp/index-v3.js"
           grep -Fq "event.key === 'Escape'" "$tmp/index-v3.js"
           grep -Fq "@router.post(\"/hermes/protocols/resolve\")" "$tmp/plugin_api_v3.py"
+          grep -Fq "reasoning_state\": \"disabled\"" "$tmp/plugin_api_v3.py"
+          grep -Fq "-reasoning-off" "$tmp/plugin_api_v3.py"
           grep -Fq "def _write_private_json" "$tmp/plugin_api_v3.py"
           grep -Fq "os.O_EXCL" "$tmp/plugin_api_v3.py"
           grep -Fq "os.open(temporary, flags, 0o600)" "$tmp/plugin_api_v3.py"
           grep -Fq "await _read_request_json(request)" "$tmp/plugin_api_v3.py"
           ! grep -Fq "await request.json()" "$tmp/plugin_api_v3.py"
+          grep -Fq "native.minimax_openai.binary" "$tmp/gateway-native.js"
+          grep -Fq "control: 'toggle'" "$tmp/gateway-native.js"
           ! grep -Fq "请先进入“模型”页面点击“官方探测”" "$tmp/index-v3.js"
 
       - name: Dashboard product-flow runtime integration
