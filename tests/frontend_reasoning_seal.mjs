@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name) => fs.readFile(path.join(rootDir, `dashboard/dist/${name}`), 'utf8');
+const plain = (value) => JSON.parse(JSON.stringify(value));
 const [core, bridge] = await Promise.all([read('model-capability-core.js'), read('model-capability-bridge.js')]);
 
 const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
@@ -90,7 +91,7 @@ const minimax = api._internal.descriptor(enriched, 'newapi', 'MiniMax-M3');
 assert.equal(minimax.supported, true);
 assert.equal(minimax.control, 'fixed');
 assert.equal(minimax.canDisable, false);
-assert.deepEqual(minimax.efforts, []);
+assert.deepEqual(plain(minimax.efforts), []);
 assert.equal(minimax.source, 'hermes.provider_config.model+native.minimax_openai');
 assert.equal(
   enriched.providers[0].capabilities['MiniMax-M3'].reasoning_efforts,
@@ -112,7 +113,7 @@ const gpt = api._internal.descriptor(enriched, 'newapi', 'gpt-proxy');
 assert.equal(gpt.control, 'toggle_effort');
 assert.equal(gpt.canDisable, true);
 assert.equal(gpt.source, 'hermes.provider_config.model');
-assert.deepEqual(gpt.efforts.map((x) => x.value), ['low', 'high', 'xhigh']);
+assert.deepEqual(plain(gpt.efforts.map((x) => x.value)), ['low', 'high', 'xhigh']);
 
 await api._runtime.ensureModelOptions();
 const gptRoute = await api._runtime.sourceRoute({
