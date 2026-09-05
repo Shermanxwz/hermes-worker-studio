@@ -253,10 +253,15 @@
           cap.max_context_tokens,
         ].map(positiveContextWindow).find((value) => value !== null);
         const configuredContext = modelContextMetadata(configured, model);
-        const contextWindow = publicContext ?? configuredContext.window;
+        // An explicit value in Hermes' official provider config is an operator
+        // assertion for this exact route.  It must override a stale catalog
+        // fallback that a custom endpoint may expose through model/options;
+        // otherwise saving the model-level Context would leave the old value
+        // visible in the chat header.
+        const contextWindow = configuredContext.window ?? publicContext;
         if (contextWindow !== null && contextWindow !== undefined) {
           cap.hws_context_window = contextWindow;
-          cap.hws_context_source = publicContext !== null && publicContext !== undefined ? 'hermes.model.options' : configuredContext.source;
+          cap.hws_context_source = configuredContext.window !== null && configuredContext.window !== undefined ? configuredContext.source : 'hermes.model.options';
         } else {
           delete cap.hws_context_window;
           cap.hws_context_source = configuredContext.source || '';

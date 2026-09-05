@@ -33,8 +33,8 @@ const modelOptions = {
       slug: 'newapi', name: 'New API', authenticated: true,
       models: ['gpt-proxy', 'special-proxy'],
       capabilities: {
-        'gpt-proxy': { reasoning: true },
-        'special-proxy': { reasoning: true },
+        'gpt-proxy': { reasoning: true, context_window: 99999 },
+        'special-proxy': { reasoning: true, context_window: 99999 },
       },
     },
   ],

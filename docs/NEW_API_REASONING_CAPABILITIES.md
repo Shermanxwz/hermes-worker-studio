@@ -23,10 +23,13 @@ model-catalog fallback for compression; that fallback is not provider
 confirmation and Studio must not present it as the model's official window.
 
 For a custom endpoint, the operator can provide the confirmed window through
-the Models page's optional **Context（官方窗口）** field. The value is stored
-through Hermes' official provider configuration and is read as an exact
-model-level `context_length` when present, then as a provider-level value. The
-normalized capability records its source, and the chat header shows `—` plus
+the Models page. The endpoint editor's optional **Provider 默认 Context** is a
+provider-level default; every inventory row also has its own **Context** field
+for the exact model. Saving that row updates Hermes' official
+`config.providers.<provider-key>.models.<model>.context_length` through the
+official `/api/config` route. Clearing it removes the exact override. An exact
+model value wins over the provider default and over any stale catalog fallback;
+the normalized capability records its source. The chat header shows `—` plus
 an explicit “上限待确认” warning until either Hermes returns an official
 window or the operator supplies one. Studio never derives a window from a
 model name or from cumulative billing/input tokens.

@@ -293,24 +293,55 @@
     }
     return [{ value: 'auto', description: '使用 Hermes/provider 默认值' }, ...exact];
   }
-  function configuredModelReasoning(config, provider, model) {
+  function configuredProviderEntry(config, provider) {
     const root = unwrapConfig(config);
     const providers = root && typeof root.providers === 'object' && !Array.isArray(root.providers) ? root.providers : {};
     const wanted = String(provider || '').trim().toLowerCase();
+    if (!wanted) return null;
     for (const [key, entry] of Object.entries(providers)) {
       if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
       const identities = [key, entry.name, entry.slug, ...(Array.isArray(entry.aliases) ? entry.aliases : [])]
         .map((value) => String(value || '').trim().toLowerCase()).filter(Boolean);
-      if (!identities.includes(wanted)) continue;
-      const models = entry.models && typeof entry.models === 'object' && !Array.isArray(entry.models) ? entry.models : {};
-      const metadata = models[model];
-      if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
+      if (identities.includes(wanted)) return { key, entry };
+    }
+    return null;
+  }
+  function configuredModelEntry(config, provider, model) {
+    const match = configuredProviderEntry(config, provider);
+    const models = match?.entry?.models && typeof match.entry.models === 'object' && !Array.isArray(match.entry.models) ? match.entry.models : {};
+    const metadata = models[model];
+    return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : null;
+  }
+  function configuredModelReasoning(config, provider, model) {
+    const metadata = configuredModelEntry(config, provider, model);
+    if (metadata) {
       const reasoning = metadata.hws_reasoning && typeof metadata.hws_reasoning === 'object' && !Array.isArray(metadata.hws_reasoning)
         ? metadata.hws_reasoning
         : metadata;
       return { ...reasoning, hws_native_reasoning: metadata.hws_native_reasoning };
     }
     return {};
+  }
+  function positiveContextLength(...values) {
+    const value = finiteNumber(...values);
+    return value !== null && value > 0 ? Math.round(value) : null;
+  }
+  function configuredModelContext(config, options, provider, model) {
+    const match = configuredProviderEntry(config, provider);
+    const entry = match?.entry || null;
+    const metadata = configuredModelEntry(config, provider, model);
+    const exact = positiveContextLength(metadata?.context_length, metadata?.context_window, metadata?.context_window_tokens, metadata?.max_context_tokens);
+    const providerDefault = positiveContextLength(entry?.context_length, entry?.context_window, entry?.context_window_tokens, entry?.max_context_tokens);
+    const discovered = positiveContextLength(modelCapability(options, provider, model)?.hws_context_window);
+    const value = exact ?? providerDefault ?? discovered;
+    return {
+      value,
+      exact,
+      providerDefault,
+      discovered,
+      source: exact !== null ? 'Hermes 官方 model config' : providerDefault !== null ? '继承 Hermes Provider 默认值' : discovered !== null ? 'Hermes /api/model/options' : 'Hermes 尚未声明',
+      configKey: match?.key || '',
+    };
   }
   function reasoningSummary(options, provider, model, config = null) {
     const configured = configuredModelReasoning(config, provider, model);
@@ -1085,13 +1116,17 @@
     const terms = needle.split(/\s+/).filter(Boolean);
     return terms.length > 1 && terms.every((term) => haystack.includes(term));
   }
+  function systemSyncKey(content) { return String(content || '').replace(/\s+/g, ' ').trim(); }
+  function systemSyncSummary(content) {
+    return shortText(String(content || '').replace(/^\s*\[system:\s*/i, '').replace(/\]\s*$/, ''), 150);
+  }
 
   function transcriptRows(messages) {
     const seenSystemSync = new Set();
     return (messages || []).filter((msg) => {
       const content = messageText(msg);
       if (msg?.role !== 'user' || !/^\s*\[system:/i.test(content)) return true;
-      const key = content.trim();
+      const key = systemSyncKey(content);
       if (seenSystemSync.has(key)) return false;
       seenSystemSync.add(key);
       return true;
@@ -1108,6 +1143,15 @@
     const commandResult = msg?.display_kind === 'command-result';
     const visualRole = systemSync ? 'system' : role;
     const calls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+    if (systemSync) return h('article', { className: 'hws3-message system-sync' },
+      h('div', { className: 'hws3-message-avatar', 'aria-hidden': 'true' }, '·'),
+      h('div', { className: 'hws3-message-main' },
+        h('details', { className: 'hws3-system-sync-details' },
+          h('summary', null, h('strong', null, 'Hermes · 系统同步'), h('span', null, systemSyncSummary(content))),
+          h('div', { className: 'hws3-system-sync-full' }, highlightText(content, searchQuery)),
+        ),
+      ),
+    );
     const meta = systemSync ? 'Hermes · 系统同步' : commandMessage ? 'Hermes · 官方命令' : commandResult ? 'Hermes · 命令结果' : visualRole === 'user' ? '' : visualRole === 'assistant' ? 'Hermes' : visualRole;
     return h('article', { className: `hws3-message ${visualRole}${systemSync ? ' system-sync' : ''}${commandMessage ? ' command' : ''}${commandResult ? ' command-result' : ''}` },
       h('div', { className: 'hws3-message-avatar' }, commandMessage ? '⌘' : visualRole === 'user' ? '你' : visualRole === 'assistant' ? h(HermesMark, { compact: true }) : '•'),
@@ -1551,6 +1595,8 @@
     const [bulkTest, setBulkTest] = useState(null);
     const [config, setConfig] = useState({});
     const [protocolState, setProtocolState] = useState({ loading: true, routes: [], error: '' });
+    const [contextDrafts, setContextDrafts] = useState({});
+    const [contextBusy, setContextBusy] = useState('');
 
     const refreshEndpoints = useCallback(async () => {
       try { const data = await api('/api/providers/custom-endpoints'); setEndpoints(data.endpoints || []); return data.endpoints || []; }
@@ -1660,6 +1706,39 @@
       try { await plugin('/hermes/protocols/select', jinit('POST', { provider, model, mode })); await refreshProtocols(); setTests((x) => ({ ...x, [key]: { ok: true, status: 'selected' } })); }
       catch (err) { setTests((x) => ({ ...x, [key]: { ok: false, error: errorText(err) } })); }
     }
+    async function saveModelContext(provider, model) {
+      const key = `${provider}:${model}`;
+      const raw = Object.prototype.hasOwnProperty.call(contextDrafts, key) ? String(contextDrafts[key] || '').trim() : '';
+      const value = raw ? Number(raw) : null;
+      if (raw && (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value <= 0)) {
+        setMessage(`Context 必须是大于 0 的整数（${provider} / ${model}）。`);
+        return;
+      }
+      setContextBusy(key); setMessage('');
+      try {
+        const cfg = clone(unwrapConfig(await api('/api/config')));
+        const match = configuredProviderEntry(cfg, provider);
+        if (!match) throw new Error(`Hermes 官方配置中找不到 Provider “${provider}”，未写入任何本地副本。`);
+        const models = match.entry.models && typeof match.entry.models === 'object' && !Array.isArray(match.entry.models) ? match.entry.models : {};
+        const metadata = models[model] && typeof models[model] === 'object' && !Array.isArray(models[model]) ? { ...models[model] } : {};
+        if (value !== null) metadata.context_length = value;
+        else ['context_length', 'context_window', 'context_window_tokens', 'max_context_tokens'].forEach((field) => { delete metadata[field]; });
+        match.entry.models = { ...models, [model]: metadata };
+        if (!cfg.providers || typeof cfg.providers !== 'object' || Array.isArray(cfg.providers)) throw new Error('Hermes 官方配置缺少 providers，未写入任何本地副本。');
+        cfg.providers[match.key] = match.entry;
+        await api('/api/config', jinit('PUT', { config: cfg }));
+        await refreshConfig();
+        await refreshOptions(true);
+        setContextDrafts((drafts) => ({ ...drafts, [key]: value === null ? '' : String(value) }));
+        setMessage(value === null
+          ? `已通过 Hermes 官方配置清除 ${provider} / ${model} 的 model-level context_length。`
+          : `已通过 Hermes 官方配置保存 ${provider} / ${model} 的 context_length=${value}（${fmtTokens(value)}）。`);
+      } catch (err) {
+        setMessage(errorText(err));
+      } finally {
+        setContextBusy('');
+      }
+    }
     const needle = query.trim().toLowerCase();
     const rows = authenticatedProviders(modelOptions).filter((provider) => provider.slug !== 'moa' && !isManagedProtocolProvider(provider));
     const pendingProtocolTests = rows.flatMap((provider) => (provider.models || []).slice(0, 80).map((model) => ({
@@ -1700,7 +1779,7 @@
           h('label', null, 'Provider ID（可选）', h('input', { value: form.id, onChange: (e) => setForm((x) => ({ ...x, id: e.target.value })), placeholder: '自动生成或自定义' })),
           h('label', { className: 'wide' }, 'Base URL', h('input', { value: form.base_url, onChange: (e) => updateBaseUrl(e.target.value), onBlur: () => setForm((x) => ({ ...x, base_url: normalizeEndpointUrl(x.base_url) })), placeholder: 'https://example.com/v1 · 粘贴 /responses 也会自动识别模式' })),
           h('label', null, 'Model', h('input', { value: form.model, list: 'hws3-models', onChange: (e) => setForm((x) => ({ ...x, model: e.target.value })), placeholder: '验证后自动发现' }), h('datalist', { id: 'hws3-models' }, discovered.map((m) => h('option', { key: m, value: m })))),
-          h('label', null, 'Context（官方窗口，可选）', h('input', { value: form.context_length, inputMode: 'numeric', onChange: (e) => setForm((x) => ({ ...x, context_length: e.target.value })), placeholder: '如 128000' })),
+          h('label', null, 'Provider 默认 Context（可选）', h('input', { value: form.context_length, inputMode: 'numeric', onChange: (e) => setForm((x) => ({ ...x, context_length: e.target.value })), placeholder: '如 128000' })),
           h('label', { className: 'wide' }, 'API Key', h('input', { type: 'password', autoComplete: 'off', value: form.api_key, onChange: (e) => setForm((x) => ({ ...x, api_key: e.target.value })), placeholder: form.id ? '留空保留现有 Key' : '可选' })),
         ),
         h('p', { className: 'hws3-field-hint' }, '协议只接受 Hermes 官方声明或真实 Run 结果；首次使用会自动探测。若 New API 的 /models 没有返回 context_length，请填该模型官方上下文窗口；留空时 Studio 不把模型名目录回退值当作官方上限。凭据只保留在 Hermes 服务端。'),
@@ -1710,7 +1789,7 @@
       message ? h('div', { className: 'hws3-result' }, message) : null,
       h('input', { className: 'hws3-search', value: query, onChange: (e) => setQuery(e.target.value), placeholder: '搜索 Provider / Model…' }),
       protocolState.error && !/Unhandled fetchJSON call|404|Not Found/i.test(protocolState.error) ? h('div', { className: 'hws3-result' }, 'Hermes 协议状态暂不可用；未做协议猜测。') : null,
-      h('div', { className: 'hws3-model-catalog' }, rows.map((provider) => { const models = (provider.models || []).filter((m) => !needle || `${provider.name} ${provider.slug} ${m}`.toLowerCase().includes(needle)); if (!models.length) return null; return h('section', { className: 'hws3-card', key: provider.slug }, h('header', null, h('div', null, h('small', null, provider.slug), h('h3', null, provider.name || provider.slug)), h('div', { className: 'hws3-provider-badges' }, h(Pill, null, 'Hermes Auto'), provider.is_current ? h(Pill, { tone: 'good' }, '当前') : null)), models.slice(0, 80).map((model) => { const key = `${provider.slug}:${model}`; const test = tests[key]; const declaredMode = modelApiMode(modelOptions, provider.slug, model); const route = protocolState.routes.find((item) => item.provider === provider.slug && item.model === model) || (declaredMode ? { status: 'declared', mode: declaredMode } : null); const testOk = test?.ok === true || test?.route?.status === 'resolved'; const probeNeeded = route && ['unresolved', 'ambiguous'].includes(route.status); return h('div', { className: 'hws3-model-row', key: model }, h('div', null, h('strong', null, model), h('small', null, `协议：${protocolStatusLabel(route)} · 思考：${reasoningSummary(modelOptions, provider.slug, model, config)}`)), test?.loading ? h(Spinner) : test ? h('div', { className: 'hws3-model-result' }, h(Pill, { tone: testOk ? 'good' : route?.status === 'ambiguous' ? 'neutral' : 'bad' }, testOk ? 'Run 通过' : route?.status === 'ambiguous' ? '需选择协议' : '失败'), !testOk && (test.error || test.route?.error) ? h('small', null, shortText(test.error || test.route.error, 180)) : null) : null, h('div', { className: 'hws3-model-actions' }, h(Button, { className: 'ghost small', disabled: test?.loading, title: probeNeeded ? '使用 Hermes 官方真实 Run 确定该模型的协议' : '使用已经确定的协议执行真实 Run', onClick: () => testModel(provider.slug, model) }, '测试'), route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'chat_completions') }, '选 Chat') : null, route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'codex_responses') }, '选 Responses') : null)); })); })),
+      h('div', { className: 'hws3-model-catalog' }, rows.map((provider) => { const models = (provider.models || []).filter((m) => !needle || `${provider.name} ${provider.slug} ${m}`.toLowerCase().includes(needle)); if (!models.length) return null; return h('section', { className: 'hws3-card', key: provider.slug }, h('header', null, h('div', null, h('small', null, provider.slug), h('h3', null, provider.name || provider.slug)), h('div', { className: 'hws3-provider-badges' }, h(Pill, null, 'Hermes Auto'), provider.is_current ? h(Pill, { tone: 'good' }, '当前') : null)), models.slice(0, 80).map((model) => { const key = `${provider.slug}:${model}`; const test = tests[key]; const context = configuredModelContext(config, modelOptions, provider.slug, model); const hasDraft = Object.prototype.hasOwnProperty.call(contextDrafts, key); const contextValue = hasDraft ? String(contextDrafts[key] || '') : context.exact !== null ? String(context.exact) : ''; const declaredMode = modelApiMode(modelOptions, provider.slug, model); const route = protocolState.routes.find((item) => item.provider === provider.slug && item.model === model) || (declaredMode ? { status: 'declared', mode: declaredMode } : null); const testOk = test?.ok === true || test?.route?.status === 'resolved'; const probeNeeded = route && ['unresolved', 'ambiguous'].includes(route.status); return h('div', { className: 'hws3-model-row', key: model }, h('div', null, h('strong', null, model), h('small', null, `协议：${protocolStatusLabel(route)} · 思考：${reasoningSummary(modelOptions, provider.slug, model, config)}`)), test?.loading ? h(Spinner) : test ? h('div', { className: 'hws3-model-result' }, h(Pill, { tone: testOk ? 'good' : route?.status === 'ambiguous' ? 'neutral' : 'bad' }, testOk ? 'Run 通过' : route?.status === 'ambiguous' ? '需选择协议' : '失败'), !testOk && (test.error || test.route?.error) ? h('small', null, shortText(test.error || test.route.error, 180)) : null) : null, h('div', { className: 'hws3-model-actions' }, h(Button, { className: 'ghost small', disabled: test?.loading, title: probeNeeded ? '使用 Hermes 官方真实 Run 确定该模型的协议' : '使用已经确定的协议执行真实 Run', onClick: () => testModel(provider.slug, model) }, '测试'), route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'chat_completions') }, '选 Chat') : null, route?.status === 'ambiguous' ? h(Button, { className: 'ghost small', disabled: test?.loading, onClick: () => selectProtocol(provider.slug, model, 'codex_responses') }, '选 Responses') : null), h('div', { className: 'hws3-model-context' }, h('label', null, 'Context', h('input', { type: 'number', min: '1', step: '1', inputMode: 'numeric', value: contextValue, placeholder: context.value !== null ? `继承 ${fmtTokens(context.value)}` : '如 1048576', 'aria-label': `${provider.name || provider.slug} ${model} 官方 context_length`, onChange: (e) => setContextDrafts((drafts) => ({ ...drafts, [key]: e.target.value })) })), h('small', { className: 'hws3-model-context-source' }, context.source), h(Button, { className: 'ghost small', disabled: contextBusy === key, title: contextValue ? '通过 Hermes 官方 config 保存 model-level context_length' : '清除该模型的 model-level context_length', onClick: () => saveModelContext(provider.slug, model) }, contextBusy === key ? '保存中…' : '保存'))); })); })),
     );
   }
 
@@ -1831,33 +1910,47 @@
     const requiredSlots = [...referenceModels.filter((slot) => slot?.enabled !== false), aggregator].filter((slot) => slot?.provider && slot?.model);
     const inventoryRows = providerRows(modelOptions).filter((provider) => provider?.slug && provider.slug !== 'moa' && Array.isArray(provider.models) && provider.models.length);
     const requiredProviders = [...new Set(requiredSlots.map((slot) => String(slot.provider)))];
-    const inventoryBySlug = new Map(inventoryRows.map((provider) => [provider.slug, provider]));
     const providerChoices = [...inventoryRows];
-    for (const slug of requiredProviders) {
-      if (!inventoryBySlug.has(slug)) providerChoices.push({ slug, name: slug, authenticated: false, models: [] });
-    }
-    const configuredProviders = new Set(providerRows(modelOptions).filter((provider) => provider?.slug !== 'moa' && provider?.authenticated === true).map((provider) => provider.slug));
-    const missingProviders = requiredProviders.filter((provider) => !configuredProviders.has(provider));
-    const hasValidSlots = referenceModels.some((slot) => slot?.enabled !== false && slot?.provider && slot?.model) && aggregator.provider && aggregator.model;
-    const ready = Boolean(modelOptions && currentPreset && hasValidSlots && !missingProviders.length);
+    const inventoryProvider = (slug) => inventoryRows.find((provider) => provider.slug === slug || (Array.isArray(provider.aliases) && provider.aliases.includes(slug))) || null;
+    const configuredProviders = new Set(inventoryRows.filter((provider) => provider?.authenticated === true).map((provider) => provider.slug));
+    const invalidProviderSlots = requiredSlots.filter((slot) => !inventoryProvider(String(slot.provider)));
+    const invalidModelSlots = requiredSlots.filter((slot) => { const provider = inventoryProvider(String(slot.provider)); return provider && !provider.models.includes(slot.model); });
+    const staleProviders = [...new Set(invalidProviderSlots.map((slot) => String(slot.provider)))];
+    const missingProviders = requiredProviders.filter((provider) => inventoryProvider(provider) && !configuredProviders.has(inventoryProvider(provider).slug));
+    const hasValidSlots = referenceModels.some((slot) => slot?.enabled !== false && inventoryProvider(String(slot?.provider || ''))?.models?.includes(slot?.model)) && inventoryProvider(String(aggregator.provider || ''))?.models?.includes(aggregator.model);
+    const ready = Boolean(modelOptions && currentPreset && hasValidSlots && !missingProviders.length && !invalidProviderSlots.length && !invalidModelSlots.length);
     const hasAnyConfiguredSlot = requiredSlots.length > 0;
-    const readinessLabel = ready ? '可运行' : !hasAnyConfiguredSlot ? '待配置' : missingProviders.length ? '需要配置 Provider' : '需要补全模型';
+    const readinessLabel = ready ? '可运行' : !hasAnyConfiguredSlot ? '待配置' : staleProviders.length || invalidModelSlots.length ? '需修复旧配置' : missingProviders.length ? '需要配置 Provider' : '需要补全模型';
     const presetNames = Object.keys(moaConfig?.presets || {});
 
     function renderSlot(slot, index, isAggregator = false) {
       const provider = String(slot?.provider || '');
       const model = String(slot?.model || '');
-      const models = [...new Set([...modelsFor(modelOptions, provider), model].filter(Boolean))];
+      const inventory = inventoryProvider(provider);
+      const selectedProvider = inventory?.slug || '';
+      const models = inventory?.models || [];
+      const selectedModel = models.includes(model) ? model : '';
+      const stale = Boolean(provider && !inventory);
+      const staleModel = Boolean(inventory && model && !models.includes(model));
       const path = isAggregator ? null : index;
       const update = isAggregator ? updateAggregator : (patch) => updateReference(path, patch);
       return h('div', { className: `hws3-moa-slot ${isAggregator ? 'aggregator' : ''}`, key: isAggregator ? 'aggregator' : `reference-${index}` },
-        h('div', { className: 'hws3-moa-slot-title' }, h('strong', null, isAggregator ? 'Aggregator' : `Reference ${index + 1}`), h(Pill, { tone: configuredProviders.has(provider) ? 'good' : 'neutral' }, configuredProviders.has(provider) ? '已配置' : '待配置')),
+        h('div', { className: 'hws3-moa-slot-title' }, h('strong', null, isAggregator ? 'Aggregator' : `Reference ${index + 1}`), h(Pill, { tone: selectedProvider && selectedModel && configuredProviders.has(selectedProvider) ? 'good' : 'neutral' }, selectedProvider && selectedModel && configuredProviders.has(selectedProvider) ? '已配置' : stale || staleModel ? '需重选' : '待配置')),
         h('div', { className: 'hws3-moa-slot-grid' },
-          h('label', null, 'Provider', h('select', { value: provider, disabled: !providerChoices.length || !modelOptions, onChange: (e) => { const nextProvider = e.target.value; const nextModel = modelsFor(modelOptions, nextProvider)[0] || ''; update({ provider: nextProvider, model: nextModel }); } }, providerChoices.map((item) => h('option', { key: item.slug, value: item.slug }, `${item.name || item.slug} · ${item.slug}`)))),
-          h('label', null, 'Model', h('select', { value: model, disabled: !models.length || !modelOptions, onChange: (e) => update({ model: e.target.value }) }, models.length ? models.map((value) => h('option', { key: value, value }, value)) : h('option', { value: '' }, model || '刷新官方模型目录'))),
+          h('label', null, 'Provider', h('select', { value: selectedProvider, disabled: !providerChoices.length || !modelOptions, onChange: (e) => { const nextProvider = e.target.value; const nextModel = modelsFor(modelOptions, nextProvider)[0] || ''; update({ provider: nextProvider, model: nextModel }); } }, h('option', { value: '' }, provider ? '请选择官方 Provider（旧配置已失效）' : '请选择官方 Provider'), providerChoices.map((item) => h('option', { key: item.slug, value: item.slug }, `${item.name || item.slug} · ${item.slug}`)))),
+          h('label', null, 'Model',
+            h('select', {
+              value: selectedModel,
+              disabled: !selectedProvider || !models.length || !modelOptions,
+              onChange: (e) => update({ model: e.target.value }),
+            },
+              h('option', { value: '' }, selectedProvider ? staleModel ? '请选择官方 Model（旧配置已失效）' : '请选择官方 Model' : '先选择 Provider'),
+              models.map((value) => h('option', { key: value, value }, value)),
+            ),
+          ),
         ),
         !isAggregator ? h('label', { className: 'hws3-moa-enabled' }, h('input', { type: 'checkbox', checked: slot?.enabled !== false, onChange: (e) => update({ enabled: e.target.checked }) }), '启用此 Reference') : h('small', null, 'Aggregator 负责把 Reference 分析汇总成最终回答。'),
-        h('small', null, provider ? (configuredProviders.has(provider) ? '凭据状态来自 Hermes 官方 model inventory。' : 'Hermes 尚未报告该 provider 已配置；保存不写入凭据。') : '请选择 Provider 和 Model。'),
+        h('small', null, stale ? '当前 slot 使用了已不在 Hermes 官方 model inventory 的旧 Provider；请选择官方目录中的 Provider 后保存。' : staleModel ? '当前 Model 已不在该 Provider 的官方 inventory；请选择官方 Model 后保存。' : selectedProvider ? (configuredProviders.has(selectedProvider) ? '凭据状态来自 Hermes 官方 model inventory。' : 'Hermes 尚未报告该 Provider 已配置；保存不写入凭据。') : '请选择 Provider 和 Model。'),
       );
     }
 
@@ -1880,8 +1973,8 @@
       h('section', { className: 'hws3-card hws3-moa-config-card' },
         h('header', { className: 'hws3-moa-section-head' }, h('div', null, h('small', null, 'OFFICIAL /api/model/moa'), h('h3', null, '选择参与模型'), h('p', null, '下拉选项直接来自 Hermes /api/model/options；你的 New API 模型与其他已配置模型会一起出现。')), h('div', { className: 'hws3-moa-preset-control' }, h('label', null, 'Preset', h('select', { value: presetName(), disabled: loading || !presetNames.length, onChange: (e) => { setSelectedPreset(e.target.value); setProbe(null); setMessage(''); } }, presetNames.length ? presetNames.map((name) => h('option', { key: name, value: name }, name)) : h('option', { value: 'default' }, 'default'))))),
         loading ? h('div', { className: 'hws3-loading' }, h(Spinner), ' 正在读取 Hermes 官方 MoA 配置…') : currentPreset ? h('div', { className: 'hws3-moa-editor' },
-          h('div', { className: `hws3-moa-readiness ${ready ? 'good' : 'neutral'}` }, ready ? '配置可运行 · 所需 Provider 已由 Hermes 官方 inventory 标记为已配置' : missingProviders.length ? `需要配置 · Hermes 官方 inventory 尚未确认：${missingProviders.join('、')}` : '待配置 · 为 Reference 与 Aggregator 选择完整的 Provider/Model 后保存'),
-          missingProviders.length ? h('p', { className: 'hws3-moa-note' }, '这里不会收集或写入 API Key；请先使用官方 hermes setup / provider 配置，再回到此页刷新。') : null,
+          h('div', { className: `hws3-moa-readiness ${ready ? 'good' : 'neutral'}` }, ready ? '配置可运行 · 所需 Provider 已由 Hermes 官方 inventory 标记为已配置' : staleProviders.length || invalidModelSlots.length ? `需要修复 · 当前 MoA preset 含有不在 Hermes 官方目录中的旧配置${staleProviders.length ? `（${staleProviders.join('、')}）` : ''}；请选择官方 Provider/Model 后保存。` : missingProviders.length ? `需要配置 · Hermes 官方 inventory 尚未确认：${missingProviders.join('、')}` : '待配置 · 为 Reference 与 Aggregator 选择完整的 Provider/Model 后保存'),
+          staleProviders.length || invalidModelSlots.length || missingProviders.length ? h('p', { className: 'hws3-moa-note' }, '下拉框只显示 Hermes 官方 model inventory，不会把旧配置或未配置的 Provider 注入为可选项；这里不会收集或写入 API Key。') : null,
           h('div', { className: 'hws3-moa-slots' }, referenceModels.map((slot, index) => renderSlot(slot, index)), renderSlot(aggregator, 0, true)),
           h('div', { className: 'hws3-actions hws3-moa-actions' }, h(Button, { className: 'primary', disabled: busy === 'save', onClick: saveMoa }, busy === 'save' ? '保存中…' : '保存官方 MoA 配置'), h(Button, { className: 'ghost', disabled: busy === 'probe', onClick: probeMoa }, busy === 'probe' ? '测试中…' : '真实 Run 测试'), h(Button, { className: 'ghost', disabled: !currentPreset || !onUseMoa, onClick: () => onUseMoa?.(presetName()) }, '进入对话使用此 MOA')),
           probe ? h('div', { className: `hws3-moa-probe ${probe.ok ? 'good' : 'bad'}` }, probe.loading ? '正在调用 Hermes 官方 model probe…' : probe.ok ? '真实 Run 测试通过' : shortText(probe.error || probe.message || '真实 Run 测试失败', 360)) : null,
@@ -2040,7 +2133,7 @@
       detail ? h('section', { className: 'hws3-history-detail' },
         h('header', null, h('div', null, h('strong', null, `完整对话 · ${sessionTitle(detail)}`), h('small', null, detailSearch ? `Hermes 官方 Session messages · 已定位搜索命中“${shortText(detailSearch, 60)}”` : 'Hermes 官方 Session messages · 分页加载')), h(Button, { className: 'ghost small', onClick: () => { detailRequestRef.current += 1; setDetail(null); setDetailHit(null); } }, '关闭')),
         h(ErrorBar, { error: detailState.error }),
-        detailState.loading ? h('div', { className: 'hws3-loading' }, h(Spinner), detailSearch ? ' 正在跨 Hermes 消息分页定位…' : ' 正在加载完整对话…') : h('div', { className: 'hws3-history-detail-messages' }, detailState.rows.length ? detailState.rows.map((msg, index) => {
+        detailState.loading ? h('div', { className: 'hws3-loading' }, h(Spinner), detailSearch ? ' 正在跨 Hermes 消息分页定位…' : ' 正在加载完整对话…') : h('div', { className: 'hws3-history-detail-messages' }, detailState.rows.length ? transcriptRows(detailState.rows).map((msg, index) => {
           const isHit = Boolean(detailHit && detailHit.page === detailState.page && (detailHit.id ? detailHit.id === msg?.id : detailHit.index === index));
           return h('div', { className: `hws3-history-hit-anchor ${isHit ? 'is-hit' : ''}`, ref: isHit ? detailHitRef : null, key: msg?.id || `${detailState.page}-${index}` }, h(MessageBubble, { msg, searchQuery: detailSearch }));
         }) : h(Empty, { title: '暂无消息', body: 'Hermes 没有返回这一页的消息。' })),
@@ -2702,7 +2795,9 @@
           }
           return;
         }
-        setTimelineExpanded(true);
+        // Keep the lifecycle card compact by default; the official timeline
+        // remains available on demand through its header.
+        setTimelineExpanded(false);
         await assertMoaReady(modelOptions, route);
         const executionRoute = await resolveExecutionRoute(route);
         const session = current?.id ? current : await createSession(text || '图片对话', route);
@@ -2723,7 +2818,7 @@
 
     const stopRun = useCallback(async () => { if (!run?.id) return; try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/stop`, jinit('POST', {})); } catch (err) { setGlobalError(`停止 Run 失败：${errorText(err)}`); } }, [run?.id]);
     const approveRun = useCallback(async (choice) => { if (!run?.id) return; try { await plugin(`/hermes/runs/${encodeURIComponent(run.id)}/approval`, jinit('POST', { choice })); } catch (err) { setGlobalError(`审批提交失败：${errorText(err)}`); } }, [run?.id]);
-    const newConversation = useCallback(() => { sessionOpenRef.current += 1; routeChangeRef.current += 1; sessionRouteRestoreRef.current = null; cancelRunPoll(); setCurrent(null); setMessages([]); setRun(null); setTurnRuns([]); setContextSnapshot(null); setStreamText(''); setDraft(''); setSlashItems([]); setAttachments([]); setSkillDiff(null); setView('chat'); }, [cancelRunPoll]);
+    const newConversation = useCallback(() => { sessionOpenRef.current += 1; routeChangeRef.current += 1; sessionRouteRestoreRef.current = null; cancelRunPoll(); setCurrent(null); setMessages([]); setRun(null); setTurnRuns([]); setContextSnapshot(null); setStreamText(''); setDraft(''); setSlashItems([]); setAttachments([]); setSkillDiff(null); setTimelineExpanded(false); setView('chat'); }, [cancelRunPoll]);
 
     function askRename(session = current) { if (!session?.id) return; setModalInput(sessionTitle(session)); setModal({ type: 'rename', session }); }
     function askDelete(session = current) { if (!session?.id) return; setModal({ type: 'delete', session }); }

@@ -36,6 +36,10 @@ let savedEndpointPayload = null;
 let activatedEndpoint = null;
 let deletedEndpoint = null;
 let config = {
+  providers: {
+    official: { name: 'Official', models: { 'main-model': {} } },
+    'local-api': { name: 'Local API', base_url: 'http://127.0.0.1:8080/v1', models: { 'found-model': {} } },
+  },
   plugins: { entries: { 'hermes-worker-studio': { settings: { mode: 'AUTO' } } } },
   approvals: {
     mode: 'smart', timeout: 300, cron_mode: 'approve', single_query_mode: 'approve',
@@ -51,7 +55,7 @@ let endpoints = [{
 let moaConfig = {
   default_preset: 'default', active_preset: '',
   presets: { default: {
-    reference_models: [{ provider: 'official', model: 'main-model', enabled: true }],
+    reference_models: [{ provider: 'new-api', model: 'main-model', enabled: true }],
     aggregator: { provider: 'official', model: 'main-model' },
     reference_temperature: null, aggregator_temperature: null, reference_timeout: null,
     degraded_reference_policy: 'loud', max_tokens: 4096, reference_max_tokens: null,
@@ -182,15 +186,23 @@ assert.equal(config.plugins.entries['hermes-worker-studio'].settings.unattended_
 await click(byText('.hws3-nav button', '模型'));
 await waitFor(() => byText('.hws3-endpoint', 'Local API'), 'endpoint list');
 assert.equal(window.document.querySelector('.hws3-moa-panel'), null, 'MOA must not be embedded in Models');
+const mainContextInput = window.document.querySelector('.hws3-model-row .hws3-model-context input');
+assert.ok(mainContextInput, 'each official model row must expose a model-level context_length input');
+setValue(mainContextInput, '1048576');
+await click(mainContextInput.closest('.hws3-model-context').querySelector('.hws3-button'));
+await waitFor(() => config.providers.official.models['main-model'].context_length === 1048576, 'official model context save');
+assert.ok(calls.some((call) => call.url === '/api/config' && call.method === 'PUT' && call.body?.config?.providers?.official?.models?.['main-model']?.context_length === 1048576), 'model context must be saved through Hermes official config');
 
 // MOA has its own sidebar surface and uses the same official model inventory.
 await click(byText('.hws3-nav button', 'MOA'));
 await waitFor(() => window.document.querySelector('.hws3-moa-page'), 'independent MOA page');
 assert.ok(byText('.hws3-moa-page', '选择参与模型'));
+assert.ok(byText('.hws3-moa-page', '需修复旧配置'), 'stale MoA providers must be diagnosed instead of fabricated into the catalog');
 const moaProviderSelects = [...window.document.querySelectorAll('.hws3-moa-slot-grid select')].filter((_, index) => index % 2 === 0);
 const moaModelSelects = [...window.document.querySelectorAll('.hws3-moa-slot-grid select')].filter((_, index) => index % 2 === 1);
 assert.equal(moaProviderSelects.length, 2);
 assert.equal(moaModelSelects.length, 2);
+assert.ok([...moaProviderSelects[0].options].every((option) => option.value !== 'new-api'), 'MOA provider options must come only from the official inventory');
 setValue(moaProviderSelects[0], 'local-api');
 await waitFor(() => moaModelSelects[0].value === 'found-model', 'MOA model list follows selected provider');
 await click(byText('.hws3-moa-actions button', '保存官方 MoA 配置'));
