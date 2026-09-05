@@ -24,7 +24,7 @@ Worker Studio owns the product home route `/` and keeps six first-level product 
 - **Chat** — Hermes Gateway sessions, send, stop, steer, approvals, and live lifecycle.
 - **Worker** — official child-agent behavior through Hermes public `subagent_lifecycle`.
 - **Models** — Hermes `/api/model/options` plus official Custom Endpoint management.
-- **MOA** — a dedicated page/session list backed by Hermes `/api/model/moa`.
+- **MOA** — a dedicated page/session list backed by Hermes `/api/model/moa`, or Hermes' official `/api/config` store when the pinned API Server does not expose the Dashboard-only route.
 - **Full Access** — official approval/delegation configuration with authenticated Run verification.
 - **Full History** — server-side full-text search, pagination, archive/restore/rename/delete.
 
@@ -43,7 +43,7 @@ Worker Studio owns the product home route `/` and keeps six first-level product 
 | Tool/Skill/subagent activity | Gateway lifecycle + public `subagent_lifecycle` |
 | Sessions/history | Hermes `/api/sessions/*` + official full-text search |
 | Models/Providers | Hermes `/api/model/options`, `/api/providers/custom-endpoints` |
-| MOA | Hermes `/api/model/moa` + native `moa` provider |
+| MOA | Hermes `/api/model/moa` or official `/api/config` store + native `moa` provider |
 | Attachments | `image.attach_bytes`, `pdf.attach`, `file.attach` |
 
 Browser chat uses the official Hermes Gateway. `/v1/runs` remains a probe, CI, and unattended-verification surface, not a second chat runtime.
@@ -67,6 +67,7 @@ Product Chat, independent Worker, Verifier, and MOA all use the same execution-r
 ## Conversation/data boundaries
 
 - Normal Chat loads only the latest 10 messages.
+- The ordinary recent rail excludes explicitly classified MOA sessions; the MOA page owns its separate MOA session list.
 - Full History uses official Hermes full-text search and pages official messages until a hit is located; it never pretends the latest-10 window is a complete search index.
 - Full History pages 30 sessions at a time and details 100 messages at a time.
 - Slash commands use the official Hermes command catalog/execution path.

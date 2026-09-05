@@ -111,6 +111,10 @@
     const lock = session?.model_config?.browser_model_lock || session?.browser_model_lock || {};
     return session?.studio_moa === true || session?.studio_moa?.provider === 'moa' || provider === 'moa' || model === 'moa' || model.includes('mixture of agents') || String(lock.provider || '').toLowerCase() === 'moa' || String(lock.model || '').toLowerCase() === 'moa' || title.startsWith('◈ moa') || title.startsWith('moa ·');
   }
+  function sessionRows(payload) {
+    if (Array.isArray(payload?.sessions)) return payload.sessions;
+    return Array.isArray(payload?.data) ? payload.data : [];
+  }
   function moaSessionLabel(session) { return isMoaSession(session) ? `MOA · ${session?.preset || session?.model || 'Mixture of Agents'}` : ''; }
   const SLASH_ZH = {
     '/compress': '压缩当前会话上下文（Hermes 官方）',
@@ -403,7 +407,6 @@
     try {
       await plugin('/hermes/moa-runtime', jinit('POST', { preset: presetName }));
     } catch (error) {
-      if (/Unhandled fetchJSON call|404|Not Found/i.test(errorText(error))) return;
       throw new Error(`MOA 官方运行配置解析失败：${errorText(error)}`);
     }
   }
@@ -2192,7 +2195,7 @@
   }
 
   function Sidebar({ view, setView, recent, current, openSession, newConversation, refreshRecent, ready, mode, mobileOpen, setMobileOpen, onRename, onArchive, onDelete }) {
-    const sessions = recent.sessions;
+    const sessions = recent.sessions.filter((session) => !isMoaSession(session));
     return h(React.Fragment, null,
       mobileOpen ? h('button', { className: 'hws3-mobile-scrim', onClick: () => setMobileOpen(false), 'aria-label': '关闭侧边栏' }) : null,
       h('aside', { className: `hws3-sidebar ${mobileOpen ? 'mobile-open' : ''}` },
@@ -2286,7 +2289,20 @@
     }, [current, modelOptions, chatRoute?.provider]);
     const refreshRecent = useCallback(async () => {
       setRecent((x) => ({ ...x, loading: true, error: '' }));
-      try { const data = await api(`/api/sessions?limit=${RECENT_LIMIT}&offset=0&order=recent&archived=exclude`); const sessions = data.sessions || []; setRecent({ loading: false, sessions, error: '' }); return sessions; }
+      try {
+        let data;
+        try { data = await plugin(`/hermes/recent-sessions?limit=${RECENT_LIMIT}`); }
+        catch (error) {
+          // Compatibility with an older uninstalled bridge. The current
+          // sealed bridge always returns durable MOA markers here; an old
+          // bridge is the only case where the native list fallback is used.
+          if (!/Unhandled fetchJSON call|404|Not Found/i.test(errorText(error))) throw error;
+          data = await api(`/api/sessions?limit=${RECENT_LIMIT}&offset=0&order=recent&archived=exclude`);
+        }
+        const sessions = sessionRows(data);
+        setRecent({ loading: false, sessions, error: '' });
+        return sessions;
+      }
       catch (err) { setRecent((x) => ({ ...x, loading: false, error: errorText(err) })); return []; }
     }, []);
     const loadMessages = useCallback(async (session) => {
@@ -2765,7 +2781,10 @@
       const serverSession = out.session || {};
       const session = { ...serverSession, id, title: serverSession.title || fallbackTitle, source: serverSession.source || 'hermes_browser', provider: route?.provider, model: route?.model, effort: route?.effort || 'auto' };
       sessionRouteRestoreRef.current = { session, projection: null };
-      if (route?.provider === 'moa') plugin(`/hermes/sessions/${encodeURIComponent(id)}/projection`, jinit('PUT', { turns: [], moa: { preset: route.model || 'default', provider: 'moa', source: 'studio' } })).catch(() => {});
+      if (route?.provider === 'moa') {
+        const projection = await plugin(`/hermes/sessions/${encodeURIComponent(id)}/projection`, jinit('PUT', { turns: [], moa: { preset: route.model || 'default', provider: 'moa', source: 'studio' } }));
+        if (!projection?.moa || projection.moa.provider !== 'moa') throw new Error('MOA 会话分类写入失败，已停止发送以避免会话进入普通列表。');
+      }
       setCurrent(session); setMessages([]); setContextSnapshot(null); await refreshRecent(); return session;
     }, [refreshRecent]);
     const resolveExecutionRoute = useCallback(async (route) => {

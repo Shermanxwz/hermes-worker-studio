@@ -103,7 +103,7 @@ Reasoning controls consume explicit upstream metadata only; missing metadata => 
 
 MOA is a separate Studio sidebar surface rather than a duplicate section in Models. Its provider/model selectors use the same official `/api/model/options` response.
 
-Preset edits and execution use Hermes `/api/model/moa`. Immediately before native MOA execution, every source slot passes through the same per-model route resolver. Studio does not implement a second aggregator, model registry, model client or credential store.
+Preset edits and execution use Hermes `/api/model/moa`; when the pinned API Server does not expose that Dashboard-only route, the bridge uses Hermes' own official `/api/config`/`save_config` boundary in-process. Immediately before native MOA execution, every source slot passes through the same per-model route resolver. Studio does not implement a second aggregator, model registry, model client or credential store.
 
 ## 7. Sessions and bounded UI state
 
@@ -115,6 +115,12 @@ Daily surface limits:
 - full-history messages: 100/page.
 
 Search/archive/session CRUD stay server-side through Hermes APIs. Full-history FTS search is deliberately outside the bounded chat surface: a clicked Hermes search result loads official message pages until the matching row is found, then highlights and scrolls to it. Chat continues to load only its latest 10 messages.
+
+The ordinary recent rail reads Hermes session rows through the Studio's bounded
+classification projection and excludes rows explicitly marked as MOA. The
+dedicated MOA page reads the same official session rows (accepting both
+Dashboard `sessions` and API Server `data` list envelopes) and shows only rows
+with an official `moa` identity or a durable Studio MOA marker.
 
 Studio's browser Run projection, UI event rings and retained lifecycle convenience handles are bounded/disposable. Authoritative state remains Hermes.
 

@@ -24,7 +24,7 @@ Studio 只维护一套产品体验，不维护第二套 Agent 内核。它通过
 - **对话**：Hermes 原生 Gateway 会话、发送、停止、Steer、审批和实时生命周期。
 - **Worker**：通过 Hermes 公共 `subagent_lifecycle` 使用官方子代理能力。
 - **模型**：直接读取 Hermes `/api/model/options`；Custom Endpoint 通过 Hermes 官方接口管理。
-- **MOA**：独立页面和专属会话列表，直接读取/保存 Hermes `/api/model/moa`。
+- **MOA**：独立页面和专属会话列表，读取/保存 Hermes 官方 `/api/model/moa`；Pinned API Server 不提供该 Dashboard 路由时，使用 Hermes 自己的 `/api/config`/配置存储边界。
 - **完全访问**：读写 Hermes 官方审批/委派配置，并用真实官方 Run 验证回读结果。
 - **完整历史**：服务端全文搜索、会话分页、消息分页、归档、恢复、重命名和删除。
 
@@ -43,7 +43,7 @@ Studio 只维护一套产品体验，不维护第二套 Agent 内核。它通过
 | 工具/Skills/子代理活动 | Hermes Gateway lifecycle + public `subagent_lifecycle` |
 | 会话与历史 | Hermes `/api/sessions/*` + 官方全文搜索 |
 | 模型/Provider | Hermes `/api/model/options`、`/api/providers/custom-endpoints` |
-| MOA | Hermes `/api/model/moa` + native `moa` provider |
+| MOA | Hermes `/api/model/moa` 或官方 `/api/config` 配置存储 + native `moa` provider |
 | 附件 | `image.attach_bytes`、`pdf.attach`、`file.attach` |
 
 浏览器对话使用 Hermes 官方 Gateway；`/v1/runs` 是探测、CI 和无人值守验证面，不是另一套聊天执行内核。
@@ -67,6 +67,7 @@ Product Chat、独立 Worker、Verifier 与 MOA 使用同一 execution-route res
 ## 对话体验与数据边界
 
 - 普通对话首屏只加载最近 10 条消息。
+- 普通最近会话列表排除明确标记的 MOA 会话；MOA 页面维护独立的 MOA 会话列表。
 - 完整历史通过 Hermes 官方全文搜索跨消息分页定位命中；不会拿最近 10 条冒充完整搜索。
 - 完整历史每页最多 30 个会话，详情每页最多 100 条消息。
 - `/` 命令使用 Hermes 官方命令目录和执行路径。

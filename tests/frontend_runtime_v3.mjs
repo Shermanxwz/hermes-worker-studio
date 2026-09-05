@@ -88,6 +88,14 @@ function responseFor(url, init = {}) {
   const body = parseBody(init);
   calls.push({ url, method, body });
 
+  if (url === '/api/plugins/hermes-worker-studio/hermes/recent-sessions?limit=10') return {
+    sessions: [...sessions, { id: 'session-moa', title: 'MOA Session', provider: 'moa', model: 'default', archived: false, last_active: 1788139500 }],
+    total: sessions.length + 1,
+  };
+  if (url === '/api/plugins/hermes-worker-studio/hermes/moa-sessions') return {
+    sessions: [{ id: 'session-moa', title: 'MOA Session', provider: 'moa', model: 'default', studio_moa: { provider: 'moa', preset: 'default' }, last_active: 1788139500 }],
+    total: 1,
+  };
   if (url === '/api/sessions?limit=10&offset=0&order=recent&archived=exclude') return { sessions: sessions.filter((s) => !s.archived), total: sessions.filter((s) => !s.archived).length };
   if (url.startsWith('/api/sessions/search?')) return { results: [{ ...(sessions.find((s) => s.id === 'session-1') || { id: 'session-1', title: 'Conversation One' }), session_id: 'session-1', role: 'user', snippet: 'needle appears in the complete Hermes history' }] };
   if (url === '/api/sessions/session-1/messages?limit=10&offset=0&order=latest') return { messages: includeToolMessages
@@ -246,6 +254,7 @@ function setValue(el, value) {
 }
 
 await waitFor(() => window.document.querySelectorAll('.hws3-recents .hws3-session-row').length === 2, 'initial recents');
+assert.equal([...window.document.querySelectorAll('.hws3-recents .hws3-session-row')].some((el) => el.textContent.includes('MOA Session')), false, 'MOA sessions must stay out of ordinary recents');
 for (const label of ['对话', 'Worker', '模型', 'MOA', '完全访问', '完整历史']) assert.ok(byText('.hws3-nav button', label), `missing nav ${label}`);
 const nativeDashboardLink = byText('.hws3-native-dashboard-link', '高级 · Hermes Dashboard');
 assert.ok(nativeDashboardLink);
@@ -260,6 +269,7 @@ assert.equal(window.document.getElementById('slot').textContent.trim(), '← Wor
 await click(byText('.hws3-nav button', 'MOA'));
 await waitFor(() => window.document.querySelector('.hws3-moa-page'), 'independent MOA page');
 assert.ok(byText('.hws3-moa-page', '选择参与模型'));
+await waitFor(() => byText('.hws3-moa-session-list', 'MOA Session'), 'MOA session list');
 assert.ok(window.document.querySelectorAll('.hws3-moa-slot-grid select').length >= 4);
 await click(byText('.hws3-nav button', '模型'));
 await waitFor(() => window.document.querySelector('.hws3-model-catalog'), 'models page without MOA panel');

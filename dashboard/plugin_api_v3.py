@@ -597,6 +597,35 @@ def _write_hermes_config_store_providers(providers: dict[str, dict[str, Any]]) -
         raise HTTPException(502, "Hermes official config store could not be updated") from exc
 
 
+def _write_hermes_config_store_moa(moa: dict[str, Any]) -> None:
+    """Persist the MoA block through Hermes' own config writer.
+
+    Hermes 0.20.6 exposes ``/api/model/moa`` on its Dashboard process, but
+    the API Server used by this bridge does not expose that route. The
+    Dashboard plugin is nevertheless loaded in the same Hermes process, so a
+    missing proxy route can use the exact official raw-config/save boundary.
+    No second MoA store is created here.
+    """
+    try:
+        from hermes_cli.config import is_managed, read_raw_config, save_config
+
+        if is_managed():
+            raise HTTPException(409, "Hermes configuration is managed and cannot be modified")
+        current = read_raw_config()
+        if not isinstance(current, dict):
+            raise HTTPException(502, "Hermes official config store returned an invalid object")
+        existing = current.get("moa") if isinstance(current.get("moa"), dict) else {}
+        merged = copy.deepcopy(existing)
+        merged.update(copy.deepcopy(moa))
+        current["moa"] = merged
+        save_config(current)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - depends on the host Hermes install
+        _LOG.exception("Hermes official MoA config write failed")
+        raise HTTPException(502, "Hermes official MoA config could not be updated") from exc
+
+
 def _read_official_config() -> dict[str, Any]:
     try:
         payload = _legacy._hermes_proxy("/api/config")
@@ -1253,6 +1282,65 @@ def _translate_moa_config_for_official(payload: Any) -> dict[str, Any]:
     return result
 
 
+def _read_official_moa_config() -> dict[str, Any]:
+    """Read MoA from the official route or its in-process config store.
+
+    The plugin bridge talks to Hermes' API Server for Runs and Sessions. A
+    Hermes build may legitimately keep the Dashboard-only ``/api/model/moa``
+    route on another process, so a 404/405 is a routing boundary, not an empty
+    MoA configuration. Only that missing-route case is eligible for the
+    official in-process fallback; auth, transport, and server errors remain
+    visible and fail closed.
+    """
+    try:
+        payload = _legacy._hermes_proxy("/api/model/moa")
+    except HTTPException as exc:
+        if int(exc.status_code or 0) not in _CONFIG_ROUTE_UNAVAILABLE:
+            raise
+        config = _read_official_config()
+        payload = config.get("moa")
+        if not isinstance(payload, dict):
+            raise HTTPException(502, "Hermes official config store has no valid moa block")
+        _LOG.debug("Hermes API Server has no /api/model/moa route; using official config store")
+    if not isinstance(payload, dict):
+        raise HTTPException(502, "Hermes official MoA route returned an invalid object")
+    return copy.deepcopy(payload)
+
+
+def _write_official_moa_config(payload: Any) -> dict[str, Any]:
+    """Write MoA through Hermes' official Dashboard/API config boundary."""
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "MOA config must be an object")
+    try:
+        saved = _legacy._hermes_proxy(
+            "/api/model/moa",
+            method="PUT",
+            body=payload,
+        )
+        return saved if isinstance(saved, dict) else copy.deepcopy(payload)
+    except HTTPException as exc:
+        if int(exc.status_code or 0) not in _CONFIG_ROUTE_UNAVAILABLE:
+            raise
+
+    # Prefer the official generic config contract when the API Server exposes
+    # it. Its deep-merge semantics preserve unrelated Hermes settings.
+    try:
+        _legacy._hermes_proxy(
+            "/api/config",
+            method="PUT",
+            body={"config": {"moa": copy.deepcopy(payload)}},
+        )
+        return copy.deepcopy(payload)
+    except HTTPException as exc:
+        if int(exc.status_code or 0) not in _CONFIG_ROUTE_UNAVAILABLE:
+            raise
+
+    # Final fallback is still Hermes-owned: it uses the same raw YAML reader
+    # and save_config implementation as Hermes' own Dashboard route.
+    _write_hermes_config_store_moa(payload)
+    return copy.deepcopy(payload)
+
+
 def _ensure_moa_execution_config() -> dict[str, Any]:
     """Make the official MoA slots executable before a real Gateway Run.
 
@@ -1263,16 +1351,12 @@ def _ensure_moa_execution_config() -> dict[str, Any]:
     must become its isolated alias. This keeps the native runtime authoritative
     without asking the browser to maintain a second MoA configuration.
     """
-    raw = _legacy._hermes_proxy("/api/model/moa")
-    translated = _translate_moa_config_for_official(raw)
-    if translated != raw:
-        saved = _legacy._hermes_proxy(
-            "/api/model/moa",
-            method="PUT",
-            body=translated,
-        )
-        return saved if isinstance(saved, dict) else translated
-    return raw if isinstance(raw, dict) else translated
+    with _OFFICIAL_CONFIG_LOCK:
+        raw = _read_official_moa_config()
+        translated = _translate_moa_config_for_official(raw)
+        if translated != raw:
+            return _write_official_moa_config(translated)
+        return raw
 
 
 @router.get("/hermes/protocols")
@@ -1342,7 +1426,7 @@ async def ensure_moa_runtime_config(request: Request) -> dict[str, Any]:
 @router.get("/hermes/moa-config")
 def get_moa_config_v3() -> dict[str, Any]:
     """Read official MoA config while hiding Studio's managed aliases."""
-    payload = _legacy._hermes_proxy("/api/model/moa")
+    payload = _read_official_moa_config()
     return _reverse_moa_config(payload, _read_official_config())
 
 
@@ -1350,12 +1434,7 @@ def get_moa_config_v3() -> dict[str, Any]:
 async def put_moa_config_v3(request: Request) -> dict[str, Any]:
     body = await request.json()
     translated = await asyncio.to_thread(_translate_moa_config_for_official, body)
-    saved = await asyncio.to_thread(
-        _legacy._hermes_proxy,
-        "/api/model/moa",
-        method="PUT",
-        body=translated,
-    )
+    saved = await asyncio.to_thread(_write_official_moa_config, translated)
     return _reverse_moa_config(saved, _read_official_config())
 
 
@@ -1415,10 +1494,16 @@ def product_capabilities() -> dict[str, Any]:
             "unresolved": "fail closed; no model-name or URL guessing",
         },
         "moa_runtime_resolution": {
-            "source": "Hermes official /api/model/moa",
+            "source": "Hermes official /api/model/moa or official /api/config store",
             "execution": "Hermes native virtual moa provider after official per-model route resolution",
             "compatibility": "managed aliases are written only through official Hermes config contracts",
             "unresolved": "fail closed before the native MOA Run",
+        },
+        "session_classification": {
+            "source": "Hermes official /api/sessions plus bounded Studio projection marker",
+            "moa_list": "/hermes/moa-sessions",
+            "recent_list": "/hermes/recent-sessions",
+            "ordinary_list_excludes_moa": True,
         },
     }
 
@@ -1447,19 +1532,69 @@ async def put_session_projection(session_id: str, request: Request) -> dict[str,
     return safe
 
 
+def _session_rows(payload: Any) -> list[dict[str, Any]]:
+    """Accept both Hermes Dashboard and API Server list envelopes."""
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("sessions")
+    if not isinstance(rows, list):
+        rows = payload.get("data")
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _session_provider_or_model_is_moa(row: dict[str, Any]) -> bool:
+    model_config = row.get("model_config") if isinstance(row.get("model_config"), dict) else {}
+    browser_lock = row.get("browser_model_lock") if isinstance(row.get("browser_model_lock"), dict) else {}
+    nested_lock = model_config.get("browser_model_lock") if isinstance(model_config.get("browser_model_lock"), dict) else {}
+    providers = (
+        row.get("provider"),
+        row.get("model_provider"),
+        model_config.get("provider"),
+        browser_lock.get("provider"),
+        nested_lock.get("provider"),
+    )
+    models = (
+        row.get("model"),
+        row.get("model_name"),
+        model_config.get("model"),
+        browser_lock.get("model"),
+        nested_lock.get("model"),
+    )
+    return any(str(value or "").strip().lower() == "moa" for value in (*providers, *models))
+
+
+def _decorate_session_row(row: dict[str, Any]) -> dict[str, Any]:
+    session_id = str(row.get("id") or row.get("session_id") or "").strip()
+    with _PROJECTION_LOCK:
+        marker = _read_projection(session_id).get("moa") if session_id else None
+    if isinstance(marker, dict):
+        return {**row, "studio_moa": marker}
+    if _session_provider_or_model_is_moa(row):
+        return {**row, "studio_moa": {"source": "hermes", "provider": "moa"}}
+    return row
+
+
 @router.get("/hermes/moa-sessions")
 def list_moa_sessions() -> dict[str, Any]:
     """Overlay explicit Studio markers on authoritative Hermes session rows."""
     upstream = _legacy._hermes_proxy("/api/sessions?limit=100&offset=0&order=recent&archived=include")
-    rows = upstream.get("sessions", []) if isinstance(upstream, dict) else []
-    result = []
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict):
-            continue
-        session_id = str(row.get("id") or row.get("session_id") or "").strip()
-        with _PROJECTION_LOCK:
-            marker = _read_projection(session_id).get("moa") if session_id else None
-        model_config = row.get("model_config") if isinstance(row.get("model_config"), dict) else {}
-        if marker or str(row.get("provider") or row.get("model_provider") or model_config.get("provider") or "").lower() == "moa":
-            result.append({**row, "studio_moa": marker or {"source": "hermes"}})
+    result = [decorated for row in _session_rows(upstream)
+              if (decorated := _decorate_session_row(row)).get("studio_moa")
+              or _session_provider_or_model_is_moa(decorated)]
     return {"sessions": result, "total": len(result), "source": "hermes_session_api+studio_projection"}
+
+
+@router.get("/hermes/recent-sessions")
+def list_recent_sessions(limit: int = 10) -> dict[str, Any]:
+    """Return recent Hermes sessions with the durable Studio classification overlay."""
+    bounded_limit = max(1, min(int(limit or 10), 100))
+    upstream = _legacy._hermes_proxy(
+        f"/api/sessions?limit={bounded_limit}&offset=0&order=recent&archived=exclude"
+    )
+    rows = [_decorate_session_row(row) for row in _session_rows(upstream)]
+    total = upstream.get("total") if isinstance(upstream, dict) else None
+    return {
+        "sessions": rows,
+        "total": int(total) if isinstance(total, int) else len(rows),
+        "source": "hermes_session_api+studio_projection",
+    }

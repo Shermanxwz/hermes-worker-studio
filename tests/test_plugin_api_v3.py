@@ -353,6 +353,89 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 500)
         read_store.assert_not_called()
 
+    def test_moa_config_reads_the_official_store_when_api_server_lacks_dashboard_route(self):
+        official = {
+            "moa": {
+                "default_preset": "default",
+                "presets": {"default": {"reference_models": [], "aggregator": {}}},
+            }
+        }
+        with patch.object(
+            plugin_api_v3._legacy,
+            "_hermes_proxy",
+            side_effect=HTTPException(status_code=404, detail="Hermes API Server: Not Found"),
+        ), patch.object(plugin_api_v3, "_read_official_config", return_value=official):
+            result = plugin_api_v3._read_official_moa_config()
+
+        self.assertEqual(result, official["moa"])
+
+    def test_moa_config_write_falls_back_to_the_official_config_writer(self):
+        writes = []
+
+        def missing_route(path, method="GET", body=None, timeout=None):
+            writes.append((path, method, body))
+            raise HTTPException(status_code=404, detail="Hermes API Server: Not Found")
+
+        payload = {"default_preset": "default", "presets": {"default": {}}}
+        with patch.object(plugin_api_v3._legacy, "_hermes_proxy", side_effect=missing_route), patch.object(
+            plugin_api_v3, "_write_hermes_config_store_moa"
+        ) as write_store:
+            result = plugin_api_v3._write_official_moa_config(payload)
+
+        self.assertEqual(result, payload)
+        self.assertEqual([item[:2] for item in writes], [
+            ("/api/model/moa", "PUT"),
+            ("/api/config", "PUT"),
+        ])
+        self.assertEqual(writes[-1][2], {"config": {"moa": payload}})
+        write_store.assert_called_once_with(payload)
+
+    def test_session_rows_accept_both_hermes_list_envelopes(self):
+        row = {"id": "session-1"}
+        self.assertEqual(plugin_api_v3._session_rows({"sessions": [row]}), [row])
+        self.assertEqual(plugin_api_v3._session_rows({"object": "list", "data": [row]}), [row])
+        self.assertEqual(plugin_api_v3._session_rows({"data": "not-a-list"}), [])
+
+    def test_moa_session_list_uses_data_envelope_and_durable_projection_marker(self):
+        moa_id = "session-moa"
+        normal_id = "session-normal"
+        payload = {
+            "object": "list",
+            "data": [
+                {"id": moa_id, "title": "MOA turn"},
+                {"id": normal_id, "title": "Normal turn"},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            plugin_api_v3, "_PROJECTION_ROOT", pathlib.Path(directory)
+        ), patch.object(plugin_api_v3._legacy, "_hermes_proxy", return_value=payload):
+            plugin_api_v3._write_projection(
+                moa_id,
+                {"turns": [], "moa": {"provider": "moa", "preset": "default", "source": "studio"}},
+            )
+            result = plugin_api_v3.list_moa_sessions()
+
+        self.assertEqual([row["id"] for row in result["sessions"]], [moa_id])
+        self.assertEqual(result["sessions"][0]["studio_moa"]["preset"], "default")
+
+    def test_recent_session_list_preserves_normal_rows_and_marks_moa_rows(self):
+        payload = {
+            "object": "list",
+            "data": [
+                {"id": "session-moa", "title": "MOA turn"},
+                {"id": "session-native-moa", "provider": "moa", "model": "default"},
+                {"id": "session-normal", "title": "Normal turn"},
+            ],
+            "total": 3,
+        }
+        with patch.object(plugin_api_v3._legacy, "_hermes_proxy", return_value=payload):
+            result = plugin_api_v3.list_recent_sessions(10)
+
+        self.assertEqual(len(result["sessions"]), 3)
+        self.assertNotIn("studio_moa", result["sessions"][2])
+        self.assertEqual(result["sessions"][1]["studio_moa"]["provider"], "moa")
+        self.assertEqual(result["total"], 3)
+
     def test_protocol_alias_is_written_through_official_config_without_touching_source(self):
         source = {
             "name": "New API",
@@ -687,7 +770,11 @@ class ProductRunsBridgeTests(unittest.TestCase):
         self.assertIn("/api/sessions", caps["official_plan"]["fallback"])
         self.assertIn("/api/sessions/{session_id}/context", caps["context_telemetry"]["source"])
         self.assertIn("never", caps["context_telemetry"]["fallback"])
-        self.assertEqual(caps["moa_runtime_resolution"]["source"], "Hermes official /api/model/moa")
+        self.assertEqual(
+            caps["moa_runtime_resolution"]["source"],
+            "Hermes official /api/model/moa or official /api/config store",
+        )
+        self.assertTrue(caps["session_classification"]["ordinary_list_excludes_moa"])
 
 
 if __name__ == "__main__":

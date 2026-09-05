@@ -21,6 +21,8 @@ The repository has reached code-level archive-candidate closure around these inv
 - first unresolved model use performs real Hermes Chat/Responses probes, caches exactly verified routing, deduplicates concurrent first-use probes, and fails closed on ambiguous/both-failed outcomes;
 - reasoning effort is emitted only from explicit upstream capability metadata;
 - Session/history/search/archive, config, Custom Endpoints, MOA, Skills/Plugins/MCP ownership remain on official Hermes surfaces;
+- the MOA bridge accepts the pinned API Server's missing Dashboard-only `/api/model/moa` route and falls back only to Hermes' own official `/api/config`/config-store boundary;
+- ordinary recent sessions and the dedicated MOA session list consume the same Hermes session rows, support both `sessions` and standard `data` list envelopes, and keep MOA rows out of the ordinary rail;
 - there is no second model registry, planner, tokenizer, worker daemon, queue or persistence database;
 - candidate installation is candidate-SHA stamped and transactionally rollback-safe; existing installs prefer `renameat2(RENAME_EXCHANGE)`, while the portable fallback retains the previous tree until post-swap validation commits;
 - the exact installed path must pass Plugin Doctor before official enable, and post-swap Doctor/enable failure restores the previous plugin/theme without transaction residue;
