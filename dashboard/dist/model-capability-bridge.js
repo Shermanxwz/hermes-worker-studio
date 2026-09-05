@@ -131,8 +131,17 @@
   async function sourceRoute(body) {
     const provider = String(body?.provider || '').trim();
     const model = String(body?.model || '').trim();
-    const config = await ensureHermesConfig();
-    const capability = capabilityRoute(config, provider, model);
+    let config = await ensureHermesConfig();
+    let capability = capabilityRoute(config, provider, model);
+    // A protocol/native-reasoning resolver can materialise a new immutable HWS
+    // managed alias immediately before this Run. If the cached config predates
+    // that alias, refresh the authoritative Hermes config once before
+    // validating capability truth. This is generic to HWS aliases and never
+    // guesses a vendor/model from its name.
+    if (provider.toLowerCase().startsWith('hws-protocol-') && capability.provider === provider) {
+      config = await ensureHermesConfig(true);
+      capability = capabilityRoute(config, provider, model);
+    }
     const capabilityProvider = capability.provider || provider;
     const capabilityModel = capability.model || model;
     let requested = API.reasoningValueFromModelOptions(body?.model_options) || 'auto';
