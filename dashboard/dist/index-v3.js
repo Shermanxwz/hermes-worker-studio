@@ -237,6 +237,7 @@
       session?.effort,
       session?.reasoning_effort,
       session?.route?.effort,
+      lockOptions.reasoning?.enabled === false ? 'none' : '',
       lockOptions.reasoning_effort,
       lockOptions.reasoning?.effort,
       projected?.effort,
@@ -254,8 +255,27 @@
     const selected = hinted || (preferred && matches.some((provider) => provider.slug === preferred.slug) ? preferred : null) || matches.find((provider) => provider.is_current) || matches[0];
     return normalizeRoute(options, { provider: selected.slug, model, effort: sessionEffortValue(session, projection) });
   }
-  function routeIdentity(route) { return `${String(route?.provider || '').trim()}\u0000${String(route?.model || '').trim()}`; }
+  function routeIdentity(route) { return `${String(route?.provider || '').trim()}\u0000${String(route?.model || '').trim()}\u0000${String(route?.effort || 'auto').trim() || 'auto'}`; }
+  function reasoningModelOptions(effort) {
+    const value = String(effort || 'auto').trim() || 'auto';
+    if (value === 'auto') return null;
+    if (value === 'none') return { reasoning: { enabled: false } };
+    return { reasoning: { enabled: true, effort: value } };
+  }
   function modelCapability(options, provider, model) { return providerBySlug(options, provider)?.capabilities?.[model] || {}; }
+  function reasoningDescriptor(options, provider, model) {
+    const cap = modelCapability(options, provider, model);
+    const rich = cap?.reasoning && typeof cap.reasoning === 'object' && !Array.isArray(cap.reasoning) ? cap.reasoning : {};
+    const configured = cap?.hws_reasoning_control && typeof cap.hws_reasoning_control === 'object' ? cap.hws_reasoning_control : {};
+    const canDisable = configured.canDisable === true || configured.can_disable === true || rich.can_disable === true || rich.canDisable === true || cap.can_disable_reasoning === true || cap.canDisableReasoning === true;
+    let control = String(configured.control || rich.control || cap.reasoning_control || '').trim().toLowerCase();
+    if (!control) {
+      const declaredEfforts = reasoningOptions(options, provider, model).filter((item) => !['auto', 'none'].includes(item.value));
+      control = canDisable ? (declaredEfforts.length ? 'toggle_effort' : 'toggle') : declaredEfforts.length ? 'effort' : cap.reasoning === false ? 'none' : cap.reasoning === true ? 'auto' : '';
+    }
+    const defaultEffort = String(configured.defaultEffort || configured.default_effort || rich.default_effort || rich.defaultEffort || cap.default_reasoning_effort || '').trim() || 'medium';
+    return { control, canDisable, defaultEffort };
+  }
   function modelApiMode(options, provider, model) {
     const cap = modelCapability(options, provider, model);
     return canonicalApiMode(cap?.api_mode || cap?.transport || cap?.protocol || cap?.apiMode || '');
@@ -871,9 +891,22 @@
     }
     const normalizedRoute = normalizeRoute(options, route);
     const cap = modelCapability(options, normalizedRoute.provider, normalizedRoute.model);
-    const officialMax = finiteNumber(cap?.context_window, cap?.context_length, cap?.contextWindow, cap?.max_context_tokens);
+    // Hermes' custom-endpoint model metadata may fall back to a name-based
+    // catalog value when /models omits context_length. That value is useful to
+    // Hermes internally, but it is not provider-confirmed evidence for Studio
+    // to present as the model's official context window.
+    const officialMax = finiteNumber(cap?.hws_context_window, cap?.context_window, cap?.context_length, cap?.contextWindow, cap?.max_context_tokens);
+    const customContextUnknown = cap?.hws_context_custom_endpoint === true && finiteNumber(cap?.hws_context_window) === null;
     telemetry = telemetry || {};
-    if (telemetry.maximum == null && officialMax !== null) telemetry.maximum = officialMax;
+    if (officialMax !== null) telemetry.maximum = officialMax;
+    if (customContextUnknown) {
+      telemetry.maximum = null;
+      telemetry.percent = null;
+      telemetry.threshold = null;
+      telemetry.thresholdPercent = null;
+      telemetry.remaining = null;
+      telemetry.contextWarning = 'New API 的 /models 未返回 context_length；请在“模型”页面填写该模型的官方 Context。';
+    }
     if (telemetry.percent == null && telemetry.used != null && telemetry.maximum) telemetry.percent = Math.max(0, Math.min(100, (telemetry.used / telemetry.maximum) * 100));
     return { ...telemetry, compacting, compactMessage, compactionMarker };
   }
@@ -1127,14 +1160,42 @@
     );
   }
 
-  function ReasoningControl({ efforts, value, onChange, disabled }) {
-    if (efforts.length <= 1) return h(Pill, null, '思考 Auto');
-    const index = Math.max(0, efforts.findIndex((item) => item.value === value));
-    const current = efforts[index] || efforts[0];
-    return h('label', { className: 'hws3-reasoning-control', title: current.description || '仅使用 Hermes 上游声明的推理强度' },
-      h('span', null, '思考'),
-      h('input', { type: 'range', min: 0, max: efforts.length - 1, step: 1, value: index, disabled, 'aria-label': '思考强度', onChange: (e) => onChange(efforts[Number(e.target.value)]?.value || 'auto') }),
-      h('b', null, current.value === 'auto' ? 'Auto' : current.value),
+  function ReasoningSwitch({ enabled, disabled, onChange }) {
+    return h('label', { className: 'hws3-reasoning-switch' },
+      h('span', { className: 'hws3-reasoning-switch-label' }, '思考'),
+      h('input', { className: 'hws3-switch-input', type: 'checkbox', checked: enabled, disabled, 'aria-label': '开启思考', onChange: (e) => onChange(e.target.checked) }),
+      h('span', { className: 'hws3-switch-track', 'aria-hidden': 'true' }, h('i', { className: 'hws3-switch-thumb' })),
+      h('b', { className: 'hws3-switch-state' }, enabled ? '开启' : '关闭'),
+    );
+  }
+
+  function ReasoningControl({ options, provider, model, efforts, value, onChange, disabled }) {
+    const descriptor = reasoningDescriptor(options, provider, model);
+    const toggle = descriptor.canDisable && ['toggle', 'toggle_effort'].includes(descriptor.control);
+    const toggleOnly = descriptor.control === 'toggle';
+    const enabled = value !== 'none';
+    const explicit = efforts.filter((item) => item.value !== 'none');
+    const scaleValues = explicit.length ? explicit : [{ value: 'auto', description: '由 Hermes 自动决定' }];
+    const currentIndex = Math.max(0, scaleValues.findIndex((item) => item.value === value));
+    const current = scaleValues[currentIndex] || scaleValues[0];
+    const enabledEffort = descriptor.defaultEffort !== 'none' && scaleValues.some((item) => item.value === descriptor.defaultEffort)
+      ? descriptor.defaultEffort
+      : scaleValues.find((item) => item.value !== 'auto')?.value || 'auto';
+    if (descriptor.control === 'none') return h(Pill, null, '思考 · 不支持');
+    if (descriptor.control === 'fixed') return h(Pill, null, '思考 · 始终开启');
+    if (!toggle && scaleValues.length <= 1) return h(Pill, null, '思考 Auto');
+    const switchControl = toggle ? h(ReasoningSwitch, { enabled, disabled, onChange: (next) => onChange(next ? enabledEffort : 'none') }) : null;
+    if (toggleOnly) return h('div', { className: 'hws3-reasoning-control hws3-reasoning-capability', 'data-hws-control': descriptor.control }, switchControl);
+    const title = current.description || '仅使用 Hermes 上游声明的推理强度';
+    return h('div', { className: 'hws3-reasoning-control hws3-reasoning-capability', 'data-hws-control': descriptor.control, title },
+      switchControl,
+      h('label', { className: 'hws3-reasoning-effort' },
+        h('span', { className: 'hws3-reasoning-effort-head' }, h('span', null, '强度'), h('b', null, current.value === 'auto' ? 'Auto' : current.value)),
+        h('span', { className: 'hws3-reasoning-slider-shell' },
+          h('input', { className: 'hws3-reasoning-slider', type: 'range', min: 0, max: scaleValues.length - 1, step: 1, value: currentIndex, disabled: disabled || !enabled, 'aria-label': '思考强度', onChange: (e) => onChange(scaleValues[Number(e.target.value)]?.value || 'auto') }),
+          h('span', { className: 'hws3-reasoning-slider-ticks', 'aria-hidden': 'true' }, scaleValues.map((item, tick) => h('i', { key: item.value, className: tick === currentIndex ? 'active' : '' }, h('em', null), h('small', null, item.value === 'auto' ? 'Auto' : item.value)))),
+        ),
+      ),
     );
   }
 
@@ -1146,7 +1207,7 @@
     return h('div', { className: 'hws3-route-compact' },
       h('select', { value: normalized.provider, disabled: disabled || !providers.length, title: 'Provider', onChange: (e) => { const provider = e.target.value; onChange({ provider, model: modelsFor(options, provider)[0] || '', effort: 'auto' }); } }, providers.map((p) => h('option', { key: p.slug, value: p.slug }, p.name || p.slug))),
       h('select', { value: normalized.model, disabled: disabled || !models.length, title: '模型', onChange: (e) => onChange({ ...normalized, model: e.target.value, effort: 'auto' }) }, models.map((m) => h('option', { key: m, value: m }, m))),
-      h(ReasoningControl, { efforts, value: normalized.effort, disabled, onChange: (effort) => onChange({ ...normalized, effort }) }),
+      h(ReasoningControl, { options, provider: normalized.provider, model: normalized.model, efforts, value: normalized.effort, disabled, onChange: (effort) => onChange({ ...normalized, effort }) }),
     );
   }
 
@@ -1188,12 +1249,12 @@
     const maximum = telemetry.maximum;
     const used = telemetry.used;
     const percent = telemetry.percent != null ? Math.round(telemetry.percent) : null;
-    const hasAny = used != null || maximum != null || telemetry.compacting || flash;
+    const hasAny = used != null || maximum != null || telemetry.compacting || flash || telemetry.contextWarning;
     if (!hasAny) return null;
     const compacting = telemetry.compacting;
     const summary = used != null && maximum != null
       ? `${fmtTokens(used)} / ${fmtTokens(maximum)} · ${percent ?? '—'}%`
-      : maximum != null ? `— / ${fmtTokens(maximum)}` : 'Context';
+      : used != null ? `${fmtTokens(used)} / —` : maximum != null ? `— / ${fmtTokens(maximum)}` : 'Context';
     const label = compacting ? `◔ ${summary} · Compact` : flash ? `✓ ${summary}` : summary;
     const stateClass = compacting ? 'compacting' : flash ? 'compacted' : '';
     return h('div', { className: 'hws3-context-wrap' },
@@ -1203,15 +1264,16 @@
       ),
       open ? h('section', { className: 'hws3-context-popover' },
         h('header', null, h('div', null, h('strong', null, '上下文'), h('small', null, 'Hermes 官方遥测')), h(Pill, { tone: used != null ? 'good' : 'neutral' }, used != null ? '实测' : '等待实测')),
-        h('div', { className: `hws3-context-hero ${stateClass}` },
+          h('div', { className: `hws3-context-hero ${stateClass}` },
           h('span', { className: 'hws3-context-hero-ring' }, h('i', { style: { '--hws-context-pct': `${percent ?? 0}%` } })),
-          h('div', null, h('b', null, used != null && maximum != null ? `${fmtTokens(used)} / ${fmtTokens(maximum)}` : maximum != null ? `— / ${fmtTokens(maximum)}` : '等待 Hermes'), h('span', null, compacting ? 'Auto Compact 进行中' : flash ? 'Compact 完成，正在恢复实时上下文' : percent != null ? `${percent}% 已使用` : '当前版本尚未暴露占用量')),
+          h('div', null, h('b', null, used != null && maximum != null ? `${fmtTokens(used)} / ${fmtTokens(maximum)}` : used != null ? `${fmtTokens(used)} / —` : maximum != null ? `— / ${fmtTokens(maximum)}` : '等待 Hermes'), h('span', null, compacting ? 'Auto Compact 进行中' : flash ? 'Compact 完成，正在恢复实时上下文' : percent != null ? `${percent}% 已使用` : telemetry.contextWarning ? '上限待确认' : '当前版本尚未暴露占用量')),
         ),
+        telemetry.contextWarning ? h('div', { className: 'hws3-context-warning' }, telemetry.contextWarning) : null,
         telemetry.threshold != null ? h('div', { className: 'hws3-context-row' }, h('span', null, '自动压缩阈值'), h('strong', null, `${fmtTokens(telemetry.threshold)}${telemetry.thresholdPercent != null ? ` · ${Math.round(telemetry.thresholdPercent)}%` : ''}`)) : null,
         telemetry.remaining != null ? h('div', { className: 'hws3-context-row' }, h('span', null, '距 Compact'), h('strong', null, fmtTokens(telemetry.remaining))) : null,
         telemetry.compressionCount != null ? h('div', { className: 'hws3-context-row' }, h('span', null, '已 Compact'), h('strong', null, `${Math.round(telemetry.compressionCount)} 次`)) : null,
         h('div', { className: 'hws3-context-row' }, h('span', null, '执行'), h('strong', null, telemetry.compressionEnabled === false ? 'Hermes Auto Compact 已关闭' : 'Hermes Auto Compact')),
-        h('footer', null, '只显示 Hermes 官方 Context 数据；不会把累计 billing/input token 当成当前上下文。'),
+        h('footer', null, telemetry.contextWarning || '只显示 Hermes 官方 Context 数据；不会把累计 billing/input token 当成当前上下文。'),
       ) : null,
     );
   }
@@ -1638,10 +1700,10 @@
           h('label', null, 'Provider ID（可选）', h('input', { value: form.id, onChange: (e) => setForm((x) => ({ ...x, id: e.target.value })), placeholder: '自动生成或自定义' })),
           h('label', { className: 'wide' }, 'Base URL', h('input', { value: form.base_url, onChange: (e) => updateBaseUrl(e.target.value), onBlur: () => setForm((x) => ({ ...x, base_url: normalizeEndpointUrl(x.base_url) })), placeholder: 'https://example.com/v1 · 粘贴 /responses 也会自动识别模式' })),
           h('label', null, 'Model', h('input', { value: form.model, list: 'hws3-models', onChange: (e) => setForm((x) => ({ ...x, model: e.target.value })), placeholder: '验证后自动发现' }), h('datalist', { id: 'hws3-models' }, discovered.map((m) => h('option', { key: m, value: m })))),
-          h('label', null, 'Context（可选）', h('input', { value: form.context_length, inputMode: 'numeric', onChange: (e) => setForm((x) => ({ ...x, context_length: e.target.value })), placeholder: 'Auto' })),
+          h('label', null, 'Context（官方窗口，可选）', h('input', { value: form.context_length, inputMode: 'numeric', onChange: (e) => setForm((x) => ({ ...x, context_length: e.target.value })), placeholder: '如 128000' })),
           h('label', { className: 'wide' }, 'API Key', h('input', { type: 'password', autoComplete: 'off', value: form.api_key, onChange: (e) => setForm((x) => ({ ...x, api_key: e.target.value })), placeholder: form.id ? '留空保留现有 Key' : '可选' })),
         ),
-        h('p', { className: 'hws3-field-hint' }, '协议只接受 Hermes 官方声明，或你点击“测试”后的真实 Run 结果；没有证据时显示“未探测”，不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。'),
+        h('p', { className: 'hws3-field-hint' }, '协议只接受 Hermes 官方声明或真实 Run 结果；首次使用会自动探测。若 New API 的 /models 没有返回 context_length，请填该模型官方上下文窗口；留空时 Studio 不把模型名目录回退值当作官方上限。凭据只保留在 Hermes 服务端。'),
         h('div', { className: 'hws3-inline-options' }, h('label', null, h('input', { type: 'checkbox', checked: form.discover_models, onChange: (e) => setForm((x) => ({ ...x, discover_models: e.target.checked })) }), ' 自动发现模型'), h('label', null, h('input', { type: 'checkbox', checked: form.make_default, onChange: (e) => setForm((x) => ({ ...x, make_default: e.target.checked })) }), ' 用于新对话')),
         h('div', { className: 'hws3-actions' }, h(Button, { className: 'ghost', disabled: busy === 'validate' || !form.base_url.trim(), onClick: validate }, busy === 'validate' ? '测试中…' : '测试'), h(Button, { className: 'primary', disabled: busy === 'save', onClick: save }, busy === 'save' ? '保存中…' : '保存'), form.id ? h(Button, { className: 'ghost', onClick: () => { setForm(EMPTY); setDiscovered([]); } }, '新建') : null),
       ),
@@ -2552,10 +2614,17 @@
     }, [cancelRunPoll, loadMessages, loadContext, refreshRecent]);
 
     const createSession = useCallback(async (text, route = null) => {
-      const title = route?.provider === 'moa' ? `◈ MOA · ${route.model || 'Mixture of Agents'} · ${titleFromPrompt(text)}` : titleFromPrompt(text);
-      const out = await plugin('/hermes/sessions', jinit('POST', { title, source: 'hermes_browser', provider: route?.provider, model: route?.model, preset: route?.provider === 'moa' ? route.model : undefined }));
+      // Omit title deliberately. Hermes owns automatic session naming and
+      // deduplication; sending the first prompt as a title makes a globally
+      // unique title collision a hard 400 before the Run can start.
+      const fallbackTitle = route?.provider === 'moa' ? `◈ MOA · ${route.model || 'Mixture of Agents'}` : '新对话';
+      const out = await plugin('/hermes/sessions', jinit('POST', { source: 'hermes_browser', provider: route?.provider, model: route?.model, preset: route?.provider === 'moa' ? route.model : undefined }));
       const id = getSessionId(out); if (!id) throw new Error('Hermes did not return a session id');
-      const session = out.session || { id, title, source: 'hermes_browser' }; if (route?.provider === 'moa') plugin(`/hermes/sessions/${encodeURIComponent(id)}/projection`, jinit('PUT', { turns: [], moa: { preset: route.model || 'default', provider: 'moa', source: 'studio' } })).catch(() => {}); setCurrent({ ...session, id, title, provider: route?.provider, model: route?.model }); setMessages([]); setContextSnapshot(null); await refreshRecent(); return { ...session, id, title, provider: route?.provider, model: route?.model };
+      const serverSession = out.session || {};
+      const session = { ...serverSession, id, title: serverSession.title || fallbackTitle, source: serverSession.source || 'hermes_browser', provider: route?.provider, model: route?.model, effort: route?.effort || 'auto' };
+      sessionRouteRestoreRef.current = { session, projection: null };
+      if (route?.provider === 'moa') plugin(`/hermes/sessions/${encodeURIComponent(id)}/projection`, jinit('PUT', { turns: [], moa: { preset: route.model || 'default', provider: 'moa', source: 'studio' } })).catch(() => {});
+      setCurrent(session); setMessages([]); setContextSnapshot(null); await refreshRecent(); return session;
     }, [refreshRecent]);
     const resolveExecutionRoute = useCallback(async (route) => {
       const normalized = normalizeRoute(modelOptions, route);
@@ -2574,7 +2643,7 @@
       }
       return { ...normalized, provider: resolved?.execution_provider || normalized.provider, source_provider: normalized.provider, protocol: resolved };
     }, [modelOptions]);
-    const lockRuntime = useCallback(async (session, route) => { const normalized = { provider: String(route?.provider || '').trim(), model: String(route?.model || '').trim(), effort: route?.effort || 'auto' }; if (!session?.id || !normalized.model || !normalized.provider) return normalized; await plugin(`/hermes/sessions/${encodeURIComponent(session.id)}/model`, jinit('POST', { provider: normalized.provider, model: normalized.model, require_model_lock: true })); return normalized; }, []);
+    const lockRuntime = useCallback(async (session, route) => { const normalized = { provider: String(route?.provider || '').trim(), model: String(route?.model || '').trim(), effort: route?.effort || 'auto' }; if (!session?.id || !normalized.model || !normalized.provider) return normalized; const modelOptions = reasoningModelOptions(normalized.effort); const payload = { provider: normalized.provider, model: normalized.model, require_model_lock: true }; if (modelOptions) payload.model_options = modelOptions; await plugin(`/hermes/sessions/${encodeURIComponent(session.id)}/model`, jinit('POST', payload)); return normalized; }, []);
     const changeChatRoute = useCallback((nextRoute) => {
       const normalized = normalizeRoute(modelOptions, nextRoute);
       const previous = normalizeRoute(modelOptions, chatRoute);
@@ -2646,7 +2715,8 @@
         const input = attachments.length ? [{ role: 'user', content: parts }] : text;
         setDraft(''); setAttachments([]);
         const body = { session_id: session.id, input, provider: lockedRoute.provider, model: lockedRoute.model };
-        if (lockedRoute.effort && lockedRoute.effort !== 'auto') body.model_options = { reasoning_effort: lockedRoute.effort };
+        const runModelOptions = reasoningModelOptions(lockedRoute.effort);
+        if (runModelOptions) body.model_options = runModelOptions;
         const started = await plugin('/hermes/runs-v3', jinit('POST', body)); pollRun(started.id, started);
       } catch (err) { setGlobalError(errorText(err)); }
     }, [draft, sending, commandBusy, run?.id, attachments, current, createSession, loadMessages, lockRuntime, resolveExecutionRoute, chatRoute, pollRun]);

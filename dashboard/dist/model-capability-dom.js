@@ -24,17 +24,32 @@
     root.dataset.hwsSignature = sig; root.textContent = '';
     const title = document.createElement('small'); title.textContent = `思考 · ${API.reasoningLabel(d)}`; root.appendChild(title);
     if (['none', 'fixed', 'auto'].includes(d.control)) return;
+    const enabledEffort = d.efforts[0]?.value || d.defaultEffort || 'medium';
     if (d.canDisable === true) {
-      const label = document.createElement('label'); label.className = 'hws3-check';
-      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = effort !== 'none';
-      input.addEventListener('change', () => { R.setMoaOverride(key, input.checked ? (d.efforts[0]?.value || d.defaultEffort) : 'none'); renderMoa(slotNode, preset, kind, index); });
-      label.append(input, document.createTextNode(input.checked ? ' 开启思考' : ' 关闭思考')); root.appendChild(label);
+      const label = document.createElement('label'); label.className = 'hws3-reasoning-switch';
+      const text = document.createElement('span'); text.className = 'hws3-reasoning-switch-label'; text.textContent = '思考';
+      const input = document.createElement('input'); input.className = 'hws3-switch-input'; input.type = 'checkbox'; input.checked = effort !== 'none'; input.setAttribute('aria-label', '开启思考');
+      const track = document.createElement('span'); track.className = 'hws3-switch-track'; track.setAttribute('aria-hidden', 'true');
+      const thumb = document.createElement('i'); thumb.className = 'hws3-switch-thumb'; track.appendChild(thumb);
+      const state = document.createElement('b'); state.className = 'hws3-switch-state'; state.textContent = input.checked ? '开启' : '关闭';
+      input.addEventListener('change', () => { R.setMoaOverride(key, input.checked ? enabledEffort : 'none'); renderMoa(slotNode, preset, kind, index); });
+      label.append(text, input, track, state); root.appendChild(label);
     }
+    if (d.control === 'toggle') return;
     if (d.efforts.length) {
-      const select = document.createElement('select'); select.setAttribute('aria-label', 'MOA 思考强度');
-      for (const value of ['auto', ...d.efforts.map((x) => x.value)]) { const o = document.createElement('option'); o.value = value; o.textContent = value === 'auto' ? 'Auto' : value; select.appendChild(o); }
-      select.value = effort !== 'none' && [...select.options].some((o) => o.value === effort) ? effort : 'auto'; select.disabled = effort === 'none';
-      select.addEventListener('change', () => R.setMoaOverride(key, select.value)); root.appendChild(select);
+      const values = ['auto', ...d.efforts.map((x) => x.value)];
+      const label = document.createElement('label'); label.className = 'hws3-reasoning-effort'; label.title = '只显示 Hermes 上游明确给出的 effort vocabulary';
+      const head = document.createElement('span'); head.className = 'hws3-reasoning-effort-head';
+      const name = document.createElement('span'); name.textContent = '强度';
+      const selected = effort !== 'none' && values.includes(effort) ? effort : 'auto';
+      const selectedText = document.createElement('b'); selectedText.textContent = selected === 'auto' ? 'Auto' : selected;
+      head.append(name, selectedText);
+      const shell = document.createElement('span'); shell.className = 'hws3-reasoning-slider-shell';
+      const slider = document.createElement('input'); slider.className = 'hws3-reasoning-slider'; slider.type = 'range'; slider.min = '0'; slider.max = String(values.length - 1); slider.step = '1'; slider.value = String(Math.max(0, values.indexOf(selected))); slider.disabled = effort === 'none'; slider.setAttribute('aria-label', 'MOA 思考强度');
+      const ticks = document.createElement('span'); ticks.className = 'hws3-reasoning-slider-ticks'; ticks.setAttribute('aria-hidden', 'true');
+      values.forEach((value, tickIndex) => { const tick = document.createElement('i'); if (tickIndex === Number(slider.value)) tick.className = 'active'; const dot = document.createElement('em'); const caption = document.createElement('small'); caption.textContent = value === 'auto' ? 'Auto' : value; tick.append(dot, caption); ticks.appendChild(tick); });
+      slider.addEventListener('change', () => R.setMoaOverride(key, values[Number(slider.value)] || 'auto'));
+      shell.append(slider, ticks); label.append(head, shell); root.appendChild(label);
     }
   }
   function enhanceMoa() {
@@ -54,7 +69,7 @@
   function enhanceVerifier() {
     for (const card of document.querySelectorAll('.hws3-two-col .hws3-card')) {
       if (String(card.querySelector('header small')?.textContent || '').trim() !== 'VERIFIER') continue;
-      for (const control of card.querySelectorAll('.hws3-reasoning-capability,.hws3-reasoning-toggle,.hws3-reasoning-effort')) {
+      for (const control of card.querySelectorAll('.hws3-reasoning-capability,.hws3-reasoning-toggle,.hws3-reasoning-switch,.hws3-reasoning-effort')) {
         control.classList.add('hws3-reasoning-readonly'); control.querySelectorAll('input,select,button').forEach((n) => { n.disabled = true; });
       }
       if (!card.querySelector('[data-hws-verifier-reasoning-note]')) { const note = document.createElement('small'); note.dataset.hwsVerifierReasoningNote = '1'; note.className = 'hws3-muted'; note.textContent = 'Verifier reasoning 仅展示模型能力；当前 Hermes auxiliary.review.* 未公开独立 reasoning 写入契约。'; card.appendChild(note); }

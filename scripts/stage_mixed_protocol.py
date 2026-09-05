@@ -436,8 +436,8 @@ def patch_frontend(source: str) -> str:
 
     source = _replace_once(
         source,
-        '协议只接受 Hermes 官方声明，或你点击“测试”后的真实 Run 结果；没有证据时显示“未探测”，不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。',
-        '协议只接受 Hermes 官方声明或真实 Run 结果；首次实际使用会自动探测并缓存，“测试”按钮用于诊断或主动重试。没有证据时不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。凭据只保留在 Hermes 服务端。',
+        '协议只接受 Hermes 官方声明或真实 Run 结果；首次使用会自动探测。若 New API 的 /models 没有返回 context_length，请填该模型官方上下文窗口；留空时 Studio 不把模型名目录回退值当作官方上限。凭据只保留在 Hermes 服务端。',
+        '协议只接受 Hermes 官方声明或真实 Run 结果；首次实际使用会自动探测并缓存，“测试”按钮用于诊断或主动重试。没有证据时不会把同一 provider 的所有模型误判成 Chat Completions 或 Responses。若 New API 的 /models 没有返回 context_length，请填该模型官方上下文窗口；留空时 Studio 不把模型名目录回退值当作官方上限。凭据只保留在 Hermes 服务端。',
         "Models-page lazy probe explanation",
     )
     return source
@@ -467,12 +467,10 @@ def patch_gateway(source: str) -> str:
     delete cap.supported_reasoning_efforts;
     delete cap.supportedReasoningEfforts;
     return cap;
-  }
-
-  function overlayFromHermesConfig'''
+  }'''
     return _sub_once(
         source,
-        r"  function applyNativeReasoningConstraint\(capability, modelEntry\) \{\n.*?\n  \}\n\n  function overlayFromHermesConfig",
+        r"  function applyNativeReasoningConstraint\(capability, modelEntry\) \{\n.*?\n  \}\n(?=\n  function positiveContextWindow)",
         binary_toggle,
         "staged native binary reasoning capability",
     )

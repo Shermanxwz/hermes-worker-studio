@@ -189,6 +189,36 @@
     return cap;
   }
 
+  function positiveContextWindow(value) {
+    if (value === null || value === undefined || typeof value === 'boolean') return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? Math.round(number) : null;
+  }
+
+  function modelContextMetadata(providerConfig, model) {
+    if (!isObject(providerConfig)) return { window: null, source: '', customEndpoint: false };
+    const models = isObject(providerConfig.models) ? providerConfig.models : {};
+    const modelEntry = isObject(models[model]) ? models[model] : {};
+    const exact = [
+      modelEntry.context_length,
+      modelEntry.context_window,
+      modelEntry.context_window_tokens,
+      modelEntry.max_context_tokens,
+    ].map(positiveContextWindow).find((value) => value !== null);
+    const provider = [
+      providerConfig.context_length,
+      providerConfig.context_window,
+      providerConfig.context_window_tokens,
+      providerConfig.max_context_tokens,
+    ].map(positiveContextWindow).find((value) => value !== null);
+    const customEndpoint = Boolean(providerConfig.api || providerConfig.base_url || providerConfig.url);
+    return {
+      window: exact ?? provider ?? null,
+      source: exact !== undefined && exact !== null ? 'hermes.provider_config.model' : provider !== undefined && provider !== null ? 'hermes.provider_config.provider' : '',
+      customEndpoint,
+    };
+  }
+
   function overlayFromHermesConfig(capability, providerConfig, model) {
     if (!isObject(providerConfig)) return capability;
     const models = isObject(providerConfig.models) ? providerConfig.models : {};
@@ -216,6 +246,22 @@
       for (const model of modelNames) {
         let cap = isObject(caps[model]) ? caps[model] : {};
         cap = overlayFromHermesConfig(cap, configured, model);
+        const publicContext = [
+          cap.context_length,
+          cap.context_window,
+          cap.context_window_tokens,
+          cap.max_context_tokens,
+        ].map(positiveContextWindow).find((value) => value !== null);
+        const configuredContext = modelContextMetadata(configured, model);
+        const contextWindow = publicContext ?? configuredContext.window;
+        if (contextWindow !== null && contextWindow !== undefined) {
+          cap.hws_context_window = contextWindow;
+          cap.hws_context_source = publicContext !== null && publicContext !== undefined ? 'hermes.model.options' : configuredContext.source;
+        } else {
+          delete cap.hws_context_window;
+          cap.hws_context_source = configuredContext.source || '';
+        }
+        cap.hws_context_custom_endpoint = configuredContext.customEndpoint;
         const d = descriptorFromCapability(cap);
         cap.hws_reasoning_control = d;
         const internal = d.efforts.map((x) => ({ ...x }));
@@ -273,16 +319,39 @@
     return d.supported === true ? 'Hermes 返回思考支持 · 档位未公开' : '上游未声明';
   }
 
+  function enabledEffort(d) { return d.efforts[0]?.value || d.defaultEffort || HERMES_DEFAULT_EFFORT; }
+
+  function ReasoningSwitch({ enabled, disabled, onChange }) {
+    return h('label', { className: 'hws3-reasoning-switch' },
+      h('span', { className: 'hws3-reasoning-switch-label' }, '思考'),
+      h('input', { className: 'hws3-switch-input', type: 'checkbox', checked: enabled, disabled, 'aria-label': '开启思考', onChange: (e) => onChange(e.target.checked) }),
+      h('span', { className: 'hws3-switch-track', 'aria-hidden': 'true' }, h('i', { className: 'hws3-switch-thumb' })),
+      h('b', { className: 'hws3-switch-state' }, enabled ? '开启' : '关闭'),
+    );
+  }
+
+  function EffortSlider({ descriptor: d, effort, enabled, disabled, onChange }) {
+    const values = [{ value: 'auto', description: '由 Hermes 自动决定' }, ...d.efforts];
+    const index = Math.max(0, Math.min(values.length - 1, values.findIndex((x) => x.value === effort)));
+    const current = values[index] || values[0];
+    return h('label', { className: 'hws3-reasoning-effort', title: '只显示 Hermes 上游明确给出的 effort vocabulary' },
+      h('span', { className: 'hws3-reasoning-effort-head' }, h('span', null, '强度'), h('b', null, current.value === 'auto' ? 'Auto' : current.value)),
+      h('span', { className: 'hws3-reasoning-slider-shell' },
+        h('input', { className: 'hws3-reasoning-slider', type: 'range', min: 0, max: values.length - 1, step: 1, value: index, disabled: disabled || !enabled, 'aria-label': '思考强度', onChange: (e) => onChange(values[Number(e.target.value)]?.value || 'auto') }),
+        h('span', { className: 'hws3-reasoning-slider-ticks', 'aria-hidden': 'true' }, values.map((item, tick) => h('i', { key: item.value, className: tick === index ? 'active' : '' }, h('em', null), h('small', null, item.value === 'auto' ? 'Auto' : item.value)))),
+      ),
+    );
+  }
+
   function ReasoningControl({ descriptor: d, effort, disabled, onChange }) {
     if (d.control === 'none') return h('span', { className: 'hws3-pill', title: 'Hermes 官方 model inventory 声明不支持 reasoning' }, '思考 · 不支持');
     if (d.control === 'auto') return h('span', { className: 'hws3-pill', title: d.supported === true ? 'Hermes 当前能力目录返回思考支持；上游没有公开可编辑的强度 vocabulary，Studio 不猜测档位' : 'Hermes 未声明可编辑 reasoning 控件；Studio 不猜测' }, d.supported === true ? '思考 · Hermes 返回支持（档位未公开）' : '思考 · 上游未声明');
     if (d.control === 'fixed') return h('span', { className: 'hws3-pill', title: 'Hermes/provider 声明 reasoning 不可关闭' }, '思考 · 始终开启');
     const enabled = effort !== 'none';
-    const toggle = d.canDisable === true ? h('label', { className: 'hws3-reasoning-toggle' }, h('span', null, '思考'), h('input', { type: 'checkbox', checked: enabled, disabled, 'aria-label': '开启思考', onChange: (e) => onChange(e.target.checked ? (d.efforts[0]?.value || d.defaultEffort) : 'none') }), h('b', null, enabled ? '开启' : '关闭')) : null;
-    if (d.control === 'toggle') return toggle;
-    const values = [{ value: 'auto' }, ...d.efforts];
-    const current = enabled && values.some((x) => x.value === effort) ? effort : 'auto';
-    const scale = h('label', { className: 'hws3-reasoning-effort', title: '只显示 Hermes 上游明确给出的 effort vocabulary' }, h('span', null, '强度'), h('select', { value: current, disabled: disabled || !enabled, 'aria-label': '思考强度', onChange: (e) => onChange(e.target.value) }, values.map((x) => h('option', { key: x.value, value: x.value }, x.value === 'auto' ? 'Auto' : x.value))));
+    const toggle = d.canDisable === true ? h(ReasoningSwitch, { enabled, disabled, onChange: (next) => onChange(next ? enabledEffort(d) : 'none') }) : null;
+    if (d.control === 'toggle') return h('div', { className: 'hws3-reasoning-capability', 'data-hws-control': d.control }, toggle);
+    const current = enabled && d.efforts.some((x) => x.value === effort) ? effort : 'auto';
+    const scale = h(EffortSlider, { descriptor: d, effort: current, enabled, disabled, onChange });
     return h('div', { className: 'hws3-reasoning-capability', 'data-hws-control': d.control }, toggle, scale);
   }
 
@@ -314,12 +383,12 @@
   if (!document.querySelector('style[data-hws-model-capabilities]')) {
     const style = document.createElement('style');
     style.dataset.hwsModelCapabilities = '1';
-    style.textContent = '.hws3-reasoning-capability{display:inline-flex;align-items:center;gap:.45rem}.hws3-reasoning-toggle,.hws3-reasoning-effort{display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap}.hws3-reasoning-readonly{opacity:.68}.hws3-moa-reasoning-capability{display:flex;align-items:center;gap:.55rem;flex-wrap:wrap;margin-top:.55rem}.hws3-moa-reasoning-capability>small{width:100%}';
+    style.textContent = '.hws3-reasoning-capability{display:inline-flex;align-items:center;gap:.65rem;flex-wrap:wrap}.hws3-reasoning-switch{display:inline-flex;align-items:center;gap:.42rem;min-height:32px;padding:4px 8px;border:1px solid rgba(93,167,153,.28);border-radius:999px;background:rgba(18,48,43,.72);color:var(--hws-text,#e8d5ac);cursor:pointer;user-select:none}.hws3-reasoning-switch-label{font-size:10px}.hws3-switch-input{position:absolute!important;width:1px!important;height:1px!important;overflow:hidden!important;clip:rect(0 0 0 0)!important;white-space:nowrap!important;clip-path:inset(50%)!important}.hws3-switch-track{position:relative;width:34px;height:19px;flex:0 0 auto;border-radius:999px;background:rgba(158,181,174,.24);box-shadow:inset 0 0 0 1px rgba(158,181,174,.24);transition:background .24s cubic-bezier(.22,1,.36,1),box-shadow .24s cubic-bezier(.22,1,.36,1)}.hws3-switch-thumb{position:absolute;top:3px;left:3px;width:13px;height:13px;border-radius:50%;background:#d7e7df;box-shadow:0 2px 6px rgba(0,0,0,.28);transition:transform .28s cubic-bezier(.22,1.2,.36,1),background .2s ease}.hws3-switch-input:checked+.hws3-switch-track{background:var(--hws-teal,#3aa897);box-shadow:inset 0 0 0 1px rgba(232,213,172,.2),0 0 0 3px rgba(58,168,151,.08)}.hws3-switch-input:checked+.hws3-switch-track .hws3-switch-thumb{transform:translateX(15px);background:#fff4d4}.hws3-switch-input:focus-visible+.hws3-switch-track{outline:2px solid var(--hws-accent,#e8d5ac);outline-offset:3px}.hws3-switch-input:active+.hws3-switch-track .hws3-switch-thumb{transform:translateX(15px) scale(.88)}.hws3-switch-input:not(:checked):active+.hws3-switch-track .hws3-switch-thumb{transform:scale(.88)}.hws3-switch-input:disabled+.hws3-switch-track,.hws3-reasoning-switch:has(.hws3-switch-input:disabled){opacity:.55;cursor:not-allowed}.hws3-switch-state{min-width:26px;color:var(--hws-muted,#9eb5ae);font-size:9px;font-weight:650}.hws3-reasoning-effort{display:inline-flex;align-items:center;gap:.55rem;min-width:190px;padding:5px 9px;border:1px solid rgba(93,167,153,.22);border-radius:11px;background:rgba(7,21,19,.36);white-space:nowrap}.hws3-reasoning-effort-head{display:grid;gap:1px;min-width:37px;color:var(--hws-muted,#9eb5ae);font-size:9px}.hws3-reasoning-effort-head b{color:var(--hws-accent,#e8d5ac);font-size:10px}.hws3-reasoning-slider-shell{position:relative;display:grid;gap:3px;min-width:125px;flex:1}.hws3-reasoning-slider{width:100%;height:18px;margin:0;appearance:none;background:transparent;accent-color:var(--hws-teal,#3aa897);cursor:pointer}.hws3-reasoning-slider::-webkit-slider-runnable-track{height:5px;border-radius:999px;background:linear-gradient(90deg,rgba(58,168,151,.9),rgba(232,213,172,.82))}.hws3-reasoning-slider::-webkit-slider-thumb{width:17px;height:17px;margin-top:-6px;appearance:none;border:2px solid #f4e8c7;border-radius:50%;background:var(--hws-teal,#3aa897);box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .22s cubic-bezier(.22,1.2,.36,1),box-shadow .2s ease}.hws3-reasoning-slider:active::-webkit-slider-thumb{transform:scale(1.14);box-shadow:0 0 0 5px rgba(58,168,151,.12),0 3px 10px rgba(0,0,0,.36)}.hws3-reasoning-slider::-moz-range-track{height:5px;border-radius:999px;background:linear-gradient(90deg,rgba(58,168,151,.9),rgba(232,213,172,.82))}.hws3-reasoning-slider::-moz-range-thumb{width:13px;height:13px;border:2px solid #f4e8c7;border-radius:50%;background:var(--hws-teal,#3aa897);box-shadow:0 2px 8px rgba(0,0,0,.35);transition:transform .22s cubic-bezier(.22,1.2,.36,1)}.hws3-reasoning-slider:disabled{opacity:.35;cursor:not-allowed}.hws3-reasoning-slider-ticks{display:flex;justify-content:space-between;gap:3px;padding:0 2px}.hws3-reasoning-slider-ticks i{display:grid;justify-items:center;gap:2px;min-width:0;color:var(--hws-muted,#9eb5ae);font-style:normal;font-size:8px}.hws3-reasoning-slider-ticks i em{width:4px;height:4px;border-radius:50%;background:rgba(158,181,174,.34)}.hws3-reasoning-slider-ticks i.active{color:var(--hws-accent,#e8d5ac)}.hws3-reasoning-slider-ticks i.active em{background:var(--hws-accent,#e8d5ac);box-shadow:0 0 0 3px rgba(232,213,172,.1)}.hws3-reasoning-readonly{opacity:.68}.hws3-moa-reasoning-capability{display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;margin-top:.55rem}.hws3-moa-reasoning-capability>small{width:100%}';
     document.head.appendChild(style);
   }
 
   window.__HERMES_WORKER_STUDIO_MODEL_CAPABILITIES__ = {
     version: 2, descriptor: descriptorFromCapability, enrichModelOptions, reasoningValueFromModelOptions, reasoningLabel: label, validateReasoning, hermesDefaultEffort: HERMES_DEFAULT_EFFORT, source: 'Hermes public model/options + official provider config + Gateway config.set',
-    _internal: { clone, providerRows, providerBySlug, modelsFor, descriptor, modelCapability, allowedReasoningValues, SmartCompactRouteSelector, configObject, configProvider, explicitReasoningMetadata, applyNativeReasoningConstraint, overlayFromHermesConfig },
+    _internal: { clone, providerRows, providerBySlug, modelsFor, descriptor, modelCapability, allowedReasoningValues, SmartCompactRouteSelector, configObject, configProvider, explicitReasoningMetadata, applyNativeReasoningConstraint, overlayFromHermesConfig, positiveContextWindow, modelContextMetadata },
   };
 })();

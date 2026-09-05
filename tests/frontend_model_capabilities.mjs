@@ -50,6 +50,7 @@ const hermesConfig = {
     },
     newapi: {
       base_url: 'https://newapi.invalid/v1',
+      context_length: 131072,
       hws_reasoning_defaults: {
         supports_reasoning: true,
         reasoning_efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -57,6 +58,7 @@ const hermesConfig = {
       },
       models: {
         'special-proxy': {
+          context_length: 262144,
           hws_reasoning: {
             supports_reasoning: true,
             can_disable_reasoning: false,
@@ -156,6 +158,12 @@ assert.equal(newapiCaps['gpt-proxy'].hws_reasoning_control.control, 'toggle_effo
 assert.equal(newapiCaps['gpt-proxy'].hws_reasoning_control.source, 'hermes.provider_config.defaults');
 assert.deepEqual(plain(newapiCaps['gpt-proxy'].hws_reasoning_control.efforts.map((x) => x.value)), ['low', 'medium', 'high', 'xhigh', 'max']);
 assert.deepEqual(plain(newapiCaps['gpt-proxy'].reasoning_efforts.map((x) => x.value)), ['none', 'low', 'medium', 'high', 'xhigh', 'max']);
+assert.equal(newapiCaps['gpt-proxy'].hws_context_window, 131072);
+assert.equal(newapiCaps['gpt-proxy'].hws_context_source, 'hermes.provider_config.provider');
+assert.equal(newapiCaps['special-proxy'].hws_context_window, 262144);
+assert.equal(newapiCaps['special-proxy'].hws_context_source, 'hermes.provider_config.model');
+assert.deepEqual(plain(api._internal.modelContextMetadata({ base_url: 'https://newapi.invalid/v1', models: { model: {} } }, 'model')), { window: null, source: '', customEndpoint: true });
+assert.deepEqual(plain(api._internal.modelContextMetadata({ base_url: 'https://newapi.invalid/v1', models: { model: { context_length: 1048576 } } }, 'model')), { window: 1048576, source: 'hermes.provider_config.model', customEndpoint: true });
 assert.equal(newapiCaps['special-proxy'].hws_reasoning_control.control, 'effort');
 assert.equal(newapiCaps['special-proxy'].hws_reasoning_control.canDisable, false);
 assert.equal(newapiCaps['special-proxy'].hws_reasoning_control.source, 'hermes.provider_config.model');

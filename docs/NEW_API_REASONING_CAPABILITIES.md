@@ -13,6 +13,40 @@ The transport and the capability-discovery plane are separate:
 
 The closure implemented here fixes the missing metadata **without** adding a built-in GPT/Claude/Gemini model table and without changing the execution engine.
 
+## Context-window metadata
+
+Context occupancy and the model's maximum context window are different Hermes
+surfaces. The session context endpoint may report current usage, but an
+OpenAI-compatible `GET /v1/models` response is allowed to omit
+`context_length`. When that happens, Hermes may still use its own internal
+model-catalog fallback for compression; that fallback is not provider
+confirmation and Studio must not present it as the model's official window.
+
+For a custom endpoint, the operator can provide the confirmed window through
+the Models page's optional **Context（官方窗口）** field. The value is stored
+through Hermes' official provider configuration and is read as an exact
+model-level `context_length` when present, then as a provider-level value. The
+normalized capability records its source, and the chat header shows `—` plus
+an explicit “上限待确认” warning until either Hermes returns an official
+window or the operator supplies one. Studio never derives a window from a
+model name or from cumulative billing/input tokens.
+
+Example exact declaration:
+
+```yaml
+providers:
+  newapi:
+    base_url: https://api.example.com/v1
+    models:
+      gpt-5.6-luna:
+        context_length: 1048576  # replace with the provider's confirmed value
+```
+
+The number in this example is illustrative only. It must be replaced with the
+value documented by the actual provider or returned by an authoritative
+Hermes model/context surface; an endpoint response that omits the field does
+not justify guessing it.
+
 ## Authoritative sources and precedence
 
 Worker Studio resolves reasoning capability for the exact Hermes Provider + Model route in this order:

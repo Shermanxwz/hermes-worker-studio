@@ -69,7 +69,7 @@ const modelOptions = {
     {
       slug: 'official', name: 'Official', authenticated: true, is_current: true,
       models: ['main-model', 'worker-model'],
-      capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], context_window: 128000 }, 'worker-model': { reasoning: true } },
+      capabilities: { 'main-model': { reasoning_efforts: ['balanced', 'deep'], can_disable_reasoning: true, context_window: 128000 }, 'worker-model': { reasoning: true } },
     },
     { slug: 'moa', name: 'Mixture of Agents', authenticated: true, models: ['default'] },
   ],
@@ -287,16 +287,24 @@ assert.ok(window.document.querySelector('.hws3-mobile-scrim'));
 await click(window.document.querySelector('.hws3-mobile-scrim'));
 await waitFor(() => !window.document.querySelector('.hws3-mobile-scrim'), 'mobile drawer close');
 
-// New conversation remains client-only until first send.
+// New conversation remains client-only until first send. Hermes, not the
+// browser, owns the title so the first prompt can never collide with a
+// globally unique title from another session.
 await click(byText('.hws3-sidebar button', '新对话'));
 const createCallsBefore = calls.filter((x) => x.url.endsWith('/hermes/sessions')).length;
 assert.equal(createCallsBefore, 0);
 const composer = window.document.querySelector('.hws3-composer textarea');
+const reasoningSwitch = window.document.querySelector('.hws3-route-compact .hws3-reasoning-switch input');
+const reasoningSlider = window.document.querySelector('.hws3-route-compact .hws3-reasoning-slider');
+assert.ok(reasoningSwitch, 'a model that explicitly allows disabling reasoning must expose a switch');
+assert.ok(reasoningSlider, 'a model with declared efforts must expose a slider');
+setValue(reasoningSlider, '2');
 setValue(composer, 'Build a seal test');
 await act(async () => { window.document.querySelector('.hws3-composer').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })); });
 await waitFor(() => latestRunBody?.session_id === 'session-new', 'first Run submission');
-assert.equal(createdTitle, 'Build a seal test');
+assert.equal(createdTitle, undefined, 'session creation must omit a client-generated title');
 assert.equal(latestRunBody.input, 'Build a seal test');
+assert.deepEqual(latestRunBody.model_options, { reasoning: { enabled: true, effort: 'deep' } }, 'selected reasoning effort must reach the official Run as nested model_options');
 await waitFor(() => byText('.hws3-plan-card', '官方计划'), 'official plan render');
 assert.match(window.document.querySelector('.hws3-plan-summary').textContent, /已完成 1 \/ 2/);
 assert.equal(window.document.querySelector('.hws3-plan-list'), null, 'official plan starts collapsed');
