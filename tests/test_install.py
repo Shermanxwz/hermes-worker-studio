@@ -71,6 +71,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("Hermes official TUI Gateway JSON-RPC", result.stdout)
         self.assertIn("arbitrary attachments", result.stdout)
         self.assertIn("WebSocket reconnects resume durable Hermes Sessions", result.stdout)
+        self.assertIn("separate immutable adaptive/disabled Chat aliases", result.stdout)
         dest = self._dest()
         expected = {
             "plugin.yaml",
@@ -119,6 +120,10 @@ class InstallScriptTests(unittest.TestCase):
             "'mcp.setup.respond'",
             "transport.reconnecting",
             "transport.reconnected",
+            "native.minimax_openai.binary",
+            "control: 'toggle'",
+            "cap.can_disable_reasoning = true",
+            "provider.toLowerCase().startsWith('hws-protocol-')",
         ):
             self.assertIn(token, gateway_js)
         closure_css = (dest / "dashboard" / "dist" / "product-closure.css").read_text(encoding="utf-8")
@@ -144,6 +149,8 @@ class InstallScriptTests(unittest.TestCase):
             "kind: item.kind || 'file'",
             "resolveProtocolExecutionRoute",
             "'/hermes/protocols/resolve'",
+            "reasoning_effort: normalized.effort || 'auto'",
+            "native_reasoning: resolved?.native_reasoning || null",
             "sourceFacingProtocolRoute",
             "role: 'alert'",
             "event.key === 'Escape'",
@@ -160,6 +167,10 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn('@router.post("/hermes/protocols/resolve")', installed_bridge)
         self.assertIn("_AUTO_PROTOCOL_PROBE_LOCKS", installed_bridge)
         self.assertIn("first-use or explicit real Hermes /v1/runs", installed_bridge)
+        self.assertIn("_ensure_minimax_binary_alias", installed_bridge)
+        self.assertIn('f"{adaptive_alias}-reasoning-off"', installed_bridge)
+        self.assertIn('"reasoning_state": "disabled"', installed_bridge)
+        self.assertIn("_run_reasoning_effort(body)", installed_bridge)
         self.assertTrue(re.search(r"Candidate:\s+[0-9a-f]{40}", result.stdout))
         self.assertTrue((self.hermes_home / "dashboard-themes" / "hermes-worker-studio.yaml").is_file())
         log = self.log.read_text(encoding="utf-8")
@@ -203,8 +214,12 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("PROJECT_MARK_PATH", installed_js)
         self.assertIn("type: 'file_url'", installed_js)
         self.assertIn("resolveProtocolExecutionRoute", installed_js)
+        self.assertIn("reasoning_effort: normalized.effort || 'auto'", installed_js)
+        installed_gateway = (self._dest() / "dashboard" / "dist" / "gateway-native.js").read_text(encoding="utf-8")
+        self.assertIn("native.minimax_openai.binary", installed_gateway)
         installed_bridge = (self._dest() / "dashboard" / "plugin_api_v3.py").read_text(encoding="utf-8")
         self.assertNotIn('BUILD_CANDIDATE_SHA = "source-tree"', installed_bridge)
+        self.assertIn("_ensure_minimax_binary_alias", installed_bridge)
         self.assertIn("hermes command not found", result.stderr)
         self.assertIn("Enable manually", result.stdout)
 

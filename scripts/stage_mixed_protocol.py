@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
-"""Fail-closed release transform for mixed Chat/Responses custom endpoints.
+"""Fail-closed release transform for mixed protocols and native binary reasoning.
 
-Hermes 0.20.6 owns model inventory and execution, but a generic named custom
-provider still has one provider-wide transport. Worker Studio therefore keeps
-the source Provider/Model visible and materialises a narrow Hermes provider
-alias only after a real per-model probe. This transform closes the final UX gap:
-the first real use resolves the protocol automatically instead of asking the
-operator to visit Models and click a probe button.
+Hermes owns model inventory and execution, but a generic named custom provider
+still has one provider-wide transport. Worker Studio therefore keeps the source
+Provider/Model visible and materialises narrow Hermes provider aliases only
+when the pinned core cannot express a per-model/per-request wire detail.
 
-The transform is intentionally applied only to the staged install candidate.
-Every rewrite is exact-count checked so source drift fails installation rather
-than silently producing a half-patched product. No model-name heuristic is used.
+Two release gaps are closed here without model-name guessing:
+
+* first real use resolves Chat Completions vs Responses automatically;
+* an explicitly declared ``hws_native_reasoning: minimax_openai`` model gets
+  two immutable Chat aliases (adaptive / disabled), selected per Run from the
+  canonical reasoning value. The shared adaptive alias is never mutated.
+
+The transform is applied only to the staged install candidate. Every rewrite is
+exact-count checked so source drift fails installation instead of silently
+shipping a half-patched product.
 """
 from __future__ import annotations
 
@@ -77,20 +82,148 @@ def _recent_failed_protocol_state(provider: str, model: str) -> dict[str, Any] |
     return state if 0 <= age < _AUTO_PROTOCOL_RETRY_SECONDS else None
 
 
-def _resolve_route_for_run(provider: str, model: str) -> dict[str, Any]:
+def _run_reasoning_effort(body: dict[str, Any] | None) -> str:
+    if not isinstance(body, dict):
+        return "auto"
+    options = body.get("model_options")
+    if not isinstance(options, dict):
+        return "auto"
+    reasoning = options.get("reasoning")
+    rich = reasoning if isinstance(reasoning, dict) else {}
+    if rich.get("enabled") is False:
+        return "none"
+    raw = rich.get("effort")
+    if raw in (None, ""):
+        raw = options.get("reasoning_effort", options.get("reasoningEffort"))
+    value = str(raw or "").strip().lower()
+    if value:
+        return value
+    return "medium" if rich.get("enabled") is True else "auto"
+
+
+def _native_reasoning_source(
+    config: dict[str, Any], provider: str, model: str,
+) -> tuple[str, str, dict[str, Any] | None, dict[str, Any] | None]:
+    stored_key, entry = _provider_entry(config, provider)
+    bridge = entry.get("hws_protocol_bridge") if isinstance(entry, dict) else None
+    source_provider = str(stored_key or provider).strip()
+    source_model = str(model or "").strip()
+    if isinstance(bridge, dict) and bridge.get("source_provider"):
+        source_provider = str(bridge.get("source_provider") or source_provider).strip()
+        source_model = str(bridge.get("source_model") or source_model).strip()
+        _source_key, source_entry = _provider_entry(config, source_provider)
+        entry = source_entry
+    return source_provider, source_model, entry, bridge if isinstance(bridge, dict) else None
+
+
+def _persist_native_reasoning_provider_map(providers: dict[str, dict[str, Any]]) -> None:
+    try:
+        _legacy._hermes_proxy("/api/config", method="PUT", body={"config": {"providers": providers}})
+    except HTTPException as exc:
+        if int(exc.status_code or 0) not in _CONFIG_ROUTE_UNAVAILABLE:
+            raise
+        _write_hermes_config_store_providers(providers)
+
+
+def _ensure_minimax_binary_alias(provider: str, model: str, state: str) -> str:
+    """Return an immutable adaptive/disabled alias for one explicit M3 wire.
+
+    The adaptive alias remains the normal protocol alias produced by
+    ``_ensure_protocol_aliases``. The disabled alias is a distinct provider
+    entry copied from it and never mutates the adaptive entry, so concurrent
+    on/off Runs cannot race through shared provider state.
+    """
+    with _OFFICIAL_CONFIG_LOCK:
+        config = _read_official_config()
+        source_provider, source_model, source, _bridge = _native_reasoning_source(
+            config, provider, model
+        )
+        marker = _entry_model_metadata(source, source_model).get("hws_native_reasoning")
+        if marker != "minimax_openai":
+            raise HTTPException(409, "native binary reasoning alias requested without an explicit minimax_openai declaration")
+        config, aliases = _ensure_protocol_aliases(
+            config, source_provider, source_model, ("chat_completions",)
+        )
+        adaptive_alias = str(aliases.get("chat_completions") or "").strip()
+        if not adaptive_alias:
+            raise HTTPException(502, "Hermes did not materialise the native adaptive Chat alias")
+        if state == "adaptive":
+            return adaptive_alias
+
+        providers = _provider_entries(config)
+        adaptive = providers.get(adaptive_alias)
+        if not isinstance(adaptive, dict):
+            raise HTTPException(502, "Hermes native adaptive alias is missing after reconciliation")
+        disabled_alias = f"{adaptive_alias}-reasoning-off"
+        expected = copy.deepcopy(adaptive)
+        expected["name"] = f"{str(adaptive.get('name') or adaptive_alias)} · Thinking Off"
+        extra_body = copy.deepcopy(expected.get("extra_body")) if isinstance(expected.get("extra_body"), dict) else {}
+        extra_body["reasoning_split"] = True
+        extra_body["thinking"] = {"type": "disabled"}
+        expected["extra_body"] = extra_body
+        marker_payload = copy.deepcopy(expected.get("hws_protocol_bridge")) if isinstance(expected.get("hws_protocol_bridge"), dict) else {}
+        marker_payload.update({
+            "source_provider": source_provider,
+            "source_model": source_model,
+            "mode": "chat_completions",
+            "managed_by": "hermes-worker-studio",
+            "native_reasoning": "minimax_openai",
+            "reasoning_state": "disabled",
+        })
+        expected["hws_protocol_bridge"] = marker_payload
+        if providers.get(disabled_alias) != expected:
+            providers[disabled_alias] = expected
+            config["providers"] = providers
+            _persist_native_reasoning_provider_map(providers)
+        return disabled_alias
+
+
+def _apply_native_reasoning_route(
+    route: dict[str, Any], provider: str, model: str, reasoning_effort: str = "auto",
+) -> dict[str, Any]:
+    config = _read_official_config()
+    source_provider, source_model, source, bridge = _native_reasoning_source(config, provider, model)
+    marker = _entry_model_metadata(source, source_model).get("hws_native_reasoning")
+    if marker != "minimax_openai":
+        return route
+    if str(route.get("mode") or "") != "chat_completions":
+        raise HTTPException(409, "minimax_openai native reasoning requires the Chat Completions execution route")
+
+    requested = str(reasoning_effort or "auto").strip().lower() or "auto"
+    if requested == "none":
+        state = "disabled"
+    elif requested in {"auto", "medium"}:
+        # ``medium`` is Hermes' canonical enabled token for a binary toggle; it
+        # is not presented as a MiniMax strength level.
+        state = "adaptive"
+    else:
+        raise HTTPException(422, f"minimax_openai is a binary thinking control; unsupported reasoning value: {requested}")
+
+    execution_provider = _ensure_minimax_binary_alias(source_provider, source_model, state)
+    resolved = dict(route)
+    resolved["execution_provider"] = execution_provider
+    resolved["native_reasoning"] = state
+    resolved["native_reasoning_source"] = "hws_native_reasoning:minimax_openai"
+    resolved["source_provider"] = source_provider
+    resolved["source_model"] = source_model
+    if isinstance(bridge, dict) and bridge.get("reasoning_state"):
+        resolved["requested_from_reasoning_alias"] = str(bridge.get("reasoning_state"))
+    return resolved
+
+
+def _resolve_route_for_run(provider: str, model: str, reasoning_effort: str = "auto") -> dict[str, Any]:
     """Resolve a real execution route, probing once on first unresolved use.
 
-    The probe executes the same official Hermes /v1/runs transport used by the
-    explicit Models-page diagnostic. Results are cached in the existing
-    per-model protocol state. Concurrent first-use callers share one probe;
-    ambiguous or failed probes remain fail-closed and never fall back to a
-    model-name or GPT heuristic.
+    Protocol resolution stays capability-driven. Once a protocol is real, an
+    explicit native binary-reasoning marker may select a second immutable alias
+    for this Run. Ambiguous/failed protocol probes remain fail-closed and never
+    fall back to a model-name or GPT heuristic.
     """
     config = _read_official_config()
     options = _read_official_model_options()
     route = _protocol_route_snapshot(config, options, provider, model, ensure_alias=True)
     if not route.get("requires_probe"):
-        return route
+        return _apply_native_reasoning_route(route, provider, model, reasoning_effort)
     if str(route.get("status") or "") == "ambiguous":
         raise HTTPException(
             409,
@@ -105,14 +238,11 @@ def _resolve_route_for_run(provider: str, model: str) -> dict[str, Any]:
         )
 
     with _auto_protocol_probe_lock(provider, model):
-        # Another concurrent request may have completed the probe while this
-        # caller was waiting. Re-read authoritative Hermes config/inventory and
-        # the shared protocol state before spending another pair of Runs.
         config = _read_official_config()
         options = _read_official_model_options()
         route = _protocol_route_snapshot(config, options, provider, model, ensure_alias=True)
         if not route.get("requires_probe"):
-            return route
+            return _apply_native_reasoning_route(route, provider, model, reasoning_effort)
         if str(route.get("status") or "") == "ambiguous":
             raise HTTPException(
                 409,
@@ -130,7 +260,7 @@ def _resolve_route_for_run(provider: str, model: str) -> dict[str, Any]:
     resolved = result.get("route") if isinstance(result, dict) else None
     status = str(result.get("status") or (resolved or {}).get("status") or "") if isinstance(result, dict) else ""
     if status == "resolved" and isinstance(resolved, dict) and resolved.get("execution_provider"):
-        return resolved
+        return _apply_native_reasoning_route(resolved, provider, model, reasoning_effort)
     if status == "ambiguous":
         raise HTTPException(
             409,
@@ -148,20 +278,28 @@ def _resolve_route_for_run(provider: str, model: str) -> dict[str, Any]:
         source,
         r"def _resolve_route_for_run\(provider: str, model: str\) -> dict\[str, Any\]:\n.*?\n\n\ndef _reverse_moa_provider",
         resolver + "\n\ndef _reverse_moa_provider",
-        "backend lazy protocol resolver",
+        "backend lazy protocol/native-reasoning resolver",
+    )
+
+    source = _replace_once(
+        source,
+        "        source_route = _resolve_route_for_run(requested_provider, requested_model)\n",
+        "        source_route = _resolve_route_for_run(requested_provider, requested_model, _run_reasoning_effort(body))\n",
+        "backend Run reasoning-aware route selection",
     )
 
     resolve_route = '''@router.post("/hermes/protocols/resolve")
 async def resolve_protocol_route(request: Request) -> dict[str, Any]:
-    """Resolve one execution route, lazily probing an unresolved custom model."""
+    """Resolve one execution route, including explicit binary native reasoning."""
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(400, "protocol resolve body must be an object")
     provider = str(body.get("provider") or "").strip()
     model = str(body.get("model") or "").strip()
+    reasoning_effort = str(body.get("reasoning_effort") or "auto").strip() or "auto"
     if not provider or not model:
         raise HTTPException(400, "provider and model are required")
-    return await asyncio.to_thread(_resolve_route_for_run, provider, model)
+    return await asyncio.to_thread(_resolve_route_for_run, provider, model, reasoning_effort)
 
 
 '''
@@ -177,10 +315,10 @@ async def resolve_protocol_route(request: Request) -> dict[str, Any]:
                 raise HTTPException(409, f"MOA 的模型 “{provider} / {model}” 协议尚未确定，请先在模型页完成官方真实 Run 探测。")
             slot["provider"] = route.get("execution_provider") or provider
 '''
-    moa_new = '''            route = _resolve_route_for_run(provider, model)
+    moa_new = '''            route = _resolve_route_for_run(provider, model, str(slot.get("reasoning_effort") or "auto"))
             slot["provider"] = route.get("execution_provider") or provider
 '''
-    source = _replace_once(source, moa_old, moa_new, "MOA lazy protocol resolution")
+    source = _replace_once(source, moa_old, moa_new, "MOA lazy protocol/native-reasoning resolution")
 
     source = _replace_once(
         source,
@@ -198,7 +336,7 @@ def patch_frontend(source: str) -> str:
     if (!normalized.provider || !normalized.model || normalized.provider === 'moa') return normalized;
     let resolved;
     try {
-      resolved = await plugin('/hermes/protocols/resolve', jinit('POST', { provider: normalized.provider, model: normalized.model }));
+      resolved = await plugin('/hermes/protocols/resolve', jinit('POST', { provider: normalized.provider, model: normalized.model, reasoning_effort: normalized.effort || 'auto' }));
     } catch (error) {
       // Older installed bridges did not expose lazy resolution. Keep that
       // compatibility path fail-closed; current sealed installs never require
@@ -216,7 +354,7 @@ def patch_frontend(source: str) -> str:
     if (resolved?.requires_probe) {
       throw new Error(`模型 “${normalized.provider} / ${normalized.model}” 的真实协议仍未解析；不会按模型名猜测。`);
     }
-    return { ...normalized, provider: resolved?.execution_provider || normalized.provider, source_provider: normalized.provider, protocol: resolved };
+    return { ...normalized, provider: resolved?.execution_provider || normalized.provider, source_provider: resolved?.source_provider || normalized.provider, source_model: resolved?.source_model || normalized.model, native_reasoning: resolved?.native_reasoning || null, protocol: resolved };
   }
 '''
     tone_pattern = r"(  function protocolStatusTone\(route\) \{\n.*?\n  \}\n)"
@@ -305,22 +443,60 @@ def patch_frontend(source: str) -> str:
     return source
 
 
-def patch_files(frontend: Path, backend: Path) -> None:
+def patch_gateway(source: str) -> str:
+    binary_toggle = '''  function applyNativeReasoningConstraint(capability, modelEntry) {
+    if (!isObject(modelEntry) || String(modelEntry.hws_native_reasoning || '').trim() !== 'minimax_openai') return capability;
+    const cap = isObject(capability) ? { ...capability } : {};
+    // The supported staged runtime has two immutable execution aliases for
+    // this explicit native wire: adaptive and disabled. Therefore the product
+    // may expose a real binary toggle, but still no fabricated effort ladder.
+    cap.reasoning = {
+      supported: true,
+      control: 'toggle',
+      can_disable: true,
+      default_effort: HERMES_DEFAULT_EFFORT,
+      source: 'hermes.provider_config.model+native.minimax_openai.binary',
+    };
+    cap.supports_reasoning = true;
+    cap.can_disable_reasoning = true;
+    cap.reasoning_control = 'toggle';
+    cap.default_reasoning_effort = HERMES_DEFAULT_EFFORT;
+    cap.reasoning_source = 'hermes.provider_config.model+native.minimax_openai.binary';
+    delete cap.reasoning_efforts;
+    delete cap.reasoningEfforts;
+    delete cap.supported_reasoning_efforts;
+    delete cap.supportedReasoningEfforts;
+    return cap;
+  }
+
+  function overlayFromHermesConfig'''
+    return _sub_once(
+        source,
+        r"  function applyNativeReasoningConstraint\(capability, modelEntry\) \{\n.*?\n  \}\n\n  function overlayFromHermesConfig",
+        binary_toggle,
+        "staged native binary reasoning capability",
+    )
+
+
+def patch_files(frontend: Path, backend: Path, gateway: Path) -> None:
     frontend_source = frontend.read_text(encoding="utf-8")
     backend_source = backend.read_text(encoding="utf-8")
+    gateway_source = gateway.read_text(encoding="utf-8")
     frontend.write_text(patch_frontend(frontend_source), encoding="utf-8")
     backend.write_text(patch_backend(backend_source), encoding="utf-8")
+    gateway.write_text(patch_gateway(gateway_source), encoding="utf-8")
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
-        print("usage: stage_mixed_protocol.py <index-v3.js> <plugin_api_v3.py>", file=sys.stderr)
+    if len(argv) != 4:
+        print("usage: stage_mixed_protocol.py <index-v3.js> <plugin_api_v3.py> <gateway-native.js>", file=sys.stderr)
         return 2
     frontend = Path(argv[1])
     backend = Path(argv[2])
-    if not frontend.is_file() or not backend.is_file():
-        raise SystemExit("mixed protocol transform inputs must both exist")
-    patch_files(frontend, backend)
+    gateway = Path(argv[3])
+    if not frontend.is_file() or not backend.is_file() or not gateway.is_file():
+        raise SystemExit("mixed protocol/native reasoning transform inputs must all exist")
+    patch_files(frontend, backend, gateway)
     return 0
 
 

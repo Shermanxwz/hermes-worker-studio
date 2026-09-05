@@ -180,7 +180,8 @@ PY
 python3 "$ROOT/scripts/stage_product_bundle.py" "$TMP/dashboard/dist/index-v3.js"
 python3 "$ROOT/scripts/stage_mixed_protocol.py" \
   "$TMP/dashboard/dist/index-v3.js" \
-  "$TMP/dashboard/plugin_api_v3.py"
+  "$TMP/dashboard/plugin_api_v3.py" \
+  "$TMP/dashboard/dist/gateway-native.js"
 python3 "$ROOT/scripts/stage_security_closure.py" "$TMP/dashboard/plugin_api_v3.py"
 
 if command -v hermes >/dev/null 2>&1; then
@@ -268,6 +269,9 @@ Model capabilities are normalized from Hermes' official model inventory inside
 the single staged gateway-native.js artifact. Non-Auto reasoning overrides are
 validated against the exact Provider+Model capability and fail closed before
 Gateway config.set/prompt submission; no model-name capability registry exists.
+For an explicitly declared minimax_openai native wire, the staged product uses
+separate immutable adaptive/disabled Chat aliases, so the visible binary toggle
+maps to real per-Run execution without mutating shared provider state.
 The protocol runtime uses the same official model projection and Hermes Runs to
 resolve an undeclared custom model between Chat Completions and Responses before
 Product Chat or the Models diagnostic can fall back to a provider-wide default.
