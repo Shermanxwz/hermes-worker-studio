@@ -151,6 +151,7 @@
       reasoning: checked?.value || 'auto',
       reasoning_semantic: checked?.semantic || 'auto',
       reasoning_control: checked?.descriptor?.control || 'auto',
+      reasoning_source: checked?.descriptor?.source || 'unknown',
       source: 'hermes.model_options+provider_config+gateway.config.set',
     };
     if (capabilityProvider !== provider || capabilityModel !== model) {
