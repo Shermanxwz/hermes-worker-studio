@@ -204,7 +204,7 @@ assert.ok(configReadsAfterRefresh > configReadsBeforeRefresh, 'authoritative mod
 const started = await window.__HERMES_PLUGIN_SDK__.fetchJSON('/api/plugins/hermes-worker-studio/hermes/runs-v3', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: 'stored-session-1', input: 'hello', provider: 'official', model: 'toggle-model', model_options: { reasoning_effort: 'none' } }) });
 assert.equal(calls.find((x) => x.rpc === 'session.resume').params.session_id, 'stored-session-1');
 assert.deepEqual(plain(calls.find((x) => x.rpc === 'config.set').params), { key: 'reasoning', session_id: 'runtime-session-1', value: 'none' });
-assert.deepEqual(plain(started.source_route), { provider: 'official', model: 'toggle-model', reasoning: 'none', reasoning_semantic: 'off', reasoning_control: 'toggle', source: 'hermes.model_options+provider_config+gateway.config.set' });
+assert.deepEqual(plain(started.source_route), { provider: 'official', model: 'toggle-model', reasoning: 'none', reasoning_semantic: 'off', reasoning_control: 'toggle', reasoning_source: 'hermes.model.options', source: 'hermes.model_options+provider_config+gateway.config.set' });
 const snap = await window.__HERMES_PLUGIN_SDK__.fetchJSON(`/api/plugins/hermes-worker-studio/hermes/runs/${started.id}?after=0`);
 assert.deepEqual(plain(snap.source_route), plain(started.source_route));
 
